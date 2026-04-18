@@ -335,14 +335,26 @@ local function LoadSettings(defaultValues)
 end
 
 --==================================================
--- QUEUE ON TELEPORT (Infinite Yield Style)
+-- QUEUE ON TELEPORT (Infinite Yield Style - FIXED for Potassium & others)
 --==================================================
-local TeleportCheck = false
-Players.LocalPlayer.OnTeleport:Connect(function(State)
-	if not TeleportCheck and queueteleport then
-		TeleportCheck = true
-		queueteleport("loadstring(game:HttpGet('https://raw.githubusercontent.com/nonehelix/Template/refs/heads/main/Template'))()")
-	end
+local queuedCode = "loadstring(game:HttpGet('https://raw.githubusercontent.com/nonehelix/Template/refs/heads/main/Template'))()"
+
+-- Queue immediately (works in most cases for autoexec)
+if queue_on_teleport then
+    queue_on_teleport(queuedCode)
+elseif queueteleport then
+    queueteleport(queuedCode)
+end
+
+-- Extra safety: re-queue when teleport actually starts (recommended)
+Players.LocalPlayer.OnTeleport:Connect(function(state)
+    if state == Enum.TeleportState.Started then
+        if queue_on_teleport then
+            queue_on_teleport(queuedCode)
+        elseif queueteleport then
+            queueteleport(queuedCode)
+        end
+    end
 end)
 
 --==================================================

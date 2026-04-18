@@ -345,15 +345,6 @@ Players.LocalPlayer.OnTeleport:Connect(function(State)
 	end
 end)
 
-	if queue_on_teleport then
-		queue_on_teleport(teleportCode)
-	elseif syn and syn.queue_on_teleport then
-		syn.queue_on_teleport(teleportCode)
-	elseif fluxus and fluxus.queue_on_teleport then
-		fluxus.queue_on_teleport(teleportCode)
-	end
-end)
-
 --==================================================
 -- RUNTIME CLEANUP HELPERS
 --==================================================

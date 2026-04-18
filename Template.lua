@@ -39,34 +39,7 @@
 	- Cleanup(self)                 -- optional
 ]]
 
---==================================================
--- AUTO RE-EXECUTE ON TELEPORT (Like Infinite Yield)
---==================================================
-local TeleportCheck = false
-
-Players.LocalPlayer.OnTeleport:Connect(function(State)
-    if TeleportCheck then return end
-    TeleportCheck = true
-
-    -- Replace this link with your own raw script link
-    local scriptUrl = "https://raw.githubusercontent.com/nonehelix/Template/main/Template.lua"
-
-    local teleportCode = [[
-        repeat task.wait() until game:IsLoaded()
-        task.wait(0.5)
-        loadstring(game:HttpGet("]] .. scriptUrl .. [[", true))()
-    ]]
-
-    if queue_on_teleport then
-        queue_on_teleport(teleportCode)
-    elseif syn and syn.queue_on_teleport then
-        syn.queue_on_teleport(teleportCode)
-    elseif fluxus and fluxus.queue_on_teleport then
-        fluxus.queue_on_teleport(teleportCode)
-    end
-
-    print("✅ Panel will auto re-execute after teleport")
-end)
+repeat task.wait() until game:IsLoaded()
 
 --==================================================
 -- SERVICES
@@ -361,6 +334,33 @@ local function LoadSettings(defaultValues)
 
 	return mergedValues
 end
+
+--==================================================
+-- QUEUE ON TELEPORT (Infinite Yield Style)
+--==================================================
+local TeleportCheck = false
+
+Players.LocalPlayer.OnTeleport:Connect(function()
+	if TeleportCheck then return end
+	TeleportCheck = true
+
+	-- CHANGE THIS TO YOUR ACTUAL RAW LINK
+	local scriptUrl = "https://raw.githubusercontent.com/nonehelix/Template/refs/heads/main/Template.lua"
+
+	local teleportCode = [[
+		repeat task.wait() until game:IsLoaded()
+		task.wait(0.5)
+		loadstring(game:HttpGet("]] .. scriptUrl .. [[", true))()
+	]]
+
+	if queue_on_teleport then
+		queue_on_teleport(teleportCode)
+	elseif syn and syn.queue_on_teleport then
+		syn.queue_on_teleport(teleportCode)
+	elseif fluxus and fluxus.queue_on_teleport then
+		fluxus.queue_on_teleport(teleportCode)
+	end
+end)
 
 --==================================================
 -- RUNTIME CLEANUP HELPERS

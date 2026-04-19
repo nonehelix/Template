@@ -1005,6 +1005,7 @@ local BASE_CONFIG = {
 
 	Tabs = {
 		{Name = "Player"},
+		{Name = "Auto Buy"},
 		{Name = "Settings"}
 	}
 }

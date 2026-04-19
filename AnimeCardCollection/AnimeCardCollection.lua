@@ -121,12 +121,39 @@ return {
 			return fallback
 		end
 
-		-- Grade order for comparison
+		-- Grade order
 		local gradeOrder = {}
 		if GradesConfig and GradesConfig.List then
 			for i, g in ipairs(GradesConfig.List) do
 				gradeOrder[tostring(g)] = i
 			end
+		end
+
+		--==================================================
+		-- ReplicatedData Resolver (using ReplicatedFirst as you requested)
+		--==================================================
+		local ReplicatedData = nil
+		local function GetReplicatedData()
+			if ReplicatedData and type(ReplicatedData.GetData) == "function" then
+				return ReplicatedData
+			end
+
+			local rdModule = ReplicatedFirst:FindFirstChild("ReplicatedData")
+			if rdModule then
+				local success, result = pcall(require, rdModule)
+				if success and type(result) == "table" and type(result.GetData) == "function" then
+					ReplicatedData = result
+					return result
+				end
+			end
+
+			-- Fallback to Shared if available
+			if Shared and Shared.ReplicatedData and type(Shared.ReplicatedData.GetData) == "function" then
+				ReplicatedData = Shared.ReplicatedData
+				return ReplicatedData
+			end
+
+			return nil
 		end
 
 		--==================================================
@@ -271,7 +298,7 @@ return {
 		end
 
 		--==================================================
-		-- FEATURE: AUTO GRADE (Fixed Round-Robin + ReplicatedFirst)
+		-- FEATURE: AUTO GRADE (Fixed + ReplicatedFirst)
 		--==================================================
 		do
 			local Feature = RegisterFeature({
@@ -318,33 +345,14 @@ return {
 				}
 			})
 
-			-- Try to get ReplicatedData from ReplicatedFirst (as you said is necessary)
-			local function getReplicatedData()
-				local rdModule = ReplicatedFirst:FindFirstChild("ReplicatedData")
-				if rdModule then
-					local success, rd = pcall(require, rdModule)
-					if success and type(rd) == "table" and type(rd.GetData) == "function" then
-						return rd
-					end
-				end
-				-- Fallback to Shared if available
-				if Shared and Shared.ReplicatedData and type(Shared.ReplicatedData.GetData) == "function" then
-					return Shared.ReplicatedData
-				end
-				return nil
-			end
-
 			function Feature:GetOwnedCards()
-				local rd = getReplicatedData()
-				if rd then
-					local success, cards = pcall(function()
-						return rd.GetData("Cards")
-					end)
-					if success and type(cards) == "table" then
-						return cards
-					end
-				end
-				return {}
+				local rd = GetReplicatedData()   -- Uses the function defined above
+				if not rd then return {} end
+
+				local success, cards = pcall(function()
+					return rd.GetData("Cards")
+				end)
+				return (success and type(cards) == "table") and cards or {}
 			end
 
 			function Feature:IsGradeGoodEnough(currentGrade, targetGrades)
@@ -392,22 +400,20 @@ return {
 
 				if #selectedCards == 0 or #targetGrades == 0 then return end
 
-				-- Rebuild queue if empty
 				if #self.State.Queue == 0 then
 					self.State.Queue = self:BuildQueue(selectedCards)
 					self.State.QueueIndex = 0
 					if #self.State.Queue == 0 then return end
 				end
 
-				-- Round-robin
+				-- Round-robin cycling
 				self.State.QueueIndex = self.State.QueueIndex + 1
 				if self.State.QueueIndex > #self.State.Queue then
 					self.State.QueueIndex = 1
 				end
 
 				local cardName = self.State.Queue[self.State.QueueIndex]
-				local cardData = self:GetOwnedCards()[cardName]
-				local currentGrade = cardData and cardData.Grade
+				local currentGrade = self:GetOwnedCards()[cardName] and self:GetOwnedCards()[cardName].Grade
 
 				if not self:IsGradeGoodEnough(currentGrade, targetGrades) then
 					CardRemote:FireServer("Roll", cardName)

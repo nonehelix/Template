@@ -1,3 +1,4 @@
+local RegisterFeature = Shared.RegisterFeature
 --==================================================
 -- FEATURE: AUTO BUY
 --==================================================

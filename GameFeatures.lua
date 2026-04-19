@@ -90,7 +90,18 @@ return function(Shared)
 
 		return items
 	end
-
+	local debugPacks = getPackItems()
+	local debugMutations = getMutationItems()
+	
+	print("---- Processed Pack Items ----")
+	for i, v in ipairs(debugPacks) do
+		print(i, v)
+	end
+	
+	print("---- Processed Mutation Items ----")
+	for i, v in ipairs(debugMutations) do
+		print(i, v)
+	end
 	--==================================================
 	-- FEATURE: AUTO BUY
 	--==================================================

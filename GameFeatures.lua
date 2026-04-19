@@ -1,45 +1,22 @@
 return function(Shared)
-	local Players = Shared.Players
-	local Workspace = Shared.Workspace
-	local RunService = Shared.RunService
-	local RegisterFeature = Shared.RegisterFeature
-
 	local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-	local remotesFolder = ReplicatedStorage:FindFirstChild("Remotes")
-	if not remotesFolder then
-		warn("[GameFeatures] Missing ReplicatedStorage.Remotes")
-		return
-	end
+	print("=== DEBUG START ===")
+	print("ReplicatedStorage:", ReplicatedStorage)
 
-	local CardRemote = remotesFolder:FindFirstChild("Card")
-	if not CardRemote then
-		warn("[GameFeatures] Missing ReplicatedStorage.Remotes.Card")
-		return
-	end
+	print("Remotes exists:", ReplicatedStorage:FindFirstChild("Remotes"))
+	print("Card remote exists:", ReplicatedStorage:FindFirstChild("Remotes") and ReplicatedStorage.Remotes:FindFirstChild("Card"))
 
-	local modulesFolder = ReplicatedStorage:FindFirstChild("Modules")
-	if not modulesFolder then
-		warn("[GameFeatures] Missing ReplicatedStorage.Modules")
-		return
-	end
+	print("Modules exists:", ReplicatedStorage:FindFirstChild("Modules"))
+	print("Config exists:", ReplicatedStorage:FindFirstChild("Modules") and ReplicatedStorage.Modules:FindFirstChild("Config"))
+	print("Core exists:", ReplicatedStorage:FindFirstChild("Modules")
+		and ReplicatedStorage.Modules:FindFirstChild("Config")
+		and ReplicatedStorage.Modules.Config:FindFirstChild("Core"))
+	print("CardConfig exists:", ReplicatedStorage:FindFirstChild("Modules")
+		and ReplicatedStorage.Modules:FindFirstChild("Config")
+		and ReplicatedStorage.Modules.Config:FindFirstChild("Core")
+		and ReplicatedStorage.Modules.Config.Core:FindFirstChild("CardConfig"))
+	print("=== DEBUG END ===")
 
-	local configFolder = modulesFolder:FindFirstChild("Config")
-	if not configFolder then
-		warn("[GameFeatures] Missing ReplicatedStorage.Modules.Config")
-		return
-	end
-
-	local coreFolder = configFolder:FindFirstChild("Core")
-	if not coreFolder then
-		warn("[GameFeatures] Missing ReplicatedStorage.Modules.Config.Core")
-		return
-	end
-
-	local cardConfigModule = coreFolder:FindFirstChild("CardConfig")
-	if not cardConfigModule then
-		warn("[GameFeatures] Missing ReplicatedStorage.Modules.Config.Core.CardConfig")
-		return
-	end
-
-	local CardConfig = require(cardConfigModule)
+	return
+end

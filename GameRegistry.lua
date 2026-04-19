@@ -38,21 +38,21 @@ local function extractPlaceIdFromLink(link)
 end
 
 local function resolveModule(root, entry)
-	if not root or not entry then
-		return nil
+	if not root then
+		return nil, "Root is nil"
 	end
 
 	local folder = root:FindFirstChild(entry.Folder)
 	if not folder then
-		return nil
+		return nil, "Missing folder '" .. tostring(entry.Folder) .. "' under " .. root:GetFullName()
 	end
 
 	local moduleScript = folder:FindFirstChild(entry.Module)
 	if not moduleScript then
-		return nil
+		return nil, "Missing module '" .. tostring(entry.Module) .. "' inside folder " .. folder:GetFullName()
 	end
 
-	return moduleScript
+	return moduleScript, nil
 end
 
 function GameRegistry.GetCurrentGameEntry()
@@ -80,9 +80,9 @@ function GameRegistry.LoadCurrentGameFeatures(root, Shared)
 		return false, "Current game is not registered"
 	end
 
-	local moduleScript = resolveModule(root, entry)
+	local moduleScript, resolveError = resolveModule(root, entry)
 	if not moduleScript then
-		return false, "Could not find module for game: " .. tostring(entry.Name)
+		return false, "Could not find module for game '" .. tostring(entry.Name) .. "': " .. tostring(resolveError)
 	end
 
 	local okRequire, gameModuleOrError = pcall(require, moduleScript)

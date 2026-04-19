@@ -1,10 +1,3 @@
-local Players = game:GetService("Players")
-local UserInputService = game:GetService("UserInputService")
-local Workspace = game:GetService("Workspace")
-
-local player = Players.LocalPlayer
-local playerGui = player:WaitForChild("PlayerGui")
-
 local Panel = {}
 Panel.__index = Panel
 
@@ -93,19 +86,18 @@ local function toggleArrayValue(arr, target)
 		if hasValue("All") then
 			removeValue("All")
 			return newArr
-		else
-			return {"All"}
 		end
+		return {"All"}
 	end
 
 	if hasValue(target) then
 		removeValue(target)
 		return newArr
-	else
-		removeValue("All")
-		table.insert(newArr, target)
-		return newArr
 	end
+
+	removeValue("All")
+	table.insert(newArr, target)
+	return newArr
 end
 
 local function formatMultiSelectLabel(values, emptyText)
@@ -152,7 +144,7 @@ local function isPointInsideGuiObject(guiObject, point)
 end
 
 local function NewCleanupBag()
-	return { Items = {} }
+	return {Items = {}}
 end
 
 local function AddCleanupItem(bag, item)
@@ -185,7 +177,16 @@ local function CleanupBag(bag)
 end
 
 function Panel.new(config)
+	assert(type(config) == "table", "Panel.new requires config")
+	assert(type(config.Shared) == "table", "Panel.new requires config.Shared")
+
 	local self = setmetatable({}, Panel)
+
+	self.Shared = config.Shared
+	self.Player = self.Shared.player
+	self.PlayerGui = self.Player:WaitForChild("PlayerGui")
+	self.UserInputService = self.Shared.UserInputService
+	self.Workspace = self.Shared.Workspace
 
 	self.Config = {
 		GuiName = config.GuiName,
@@ -212,9 +213,11 @@ function Panel.new(config)
 			Message = tab.Message,
 			Options = {}
 		}
+
 		for _, opt in ipairs(tab.Options or {}) do
 			table.insert(newTab.Options, opt)
 		end
+
 		table.insert(self.Config.Tabs, newTab)
 	end
 
@@ -230,6 +233,7 @@ function Panel.new(config)
 		OpenDropdownAnchor = nil,
 		IsMinimized = false,
 		SaveQueued = false,
+		Destroyed = false,
 		AccentObjects = {
 			TabButtons = {},
 			ActionButtons = {},
@@ -261,12 +265,17 @@ function Panel:RegisterControl(optionId, controlData)
 end
 
 function Panel:QueueSave()
-	if self.State.SaveQueued then
+	if self.State.Destroyed or self.State.SaveQueued then
 		return
 	end
 
 	self.State.SaveQueued = true
+
 	task.delay(0.15, function()
+		if self.State.Destroyed then
+			return
+		end
+
 		self.State.SaveQueued = false
 		if self.Config.SaveSettings then
 			self.Config.SaveSettings(self.Config.Values)
@@ -275,6 +284,10 @@ function Panel:QueueSave()
 end
 
 function Panel:FlushSave()
+	if self.State.Destroyed then
+		return
+	end
+
 	self.State.SaveQueued = false
 	if self.Config.SaveSettings then
 		self.Config.SaveSettings(self.Config.Values)
@@ -286,11 +299,7 @@ function Panel:ApplyAccentTheme()
 
 	for tabName, button in pairs(self.State.AccentObjects.TabButtons) do
 		if button and button.Parent then
-			if self.State.CurrentTab == tabName then
-				button.BackgroundColor3 = Theme.Accent
-			else
-				button.BackgroundColor3 = Theme.Card
-			end
+			button.BackgroundColor3 = (self.State.CurrentTab == tabName) and Theme.Accent or Theme.Card
 		end
 	end
 
@@ -359,6 +368,10 @@ function Panel:RefreshAllControls()
 end
 
 function Panel:SetValue(optionId, value, skipHandler)
+	if self.State.Destroyed then
+		return
+	end
+
 	self.Config.Values[optionId] = value
 	self:RefreshControl(optionId)
 
@@ -373,6 +386,10 @@ function Panel:SetValue(optionId, value, skipHandler)
 end
 
 function Panel:ApplyAll()
+	if self.State.Destroyed then
+		return
+	end
+
 	for optionId, value in pairs(self.Config.Values) do
 		local handler = self.Config.Handlers[optionId]
 		if handler then
@@ -388,6 +405,7 @@ function Panel:CloseDropdown()
 	if self.State.OpenDropdown and self.State.OpenDropdown.Parent then
 		self.State.OpenDropdown:Destroy()
 	end
+
 	self.State.OpenDropdown = nil
 	self.State.OpenDropdownAnchor = nil
 end
@@ -426,6 +444,10 @@ function Panel:Restore(skipSave)
 end
 
 function Panel:Destroy()
+	if self.State.Destroyed then
+		return
+	end
+
 	self:CloseDropdown()
 
 	for _, feature in ipairs(self.Config.Features) do
@@ -437,6 +459,8 @@ function Panel:Destroy()
 	end
 
 	self:FlushSave()
+	self.State.Destroyed = true
+
 	CleanupBag(self.Runtime)
 
 	if self.ScreenGui then
@@ -448,7 +472,7 @@ end
 function Panel:CreateGui()
 	local Theme = self:GetTheme()
 
-	local oldGui = playerGui:FindFirstChild(self.Config.GuiName or "AdminPanel")
+	local oldGui = self.PlayerGui:FindFirstChild(self.Config.GuiName or "AdminPanel")
 	if oldGui then
 		oldGui:Destroy()
 	end
@@ -458,7 +482,7 @@ function Panel:CreateGui()
 	screenGui.ResetOnSpawn = false
 	screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 	screenGui.DisplayOrder = 999
-	screenGui.Parent = playerGui
+	screenGui.Parent = self.PlayerGui
 	self.ScreenGui = screenGui
 
 	local overlay = Instance.new("Frame")
@@ -516,7 +540,7 @@ function Panel:CreateGui()
 		end
 	end))
 
-	AddCleanupItem(self.Runtime, UserInputService.InputChanged:Connect(function(input)
+	AddCleanupItem(self.Runtime, self.UserInputService.InputChanged:Connect(function(input)
 		if openDragging and input.UserInputType == Enum.UserInputType.MouseMovement then
 			local delta = input.Position - openDragStart
 			openButton.Position = UDim2.new(
@@ -818,7 +842,7 @@ function Panel:CreateNumberInput(row, option)
 	box.ZIndex = 4
 	box.Parent = holder
 
-	box.FocusLost:Connect(function()
+	box.FocusLost:Connect(function(enterPressed)
 		local value = clampNumber(box.Text, option.Min, option.Max)
 		if value ~= nil then
 			self:SetValue(option.Id, value)
@@ -943,7 +967,7 @@ function Panel:CreateDropdownBase(button, itemCount)
 
 	local buttonPos = button.AbsolutePosition
 	local buttonSize = button.AbsoluteSize
-	local viewport = Workspace.CurrentCamera and Workspace.CurrentCamera.ViewportSize or Vector2.new(1920, 1080)
+	local viewport = self.Workspace.CurrentCamera and self.Workspace.CurrentCamera.ViewportSize or Vector2.new(1920, 1080)
 
 	local maxVisible = math.min(itemCount, 6)
 	local dropdownHeight = math.max(34, maxVisible * 30 + 8)
@@ -1378,7 +1402,7 @@ function Panel:SetupDragging()
 		end
 	end))
 
-	AddCleanupItem(self.Runtime, UserInputService.InputChanged:Connect(function(input)
+	AddCleanupItem(self.Runtime, self.UserInputService.InputChanged:Connect(function(input)
 		if self.State.Dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
 			local delta = input.Position - self.State.DragStart
 			self.MainFrame.Position = UDim2.new(
@@ -1393,8 +1417,13 @@ function Panel:SetupDragging()
 end
 
 function Panel:SetupRespawnApply()
-	AddCleanupItem(self.Runtime, player.CharacterAdded:Connect(function()
+	AddCleanupItem(self.Runtime, self.Player.CharacterAdded:Connect(function()
 		task.wait(0.8)
+
+		if self.State.Destroyed then
+			return
+		end
+
 		self:ApplyAll()
 
 		if self:GetValue("Minimized") then
@@ -1406,7 +1435,7 @@ function Panel:SetupRespawnApply()
 end
 
 function Panel:SetupOutsideClick()
-	AddCleanupItem(self.Runtime, UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	AddCleanupItem(self.Runtime, self.UserInputService.InputBegan:Connect(function(input, gameProcessed)
 		if gameProcessed then
 			return
 		end
@@ -1418,7 +1447,11 @@ function Panel:SetupOutsideClick()
 
 			if not clickedDropdown and not clickedAnchor then
 				task.defer(function()
-					local focused = UserInputService:GetFocusedTextBox()
+					if self.State.Destroyed then
+						return
+					end
+
+					local focused = self.UserInputService:GetFocusedTextBox()
 					if not focused then
 						self:CloseDropdown()
 					end

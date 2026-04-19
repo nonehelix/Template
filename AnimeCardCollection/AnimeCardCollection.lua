@@ -3,8 +3,9 @@ return {
 		local Workspace = Shared.Workspace
 		local RegisterFeature = Shared.RegisterFeature
 		local RegisterTabs = Shared.RegisterTabs
-		local ReplicatedFirst = game:GetService("ReplicatedFirst")
+
 		local ReplicatedStorage = game:GetService("ReplicatedStorage")
+		local ReplicatedFirst = game:GetService("ReplicatedFirst")
 		local Players = game:GetService("Players")
 
 		local player = Players.LocalPlayer
@@ -120,7 +121,7 @@ return {
 			return fallback
 		end
 
-		-- Grade order for "better or equal" comparison
+		-- Grade order for comparison
 		local gradeOrder = {}
 		if GradesConfig and GradesConfig.List then
 			for i, g in ipairs(GradesConfig.List) do
@@ -270,7 +271,7 @@ return {
 		end
 
 		--==================================================
-		-- FEATURE: AUTO GRADE (Fixed Round-Robin + Cleaned)
+		-- FEATURE: AUTO GRADE (Fixed Round-Robin + ReplicatedFirst)
 		--==================================================
 		do
 			local Feature = RegisterFeature({
@@ -287,8 +288,8 @@ return {
 				State = {
 					Grading = false,
 					PanelRef = nil,
-					Queue = {},        -- Cards to cycle through
-					QueueIndex = 0,    -- Round-robin index
+					Queue = {},
+					QueueIndex = 0,
 				},
 
 				Options = {
@@ -317,9 +318,31 @@ return {
 				}
 			})
 
+			-- Try to get ReplicatedData from ReplicatedFirst (as you said is necessary)
+			local function getReplicatedData()
+				local rdModule = ReplicatedFirst:FindFirstChild("ReplicatedData")
+				if rdModule then
+					local success, rd = pcall(require, rdModule)
+					if success and type(rd) == "table" and type(rd.GetData) == "function" then
+						return rd
+					end
+				end
+				-- Fallback to Shared if available
+				if Shared and Shared.ReplicatedData and type(Shared.ReplicatedData.GetData) == "function" then
+					return Shared.ReplicatedData
+				end
+				return nil
+			end
+
 			function Feature:GetOwnedCards()
-				if Shared and Shared.ReplicatedData and Shared.ReplicatedData.GetData then
-					return Shared.ReplicatedData.GetData("Cards") or {}
+				local rd = getReplicatedData()
+				if rd then
+					local success, cards = pcall(function()
+						return rd.GetData("Cards")
+					end)
+					if success and type(cards) == "table" then
+						return cards
+					end
 				end
 				return {}
 			end
@@ -376,7 +399,7 @@ return {
 					if #self.State.Queue == 0 then return end
 				end
 
-				-- Round-robin cycling
+				-- Round-robin
 				self.State.QueueIndex = self.State.QueueIndex + 1
 				if self.State.QueueIndex > #self.State.Queue then
 					self.State.QueueIndex = 1
@@ -386,7 +409,6 @@ return {
 				local cardData = self:GetOwnedCards()[cardName]
 				local currentGrade = cardData and cardData.Grade
 
-				-- Only grade if it hasn't reached target yet
 				if not self:IsGradeGoodEnough(currentGrade, targetGrades) then
 					CardRemote:FireServer("Roll", cardName)
 				end

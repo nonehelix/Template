@@ -13,7 +13,8 @@ return function(Shared)
 			:WaitForChild("Core")
 			:WaitForChild("CardConfig")
 	)
-
+print("CardConfig.List.Packs =", CardConfig and CardConfig.List and CardConfig.List.Packs)
+print("CardConfig.List.Mutations =", CardConfig and CardConfig.List and CardConfig.List.Mutations)
 	--==================================================
 	-- LOCAL HELPERS FOR THIS GAME
 	--==================================================

@@ -50,10 +50,14 @@ return {
 
 		local function buildRemotePackId(packName, mutation)
 			local base = normalizePackName(packName)
-			if base == "" then return nil end
+			if base == "" then
+				return nil
+			end
+
 			if mutation == "Regular" or not mutation or mutation == "" then
 				return base
 			end
+
 			return base .. "-" .. tostring(mutation)
 		end
 
@@ -63,42 +67,53 @@ return {
 
 		local arrayContains = Shared.arrayContains or function(arr, target)
 			for _, v in ipairs(arr or {}) do
-				if tostring(v) == tostring(target) then return true end
+				if tostring(v) == tostring(target) then
+					return true
+				end
 			end
 			return false
 		end
 
 		local function normalizeSelectionArray(values)
 			local result = {}
-			if type(values) ~= "table" then return result end
+			if type(values) ~= "table" then
+				return result
+			end
+
 			for _, v in ipairs(values) do
 				table.insert(result, tostring(v))
 			end
+
 			return result
 		end
 
 		local function getPackItems()
 			local items = {"All"}
+
 			if CardConfig and CardConfig.List and CardConfig.List.Packs then
 				for _, packName in pairs(CardConfig.List.Packs) do
 					table.insert(items, tostring(packName))
 				end
 			end
+
 			return items
 		end
 
 		local function getMutationItems()
 			local items = {"All", "Regular"}
+
 			if CardConfig and CardConfig.List and CardConfig.List.Mutations then
 				for _, mut in pairs(CardConfig.List.Mutations) do
 					table.insert(items, tostring(mut))
 				end
 			end
+
 			return items
 		end
 
 		local function getGradeItems()
 			local items = {}
+
 			if GradesConfig and GradesConfig.List then
 				for _, grade in ipairs(GradesConfig.List) do
 					table.insert(items, grade)
@@ -106,34 +121,50 @@ return {
 			else
 				items = {"F", "E", "D", "C", "B", "A", "S", "S+", "SS", "SR", "UR"}
 			end
+
 			return items
 		end
 
 		local function getAllCardNames()
-			local cards = {"All"}  -- Added "All" option here
+			local seen = {}
+			local cardNames = {}
+
 			if CardConfig and CardConfig.Packs then
 				for _, packData in pairs(CardConfig.Packs) do
 					if packData.List then
 						for cardName in pairs(packData.List) do
-							if not table.find(cards, cardName) then
-								table.insert(cards, cardName)
+							cardName = tostring(cardName)
+							if not seen[cardName] then
+								seen[cardName] = true
+								table.insert(cardNames, cardName)
 							end
 						end
 					end
 				end
 			end
-			table.sort(cards)
-			return cards
+
+			table.sort(cardNames)
+
+			local items = {"All"}
+			for _, cardName in ipairs(cardNames) do
+				table.insert(items, cardName)
+			end
+
+			return items
 		end
 
 		local function waitForItems(builder, minCount, fallback, timeout)
 			timeout = timeout or 5
 			local start = os.clock()
+
 			while os.clock() - start < timeout do
 				local items = builder()
-				if #items >= minCount then return items end
+				if #items >= minCount then
+					return items
+				end
 				task.wait(0.1)
 			end
+
 			return fallback
 		end
 
@@ -159,42 +190,55 @@ return {
 				},
 
 				Options = {
-					{ Id = "AutoBuyEnabled", Type = "toggle", Label = "Enable Auto Buy", Description = "Auto buys matching conveyor packs" },
-					{ 
-						Id = "AutoBuyPack", 
-						Type = "multiselect", 
-						Label = "Pack ID", 
-						Description = "Choose one or more packs",
-						Items = waitForItems(getPackItems, 2, {"All"}), 
-						EmptyText = "Nothing selected" 
+					{
+						Id = "AutoBuyEnabled",
+						Type = "toggle",
+						Label = "Enable Auto Buy",
+						Description = "Auto buys matching conveyor packs"
 					},
-					{ 
-						Id = "AutoBuyMutation", 
-						Type = "multiselect", 
-						Label = "Mutation", 
+					{
+						Id = "AutoBuyPack",
+						Type = "multiselect",
+						Label = "Pack ID",
+						Description = "Choose one or more packs",
+						Items = waitForItems(getPackItems, 2, {"All"}),
+						EmptyText = "Nothing selected"
+					},
+					{
+						Id = "AutoBuyMutation",
+						Type = "multiselect",
+						Label = "Mutation",
 						Description = "Choose one or more rarities",
-						Items = waitForItems(getMutationItems, 3, {"All", "Regular"}), 
-						EmptyText = "Nothing selected" 
+						Items = waitForItems(getMutationItems, 3, {"All", "Regular"}),
+						EmptyText = "Nothing selected"
 					},
 				}
 			})
 
 			function Feature:GetPackModelType(packModel)
-				if not packModel then return nil end
+				if not packModel then
+					return nil
+				end
+
 				if packModel.PrimaryPart and packModel.PrimaryPart.Name ~= "" then
 					return packModel.PrimaryPart.Name
 				end
+
 				local part = packModel:FindFirstChildWhichIsA("BasePart")
 				return part and part.Name ~= "" and part.Name or nil
 			end
 
 			function Feature:GetPackModelMutation(packModel)
-				if not packModel then return "Regular" end
+				if not packModel then
+					return "Regular"
+				end
+
 				for _, desc in ipairs(packModel:GetDescendants()) do
 					if desc:IsA("TextLabel") and desc.Name == "Mutation" and desc.Visible and desc.Text ~= "" then
 						return tostring(desc.Text)
 					end
 				end
+
 				return "Regular"
 			end
 
@@ -203,31 +247,44 @@ return {
 			end
 
 			function Feature:Matches(packType, mutation, selectedPacks, selectedMutations)
-				if not packType or packType == "" then return false end
-				if type(selectedPacks) ~= "table" or #selectedPacks == 0 then return false end
-				if type(selectedMutations) ~= "table" or #selectedMutations == 0 then return false end
+				if not packType or packType == "" then
+					return false
+				end
+				if type(selectedPacks) ~= "table" or #selectedPacks == 0 then
+					return false
+				end
+				if type(selectedMutations) ~= "table" or #selectedMutations == 0 then
+					return false
+				end
 
 				local packOk = arrayContains(selectedPacks, "All") or arrayContains(selectedPacks, packType)
-				local mutOk  = arrayContains(selectedMutations, "All") or arrayContains(selectedMutations, mutation)
+				local mutOk = arrayContains(selectedMutations, "All") or arrayContains(selectedMutations, mutation)
+
 				return packOk and mutOk
 			end
 
 			function Feature:Tick(values)
-				if not values.AutoBuyEnabled then return end
+				if not values.AutoBuyEnabled then
+					return
+				end
 
 				local selectedPacks = normalizeSelectionArray(values.AutoBuyPack)
 				local selectedMutations = normalizeSelectionArray(values.AutoBuyMutation)
 
-				if #selectedPacks == 0 or #selectedMutations == 0 then return end
+				if #selectedPacks == 0 or #selectedMutations == 0 then
+					return
+				end
 
 				local packsFolder = Workspace:FindFirstChild("Client") and Workspace.Client:FindFirstChild("Packs")
-				if not packsFolder then return end
+				if not packsFolder then
+					return
+				end
 
 				local now = tick()
 
 				for _, child in ipairs(packsFolder:GetChildren()) do
 					if child:IsA("Model") then
-						local packId   = self:GetPackModelId(child)
+						local packId = self:GetPackModelId(child)
 						local packType = self:GetPackModelType(child)
 						local mutation = self:GetPackModelMutation(child)
 
@@ -243,7 +300,10 @@ return {
 
 			function Feature:Start(panelRef)
 				self.State.PanelRef = panelRef
-				if self.State.Polling then return end
+				if self.State.Polling then
+					return
+				end
+
 				self.State.Polling = true
 
 				task.spawn(function()
@@ -264,10 +324,18 @@ return {
 			function Feature:GetHandlers()
 				return {
 					AutoBuyEnabled = function(value, _, panelRef)
-						if value then self:Start(panelRef) else self:Stop() end
+						if value then
+							self:Start(panelRef)
+						else
+							self:Stop()
+						end
 					end,
-					AutoBuyPack = function(_, _, panelRef) self.State.PanelRef = panelRef end,
-					AutoBuyMutation = function(_, _, panelRef) self.State.PanelRef = panelRef end,
+					AutoBuyPack = function(_, _, panelRef)
+						self.State.PanelRef = panelRef
+					end,
+					AutoBuyMutation = function(_, _, panelRef)
+						self.State.PanelRef = panelRef
+					end,
 				}
 			end
 
@@ -279,7 +347,7 @@ return {
 		end
 
 		--==================================================
-		-- FEATURE: AUTO GRADE (With "All" Cards Option)
+		-- FEATURE: AUTO GRADE
 		--==================================================
 		do
 			local Feature = RegisterFeature({
@@ -289,7 +357,7 @@ return {
 
 				Defaults = {
 					AutoGradeEnabled = false,
-					AutoGradeCards = {},     -- Now supports "All"
+					AutoGradeCards = {},
 					AutoGradeTarget = {},
 				},
 
@@ -300,27 +368,27 @@ return {
 				},
 
 				Options = {
-					{ 
-						Id = "AutoGradeEnabled", 
-						Type = "toggle", 
-						Label = "Enable Auto Grade", 
-						Description = "Automatically grades selected cards to target grade(s)" 
+					{
+						Id = "AutoGradeEnabled",
+						Type = "toggle",
+						Label = "Enable Auto Grade",
+						Description = "Automatically grades selected cards to target grade(s)"
 					},
-					{ 
-						Id = "AutoGradeCards", 
-						Type = "multiselect", 
-						Label = "Select Cards", 
+					{
+						Id = "AutoGradeCards",
+						Type = "multiselect",
+						Label = "Select Cards",
 						Description = "Choose which cards to auto grade (All = every owned card)",
-						Items = waitForItems(getAllCardNames, 5, {"All", "Chopper", "Luffy"}), 
-						EmptyText = "Nothing selected" 
+						Items = waitForItems(getAllCardNames, 2, {"All"}),
+						EmptyText = "Nothing selected"
 					},
-					{ 
-						Id = "AutoGradeTarget", 
-						Type = "multiselect", 
-						Label = "Target Grade", 
+					{
+						Id = "AutoGradeTarget",
+						Type = "multiselect",
+						Label = "Target Grade",
 						Description = "Stop grading when card reaches any of these grades or better",
 						Items = getGradeItems(),
-						EmptyText = "Nothing selected" 
+						EmptyText = "Nothing selected"
 					},
 				}
 			})
@@ -333,13 +401,17 @@ return {
 			end
 
 			function Feature:IsGradeBetterOrEqual(currentGrade, targetGrades)
-				if not currentGrade or #targetGrades == 0 then return false end
+				if not currentGrade or #targetGrades == 0 then
+					return false
+				end
+
 				local currentIdx = gradeOrder[currentGrade] or 0
 				for _, tgt in ipairs(targetGrades) do
 					if gradeOrder[tgt] and currentIdx >= gradeOrder[tgt] then
 						return true
 					end
 				end
+
 				return false
 			end
 
@@ -351,19 +423,24 @@ return {
 			end
 
 			function Feature:Tick()
-				if not self.State.Grading then return end
+				if not self.State.Grading then
+					return
+				end
 
 				local values = self.State.PanelRef and self.State.PanelRef.Config and self.State.PanelRef.Config.Values
-				if not values or not values.AutoGradeEnabled then return end
+				if not values or not values.AutoGradeEnabled then
+					return
+				end
 
 				local selectedCards = normalizeSelectionArray(values.AutoGradeCards)
 				local targetGrades = normalizeSelectionArray(values.AutoGradeTarget)
 
-				if #selectedCards == 0 or #targetGrades == 0 then return end
+				if #selectedCards == 0 or #targetGrades == 0 then
+					return
+				end
 
 				local ownedCards = self:GetOwnedCards()
 				local eligible = {}
-
 				local useAll = arrayContains(selectedCards, "All")
 
 				for cardName, cardData in pairs(ownedCards) do
@@ -375,9 +452,10 @@ return {
 					end
 				end
 
-				if #eligible == 0 then return end
+				if #eligible == 0 then
+					return
+				end
 
-				-- Round-robin (avoid repeating same card)
 				local nextIndex = 1
 				if self.State.LastGradedCard then
 					for i, card in ipairs(eligible) do
@@ -396,7 +474,9 @@ return {
 
 			function Feature:Start(panelRef)
 				self.State.PanelRef = panelRef
-				if self.State.Grading then return end
+				if self.State.Grading then
+					return
+				end
 
 				self.State.Grading = true
 				self.State.LastGradedCard = nil
@@ -423,8 +503,12 @@ return {
 							self:Stop()
 						end
 					end,
-					AutoGradeCards = function(_, _, panelRef) self.State.PanelRef = panelRef end,
-					AutoGradeTarget = function(_, _, panelRef) self.State.PanelRef = panelRef end,
+					AutoGradeCards = function(_, _, panelRef)
+						self.State.PanelRef = panelRef
+					end,
+					AutoGradeTarget = function(_, _, panelRef)
+						self.State.PanelRef = panelRef
+					end,
 				}
 			end
 
@@ -458,32 +542,54 @@ return {
 				},
 
 				Options = {
-					{ Id = "AutoBuyMarketEnabled", Type = "toggle", Label = "Enable Auto Buy Market",
-					  Description = "Automatically buys selected packs from the market every 60 seconds" },
-					{ 
-						Id = "AutoBuyMarketPack", Type = "multiselect", Label = "Pack ID",
-						Description = "Choose packs to buy from market",
-						Items = waitForItems(getPackItems, 2, {"All"}), EmptyText = "Nothing selected" 
+					{
+						Id = "AutoBuyMarketEnabled",
+						Type = "toggle",
+						Label = "Enable Auto Buy Market",
+						Description = "Automatically buys selected packs from the market every 60 seconds"
 					},
-					{ 
-						Id = "AutoBuyMarketMutation", Type = "multiselect", Label = "Mutation",
+					{
+						Id = "AutoBuyMarketPack",
+						Type = "multiselect",
+						Label = "Pack ID",
+						Description = "Choose packs to buy from market",
+						Items = waitForItems(getPackItems, 2, {"All"}),
+						EmptyText = "Nothing selected"
+					},
+					{
+						Id = "AutoBuyMarketMutation",
+						Type = "multiselect",
+						Label = "Mutation",
 						Description = "Choose mutations/rarities to buy",
-						Items = waitForItems(getMutationItems, 3, {"All", "Regular"}), EmptyText = "Nothing selected" 
+						Items = waitForItems(getMutationItems, 3, {"All", "Regular"}),
+						EmptyText = "Nothing selected"
 					},
 				}
 			})
 
 			function Feature:GetMarketStock()
 				local playerGui = player:FindFirstChild("PlayerGui")
-				if not playerGui then return {} end
+				if not playerGui then
+					return {}
+				end
+
 				local stockGui = playerGui:FindFirstChild("Stock")
-				if not stockGui then return {} end
+				if not stockGui then
+					return {}
+				end
+
 				local frame = stockGui:FindFirstChild("Frame")
-				if not frame then return {} end
+				if not frame then
+					return {}
+				end
+
 				local scrolling = frame:FindFirstChild("ScrollingFrame")
-				if not scrolling then return {} end
+				if not scrolling then
+					return {}
+				end
 
 				local stockList = {}
+
 				for i = 1, 8 do
 					local slot = scrolling:FindFirstChild(tostring(i))
 					if slot then
@@ -511,17 +617,22 @@ return {
 						end
 					end
 				end
+
 				return stockList
 			end
 
 			function Feature:RunStockCheck()
 				local values = self.State.PanelRef and self.State.PanelRef.Config and self.State.PanelRef.Config.Values
-				if not values or not values.AutoBuyMarketEnabled then return end
+				if not values or not values.AutoBuyMarketEnabled then
+					return
+				end
 
 				local selectedPacks = normalizeSelectionArray(values.AutoBuyMarketPack)
 				local selectedMutations = normalizeSelectionArray(values.AutoBuyMarketMutation)
 
-				if #selectedPacks == 0 or #selectedMutations == 0 then return end
+				if #selectedPacks == 0 or #selectedMutations == 0 then
+					return
+				end
 
 				local selectedNormalizedPacks = {}
 				for _, p in ipairs(selectedPacks) do
@@ -529,9 +640,12 @@ return {
 				end
 
 				local marketStock = self:GetMarketStock()
-				if #marketStock == 0 then return end
+				if #marketStock == 0 then
+					return
+				end
 
 				local buyQueue = {}
+
 				for _, item in ipairs(marketStock) do
 					local packOk = arrayContains(selectedPacks, "All") or arrayContains(selectedNormalizedPacks, item.NormalizedPackName)
 					local mutationOk = arrayContains(selectedMutations, "All") or arrayContains(selectedMutations, item.Mutation)
@@ -543,7 +657,9 @@ return {
 					end
 				end
 
-				if #buyQueue == 0 then return end
+				if #buyQueue == 0 then
+					return
+				end
 
 				for i, remoteId in ipairs(buyQueue) do
 					StockRemote:FireServer("Buy", remoteId)
@@ -556,20 +672,27 @@ return {
 			function Feature:Start(panelRef)
 				self.State.PanelRef = panelRef
 				self.State.LastCheckTime = 0
-				if self.State.Running then return end
+				if self.State.Running then
+					return
+				end
+
 				self.State.Running = true
 
 				task.spawn(function()
 					while self.State.Running do
 						local values = self.State.PanelRef and self.State.PanelRef.Config and self.State.PanelRef.Config.Values
-						if not values or not values.AutoBuyMarketEnabled then break end
+						if not values or not values.AutoBuyMarketEnabled then
+							break
+						end
 
 						if tick() - self.State.LastCheckTime >= 60 then
 							self.State.LastCheckTime = tick()
 							self:RunStockCheck()
 						end
+
 						task.wait(1)
 					end
+
 					self.State.Running = false
 				end)
 			end
@@ -589,8 +712,12 @@ return {
 							self:Stop()
 						end
 					end,
-					AutoBuyMarketPack = function(_, _, panelRef) self.State.PanelRef = panelRef end,
-					AutoBuyMarketMutation = function(_, _, panelRef) self.State.PanelRef = panelRef end,
+					AutoBuyMarketPack = function(_, _, panelRef)
+						self.State.PanelRef = panelRef
+					end,
+					AutoBuyMarketMutation = function(_, _, panelRef)
+						self.State.PanelRef = panelRef
+					end,
 				}
 			end
 

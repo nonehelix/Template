@@ -1021,8 +1021,8 @@ local BASE_CONFIG = {
 	WindowPosition = UDim2.new(0.5, -380, 0.5, -230),
 
 	Tabs = {
-		{Name = "Player", Order = 100},
-		{Name = "Settings", Order = 10}
+		{Name = "Player", Order = 10},
+		{Name = "Settings", Order = 900}
 	}
 }
 

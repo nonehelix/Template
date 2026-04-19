@@ -13,8 +13,33 @@ return function(Shared)
 			:WaitForChild("Core")
 			:WaitForChild("CardConfig")
 	)
-print("CardConfig.List.Packs =", CardConfig and CardConfig.List and CardConfig.List.Packs)
-print("CardConfig.List.Mutations =", CardConfig and CardConfig.List and CardConfig.List.Mutations)
+print("==== AUTO BUY DEBUG START ====")
+
+print("CardConfig:", CardConfig)
+print("CardConfig.List:", CardConfig and CardConfig.List)
+print("CardConfig.List.Packs:", CardConfig and CardConfig.List and CardConfig.List.Packs)
+print("CardConfig.List.Mutations:", CardConfig and CardConfig.List and CardConfig.List.Mutations)
+
+-- raw iteration (IMPORTANT: pairs, not ipairs)
+if CardConfig and CardConfig.List and CardConfig.List.Packs then
+	print("---- Packs RAW ----")
+	for k, v in pairs(CardConfig.List.Packs) do
+		print("Pack:", k, v)
+	end
+else
+	print("Packs table is NIL")
+end
+
+if CardConfig and CardConfig.List and CardConfig.List.Mutations then
+	print("---- Mutations RAW ----")
+	for k, v in pairs(CardConfig.List.Mutations) do
+		print("Mutation:", k, v)
+	end
+else
+	print("Mutations table is NIL")
+end
+
+print("==== AUTO BUY DEBUG END ====")
 	--==================================================
 	-- LOCAL HELPERS FOR THIS GAME
 	--==================================================

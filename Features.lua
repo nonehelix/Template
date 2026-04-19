@@ -26,14 +26,15 @@ local Theme = {
 	Dropdown = Color3.fromRGB(27, 31, 40)
 }
 
+Features.Theme = Theme
+
 --==================================================
--- ACCESS CONTROL (LINK CHECK)
+-- ACCESS CONTROL
 --==================================================
 
 local ACCESS_LINKS = {
 	"https://www.roblox.com/es/games/76285745979410/Anime-Card-Collection",
 	"https://www.roblox.com/es/games/90462358603255/Anime-Eternal",
-	-- Add more allowed links here if needed
 }
 
 local function extractPlaceIdFromLink(link)
@@ -54,7 +55,7 @@ local function extractPlaceIdFromLink(link)
 	return nil
 end
 
-local function isAllowedGame()
+function Features.IsAllowedGame()
 	local currentPlaceId = game.PlaceId
 
 	for _, link in ipairs(ACCESS_LINKS) do
@@ -157,7 +158,7 @@ local function getRootPart(timeoutSeconds)
 end
 
 local function NewCleanupBag()
-	return { Items = {} }
+	return {Items = {}}
 end
 
 local function AddCleanupItem(bag, item)
@@ -190,7 +191,7 @@ local function CleanupBag(bag)
 end
 
 --==================================================
--- AUTOMATIC SETTINGS SAVE / LOAD
+-- SETTINGS SAVE / LOAD
 --==================================================
 
 local SETTINGS_FILE = "AnimeCardPanel_Settings.json"
@@ -275,14 +276,6 @@ local function BuildFeatureDefaults()
 	for _, feature in ipairs(FeatureList) do
 		for key, value in pairs(feature.Defaults or {}) do
 			values[key] = copySimpleValue(value)
-		end
-	end
-
-	for _, feature in ipairs(FeatureList) do
-		if feature.ApplyDefaults then
-			pcall(function()
-				feature:ApplyDefaults(values)
-			end)
 		end
 	end
 
@@ -772,11 +765,8 @@ do
 		Key = "PlayerUtility",
 		Tab = "Player",
 		Order = 20,
-
 		Defaults = {},
-
 		State = {},
-
 		Options = {
 			{Id = "ResetCharacter", Type = "button", Label = "Reset Character", Description = "Respawn your character", ButtonText = "Reset"}
 		}
@@ -816,13 +806,10 @@ do
 		Tab = "Settings",
 		Section = "Appearance",
 		Order = 110,
-
 		Defaults = {
 			UIAccent = "Blue"
 		},
-
 		State = {},
-
 		Options = {
 			{
 				Id = "UIAccent",
@@ -875,7 +862,7 @@ do
 		},
 		State = {
 			antiAfkConnection = nil,
-			virtualUser = nil
+			virtualUser = nil,
 		},
 		Options = {
 			{
@@ -947,14 +934,12 @@ do
 	local Feature = RegisterFeature({
 		Key = "SettingsGeneral",
 		Tab = "Settings",
+		Section = "General",
 		Order = 500,
-
 		Defaults = {
 			Minimized = false
 		},
-
 		State = {},
-
 		Options = {
 			{
 				Id = "ResetDefaults",
@@ -973,7 +958,6 @@ do
 	function Feature:GetHandlers()
 		return {
 			Minimized = function()
-				-- Internal saved setting only.
 			end,
 
 			ResetDefaults = function(_, values, panelRef)
@@ -1003,6 +987,24 @@ do
 end
 
 --==================================================
+-- BASE CONFIG
+--==================================================
+
+local BASE_CONFIG = {
+	GuiName = "AdminPanel",
+	Title = "Admin Panel",
+	Subtitle = "Universal local template",
+	PageSubtitle = "Live settings update instantly",
+	WindowSize = UDim2.new(0, 760, 0, 460),
+	WindowPosition = UDim2.new(0.5, -380, 0.5, -230),
+
+	Tabs = {
+		{Name = "Player"},
+		{Name = "Settings"}
+	}
+}
+
+--==================================================
 -- CONFIG COMPILER
 --==================================================
 
@@ -1017,7 +1019,9 @@ local function CompilePanelConfig(baseConfig)
 		Values = {},
 		Tabs = {},
 		Handlers = {},
-		Features = {}
+		Features = {},
+		Theme = Theme,
+		SaveSettings = SaveSettings
 	}
 
 	local tabsByName = {}
@@ -1091,6 +1095,21 @@ local function CompilePanelConfig(baseConfig)
 	end
 
 	return config
+end
+
+function Features.BuildPanelConfig()
+	local panelConfig = CompilePanelConfig(BASE_CONFIG)
+	panelConfig.Values = LoadSettings(panelConfig.Values)
+
+	for _, feature in ipairs(FeatureList) do
+		if feature.ApplyDefaults then
+			pcall(function()
+				feature:ApplyDefaults(panelConfig.Values)
+			end)
+		end
+	end
+
+	return panelConfig
 end
 
 return Features

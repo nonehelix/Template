@@ -5,6 +5,12 @@ return function(Shared)
 	local RegisterFeature = Shared.RegisterFeature
 	
     local CardRemote = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Card")
+	local CardConfig = require(
+		ReplicatedStorage:WaitForChild("Modules")
+			:WaitForChild("Config")
+			:WaitForChild("Core")
+			:WaitForChild("CardConfig")
+	)
 
 	--==================================================
 	-- LOCAL HELPERS FOR THIS GAME

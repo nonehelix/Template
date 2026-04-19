@@ -287,8 +287,16 @@ local function RegisterTab(tab)
 	ExtraTabs[#ExtraTabs + 1] = {
 		Name = tab.Name,
 		Message = tab.Message,
-		Order = tab.Order or 999
+		Order = tonumber(tab.Order) or 999
 	}
+end
+
+local function RegisterTabs(tabs)
+	assert(type(tabs) == "table", "RegisterTabs expects a table")
+
+	for _, tab in ipairs(tabs) do
+		RegisterTab(tab)
+	end
 end
 
 local function BuildFeatureDefaults()
@@ -1054,7 +1062,7 @@ local function CompilePanelConfig(baseConfig)
 		allTabs[#allTabs + 1] = {
 			Name = tab.Name,
 			Message = tab.Message,
-			Order = tab.Order or 999
+			Order = tonumber(tab.Order) or 999
 		}
 	end
 
@@ -1062,7 +1070,7 @@ local function CompilePanelConfig(baseConfig)
 		allTabs[#allTabs + 1] = {
 			Name = tab.Name,
 			Message = tab.Message,
-			Order = tab.Order or 999
+			Order = tonumber(tab.Order) or 999
 		}
 	end
 
@@ -1088,6 +1096,9 @@ local function CompilePanelConfig(baseConfig)
 	end
 
 	table.sort(FeatureList, function(a, b)
+		if (a.Order or 999) == (b.Order or 999) then
+			return a.Key < b.Key
+		end
 		return (a.Order or 999) < (b.Order or 999)
 	end)
 
@@ -1166,6 +1177,7 @@ Features.player = player
 
 Features.RegisterFeature = RegisterFeature
 Features.RegisterTab = RegisterTab
+Features.RegisterTabs = RegisterTabs
 Features.BuildFeatureDefaults = BuildFeatureDefaults
 Features.FeatureList = FeatureList
 

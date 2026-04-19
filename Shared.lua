@@ -281,13 +281,16 @@ local function RegisterTab(tab)
 	assert(type(tab.Name) == "string" and tab.Name ~= "", "Tab.Name is required")
 
 	for _, existingTab in ipairs(ExtraTabs) do
-		assert(existingTab.Name ~= tab.Name, "Duplicate tab name: " .. tab.Name)
+		assert(existingTab.Name ~= tab.Name, "Duplicate extra tab name: " .. tab.Name)
 	end
 
-	table.insert(ExtraTabs, {
+	ExtraTabs[#ExtraTabs + 1] = {
 		Name = tab.Name,
-		Message = tab.Message
-	})
+		Message = tab.Message,
+		Before = tab.Before,
+		After = tab.After,
+		Index = tab.Index,
+	}
 end
 
 local function BuildFeatureDefaults()

@@ -23,7 +23,9 @@ return {
 		local Remotes = ReplicatedStorage:WaitForChild("Remotes")
 		local CardRemote = Remotes:WaitForChild("Card")
 		local StockRemote = Remotes:WaitForChild("Stock")
+		local GradeRemote = Remotes:WaitForChild("Grade")
 
+		
 		local CardConfig = require(
 			ReplicatedStorage:WaitForChild("Modules")
 				:WaitForChild("Config")

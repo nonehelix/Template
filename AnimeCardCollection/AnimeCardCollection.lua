@@ -5,11 +5,13 @@ return {
 		local RegisterTabs = Shared.RegisterTabs
 
 		local ReplicatedStorage = game:GetService("ReplicatedStorage")
+		local Players = game:GetService("Players")
+
+		local player = Players.LocalPlayer
 
 		--==================================================
 		-- TABS
 		--==================================================
-
 		RegisterTabs({
 			{Name = "Auto Buy", Order = 20},
 			{Name = "Shop", Order = 25},
@@ -18,7 +20,6 @@ return {
 		--==================================================
 		-- GAME REFERENCES
 		--==================================================
-
 		local CardRemote = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Card")
 		local CardConfig = require(
 			ReplicatedStorage:WaitForChild("Modules")
@@ -30,7 +31,6 @@ return {
 		--==================================================
 		-- LOCAL HELPERS
 		--==================================================
-
 		local function arrayContains(arr, target)
 			for _, v in ipairs(arr or {}) do
 				if tostring(v) == tostring(target) then
@@ -42,46 +42,36 @@ return {
 
 		local function normalizeSelectionArray(values)
 			local result = {}
-
-			if type(values) ~= "table" then
-				return result
-			end
-
+			if type(values) ~= "table" then return result end
 			for _, value in ipairs(values) do
 				result[#result + 1] = tostring(value)
 			end
-
 			return result
 		end
 
 		local function getPackItems()
 			local items = {"All"}
-
 			if CardConfig and CardConfig.List and CardConfig.List.Packs then
 				for _, packName in pairs(CardConfig.List.Packs) do
 					items[#items + 1] = tostring(packName)
 				end
 			end
-
 			return items
 		end
 
 		local function getMutationItems()
 			local items = {"All", "Regular"}
-
 			if CardConfig and CardConfig.List and CardConfig.List.Mutations then
 				for _, mutationName in pairs(CardConfig.List.Mutations) do
 					items[#items + 1] = tostring(mutationName)
 				end
 			end
-
 			return items
 		end
 
 		local function waitForItems(builder, minimumCount, fallback, timeout)
 			timeout = timeout or 5
 			local startTime = tick()
-
 			while tick() - startTime < timeout do
 				local items = builder()
 				if #items >= minimumCount then
@@ -89,14 +79,12 @@ return {
 				end
 				task.wait(0.1)
 			end
-
 			return fallback
 		end
 
 		--==================================================
-		-- FEATURE: AUTO BUY
+		-- FEATURE: AUTO BUY (Conveyor)
 		--==================================================
-
 		do
 			local Feature = RegisterFeature({
 				Key = "AutoBuy",
@@ -141,28 +129,21 @@ return {
 				}
 			})
 
+			-- Your original conveyor functions
 			function Feature:GetPackModelType(packModel)
-				if not packModel then
-					return nil
-				end
-
+				if not packModel then return nil end
 				if packModel.PrimaryPart and packModel.PrimaryPart.Name ~= "" then
 					return packModel.PrimaryPart.Name
 				end
-
 				local primary = packModel:FindFirstChildWhichIsA("BasePart")
 				if primary and primary.Name ~= "" then
 					return primary.Name
 				end
-
 				return nil
 			end
 
 			function Feature:GetPackModelMutation(packModel)
-				if not packModel then
-					return "Regular"
-				end
-
+				if not packModel then return "Regular" end
 				for _, descendant in ipairs(packModel:GetDescendants()) do
 					if descendant:IsA("TextLabel") and descendant.Name == "Mutation" then
 						if descendant.Visible and descendant.Text ~= "" then
@@ -170,60 +151,38 @@ return {
 						end
 					end
 				end
-
 				return "Regular"
 			end
 
 			function Feature:GetPackModelId(packModel)
-				if not packModel then
-					return nil
-				end
-
-				if packModel.Name ~= "" then
-					return packModel.Name
-				end
-
+				if not packModel then return nil end
+				if packModel.Name ~= "" then return packModel.Name end
 				return nil
 			end
 
 			function Feature:Matches(packType, mutation, selectedPacks, selectedMutations)
-				if not packType or packType == "" then
-					return false
-				end
-				if type(selectedPacks) ~= "table" or #selectedPacks == 0 then
-					return false
-				end
-				if type(selectedMutations) ~= "table" or #selectedMutations == 0 then
-					return false
-				end
+				if not packType or packType == "" then return false end
+				if type(selectedPacks) ~= "table" or #selectedPacks == 0 then return false end
+				if type(selectedMutations) ~= "table" or #selectedMutations == 0 then return false end
 
 				local packOk = arrayContains(selectedPacks, "All") or arrayContains(selectedPacks, packType)
 				local mutationOk = arrayContains(selectedMutations, "All") or arrayContains(selectedMutations, mutation)
-
 				return packOk and mutationOk
 			end
 
 			function Feature:Tick(values)
-				if not values.AutoBuyEnabled then
-					return
-				end
+				if not values.AutoBuyEnabled then return end
 
 				local selectedPacks = normalizeSelectionArray(values.AutoBuyPack)
 				local selectedMutations = normalizeSelectionArray(values.AutoBuyMutation)
 
-				if #selectedPacks == 0 or #selectedMutations == 0 then
-					return
-				end
+				if #selectedPacks == 0 or #selectedMutations == 0 then return end
 
 				local clientFolder = Workspace:FindFirstChild("Client")
-				if not clientFolder then
-					return
-				end
+				if not clientFolder then return end
 
 				local packsFolder = clientFolder:FindFirstChild("Packs")
-				if not packsFolder then
-					return
-				end
+				if not packsFolder then return end
 
 				local now = tick()
 
@@ -246,10 +205,7 @@ return {
 
 			function Feature:Start(panelRef)
 				self.State.PanelRef = panelRef
-
-				if self.State.Polling then
-					return
-				end
+				if self.State.Polling then return end
 
 				self.State.Polling = true
 
@@ -270,33 +226,28 @@ return {
 
 			function Feature:GetHandlers()
 				return {
-					AutoBuyEnabled = function(value, values, panelRef)
+					AutoBuyEnabled = function(value, _, panelRef)
 						if value then
 							self:Start(panelRef)
 						else
 							self:Stop()
 						end
 					end,
-
-					AutoBuyPack = function(_, _, panelRef)
-						self.State.PanelRef = panelRef
-					end,
-
-					AutoBuyMutation = function(_, _, panelRef)
-						self.State.PanelRef = panelRef
-					end,
+					AutoBuyPack = function(_, _, panelRef) self.State.PanelRef = panelRef end,
+					AutoBuyMutation = function(_, _, panelRef) self.State.PanelRef = panelRef end,
 				}
 			end
-			
+
 			function Feature:Cleanup()
 				self:Stop()
 				self.State.PanelRef = nil
 				table.clear(self.State.LastBuyTimes)
 			end
-			--==================================================
-		-- FEATURE: AUTO BUY MARKET (New Feature)
-		--==================================================
+		end   -- ←←← THIS END WAS MISSING IN YOUR CODE
 
+		--==================================================
+		-- FEATURE: AUTO BUY MARKET
+		--==================================================
 		do
 			local Feature = RegisterFeature({
 				Key = "AutoBuyMarket",
@@ -340,7 +291,6 @@ return {
 				}
 			})
 
-			-- Helper to read market stock from GUI
 			function Feature:GetMarketStock()
 				local stockGui = player:WaitForChild("PlayerGui"):FindFirstChild("Stock")
 				if not stockGui then return {} end
@@ -362,7 +312,7 @@ return {
 						local packName = packLabel and packLabel.Text or ""
 						local mutation = "Regular"
 
-						if mutationLabel and mutationLabel.Visible and mutationLabel.Text ~= "" then
+						if mutationLabel and mutationLabel.Visible and mutationLabel.Text and mutationLabel.Text ~= "" then
 							mutation = mutationLabel.Text
 						end
 
@@ -382,12 +332,12 @@ return {
 			function Feature:Tick()
 				local now = tick()
 				if now - self.State.LastCheckTime < 60 then
-					return -- Check only every 60 seconds
+					return
 				end
 
 				self.State.LastCheckTime = now
 
-				local values = self.State.PanelRef and self.State.PanelRef.Config.Values
+				local values = self.State.PanelRef and self.State.PanelRef.Config and self.State.PanelRef.Config.Values
 				if not values or not values.AutoBuyMarketEnabled then return end
 
 				local selectedPacks = normalizeSelectionArray(values.AutoBuyMarketPack)
@@ -402,10 +352,9 @@ return {
 					local mutationOk = arrayContains(selectedMutations, "All") or arrayContains(selectedMutations, item.Mutation)
 
 					if packOk and mutationOk then
-						-- Fire buy event
 						CardRemote:FireServer("BuyPack", item.PackName)
 						print("[AutoBuyMarket] Bought from market:", item.PackName, "-", item.Mutation)
-						task.wait(1.2) -- Small delay between buys to avoid rate limits
+						task.wait(1.2)
 					end
 				end
 			end
@@ -416,14 +365,12 @@ return {
 				task.spawn(function()
 					while self.State.PanelRef and self.State.PanelRef.Config.Values.AutoBuyMarketEnabled do
 						self:Tick()
-						task.wait(5) -- Fast polling but actual check is throttled to 60s
+						task.wait(5)
 					end
 				end)
 			end
 
-			function Feature:Stop()
-				-- Nothing extra needed, the loop checks the toggle
-			end
+			function Feature:Stop() end
 
 			function Feature:GetHandlers()
 				return {
@@ -435,11 +382,9 @@ return {
 							self:Stop()
 						end
 					end,
-
 					AutoBuyMarketPack = function(_, _, panelRef)
 						self.State.PanelRef = panelRef
 					end,
-
 					AutoBuyMarketMutation = function(_, _, panelRef)
 						self.State.PanelRef = panelRef
 					end,

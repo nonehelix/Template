@@ -3,14 +3,16 @@ local GameRegistry = {}
 local REGISTERED_GAMES = {
 	{
 		Name = "Anime Card Collection",
-		ModulePath = {"AnimeCardCollection", "AnimeCardCollection"},
+		Folder = "AnimeCardCollection",
+		Module = "AnimeCardCollection",
 		Links = {
 			"https://www.roblox.com/es/games/76285745979410/Anime-Card-Collection",
 		}
 	},
 	{
 		Name = "Anime Eternal",
-		ModulePath = {"AnimeEternal", "AnimeEternal"},
+		Folder = "AnimeEternal",
+		Module = "AnimeEternal",
 		Links = {
 			"https://www.roblox.com/es/games/90462358603255/Anime-Eternal",
 		}
@@ -35,17 +37,22 @@ local function extractPlaceIdFromLink(link)
 	return nil
 end
 
-local function resolveModule(root, modulePath)
-	local current = root
-
-	for _, name in ipairs(modulePath) do
-		if not current then
-			return nil
-		end
-		current = current:FindFirstChild(name)
+local function resolveModule(root, entry)
+	if not root or not entry then
+		return nil
 	end
 
-	return current
+	local folder = root:FindFirstChild(entry.Folder)
+	if not folder then
+		return nil
+	end
+
+	local moduleScript = folder:FindFirstChild(entry.Module)
+	if not moduleScript then
+		return nil
+	end
+
+	return moduleScript
 end
 
 function GameRegistry.GetCurrentGameEntry()
@@ -73,7 +80,7 @@ function GameRegistry.LoadCurrentGameFeatures(root, Shared)
 		return false, "Current game is not registered"
 	end
 
-	local moduleScript = resolveModule(root, entry.ModulePath)
+	local moduleScript = resolveModule(root, entry)
 	if not moduleScript then
 		return false, "Could not find module for game: " .. tostring(entry.Name)
 	end

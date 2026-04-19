@@ -1,13 +1,4 @@
--- GameFeatures.lua
-
-local GameFeatures = {}
-
-function GameFeatures.RegisterFeatures(Shared)
-    if not Shared or not Shared.RegisterFeature then
-        error("[GameFeatures] Shared.RegisterFeature is missing!")
-    end
-
-    --==================================================
+--==================================================
 -- FEATURE: AUTO BUY
 --==================================================
 
@@ -264,13 +255,3 @@ do
 		table.clear(self.State.LastBuyTimes)
 	end
 end
-
-function GameFeatures.BuildPanelConfig(Shared)
-    GameFeatures.RegisterFeatures(Shared)
-    if not Shared.BuildPanelConfig then
-        error("[GameFeatures] Shared.BuildPanelConfig is nil!")
-    end
-    return Shared.BuildPanelConfig()
-end
-
-return GameFeatures

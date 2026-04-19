@@ -182,81 +182,72 @@ local function CleanupBag(bag)
 end
 
 --==================================================
--- SETTINGS SAVE / LOAD (Saved inside AdminPanel folder)
+-- SETTINGS SAVE / LOAD
 --==================================================
 
 local function sanitizeFileName(text)
-    text = tostring(text or "UnknownGame")
-    text = text:gsub("[^%w%-_]", "_")
-    text = text:gsub("_+", "_")
-    text = text:gsub("^_+", "")
-    text = text:gsub("_+$", "")
-    if text == "" then
-        text = "UnknownGame"
-    end
-    return text
+	text = tostring(text or "UnknownGame")
+	text = text:gsub("[^%w%-_]", "_")
+	text = text:gsub("_+", "_")
+	text = text:gsub("^_+", "")
+	text = text:gsub("_+$", "")
+
+	if text == "" then
+		text = "UnknownGame"
+	end
+
+	return text
 end
 
 local function getSettingsFileName()
-    local gameKey = Shared.CurrentGameKey or Features.CurrentGameKey or tostring(game.PlaceId) or "UnknownGame"
-    local folderName = "AdminPanel"
-    local fileName = sanitizeFileName(gameKey) .. ".json"
-    
-    return folderName .. "/" .. fileName
-end
-
-local function ensureFolderExists()
-    local folderName = "AdminPanel"
-    if isfolder and not isfolder(folderName) then
-        makefolder(folderName)
-    end
+	local gameKey = Features.CurrentGameKey or "UnknownGame"
+	return sanitizeFileName(gameKey) .. ".json"
 end
 
 local function HasSavedSettings()
-    local file = getSettingsFileName()
-    return isfile and isfile(file) or false
+	local file = getSettingsFileName()
+	return isfile and isfile(file) or false
 end
 
 local function SaveSettings(values)
-    if not writefile then
-        return
-    end
-    
-    ensureFolderExists()   -- Create "AdminPanel" folder if it doesn't exist
-    
-    local file = getSettingsFileName()
-    pcall(function()
-        local jsonData = HttpService:JSONEncode(values or {})
-        writefile(file, jsonData)
-    end)
+	if not writefile then
+		return
+	end
+
+	local file = getSettingsFileName()
+
+	pcall(function()
+		local jsonData = HttpService:JSONEncode(values or {})
+		writefile(file, jsonData)
+	end)
 end
 
 local function LoadSettings(defaultValues)
-    local mergedValues = copySimpleValue(defaultValues or {})
-    local file = getSettingsFileName()
+	local mergedValues = copySimpleValue(defaultValues or {})
+	local file = getSettingsFileName()
 
-    if not (isfile and readfile) then
-        return mergedValues
-    end
+	if not (isfile and readfile) then
+		return mergedValues
+	end
 
-    if not isfile(file) then
-        return mergedValues
-    end
+	if not isfile(file) then
+		return mergedValues
+	end
 
-    local success, loaded = pcall(function()
-        local data = readfile(file)
-        return HttpService:JSONDecode(data)
-    end)
+	local success, loaded = pcall(function()
+		local data = readfile(file)
+		return HttpService:JSONDecode(data)
+	end)
 
-    if success and type(loaded) == "table" then
-        for k, v in pairs(loaded) do
-            if mergedValues[k] ~= nil then
-                mergedValues[k] = v
-            end
-        end
-    end
+	if success and type(loaded) == "table" then
+		for k, v in pairs(loaded) do
+			if mergedValues[k] ~= nil then
+				mergedValues[k] = v
+			end
+		end
+	end
 
-    return mergedValues
+	return mergedValues
 end
 
 Features.SaveSettings = SaveSettings

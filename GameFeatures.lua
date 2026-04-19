@@ -3,6 +3,7 @@ return function(Shared)
 	local Workspace = Shared.Workspace
 	local RunService = Shared.RunService
 	local RegisterFeature = Shared.RegisterFeature
+
 	local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 	local CardRemote = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Card")
@@ -12,6 +13,7 @@ return function(Shared)
 			:WaitForChild("Core")
 			:WaitForChild("CardConfig")
 	)
+
 	--==================================================
 	-- LOCAL HELPERS FOR THIS GAME
 	--==================================================
@@ -192,10 +194,6 @@ return function(Shared)
 
 			local packsFolder = clientFolder:FindFirstChild("Packs")
 			if not packsFolder then
-				return
-			end
-
-			if not CardRemote then
 				return
 			end
 

@@ -1,5 +1,7 @@
 return {
 	Load = function(Shared)
+		warn("[AutoBuyDebug] module Load called")
+
 		local Workspace = Shared.Workspace
 		local RegisterFeature = Shared.RegisterFeature
 		local RegisterTabs = Shared.RegisterTabs
@@ -20,14 +22,6 @@ return {
 				:WaitForChild("Core")
 				:WaitForChild("CardConfig")
 		)
-
-		local DEBUG_MARKET = true
-
-		local function debugLog(...)
-			if DEBUG_MARKET then
-				print("[AutoMarketBuy]", ...)
-			end
-		end
 
 		local function arrayContains(arr, target)
 			for _, v in ipairs(arr or {}) do
@@ -107,6 +101,8 @@ return {
 		end
 
 		do
+			warn("[AutoBuyDebug] registering feature")
+
 			local Feature = RegisterFeature({
 				Key = "AutoBuy",
 				Tab = "Auto Buy",
@@ -225,57 +221,54 @@ return {
 			function Feature:GetStockFrame()
 				local playerGui = LocalPlayer and LocalPlayer:FindFirstChildOfClass("PlayerGui")
 				if not playerGui then
-					debugLog("PlayerGui not found")
+					warn("[AutoBuyDebug] PlayerGui not found")
 					return nil
 				end
 
 				local stockGui = playerGui:FindFirstChild("Stock")
 				if not stockGui then
-					debugLog("Stock gui not found under PlayerGui")
+					warn("[AutoBuyDebug] Stock gui not found")
 					return nil
 				end
 
 				local scrollingFrame = stockGui:FindFirstChild("ScrollingFrame", true)
 				if not scrollingFrame then
-					debugLog("ScrollingFrame not found under Stock gui")
+					warn("[AutoBuyDebug] Stock.ScrollingFrame not found")
 					return nil
 				end
 
-				debugLog("Found stock frame:", scrollingFrame:GetFullName())
+				warn("[AutoBuyDebug] found stock frame", scrollingFrame:GetFullName())
 				return scrollingFrame
 			end
 
 			function Feature:GetMarketSlotPack(slot)
 				local stockLabel = slot and slot:FindFirstChild("Stock")
-				if not stockLabel then
-					debugLog("Slot missing Stock label:", slot and slot.Name)
+				if not stockLabel or not stockLabel:IsA("TextLabel") then
+					warn("[AutoBuyDebug] slot missing Stock label", slot and slot.Name)
 					return nil
 				end
 
 				local rawText = tostring(stockLabel.Text or "")
 				local packName = trimPackLabel(rawText)
 
-				debugLog("Slot", slot.Name, "raw stock text =", rawText, "parsed pack =", tostring(packName))
+				warn("[AutoBuyDebug] stock text", slot.Name, rawText, "=>", tostring(packName))
 				return packName
 			end
 
 			function Feature:GetMarketSlotMutation(slot)
 				local mutationLabel = slot and slot:FindFirstChild("Mutation")
-				if not mutationLabel then
-					debugLog("Slot", slot and slot.Name, "missing Mutation label, using Regular")
+				if not mutationLabel or not mutationLabel:IsA("TextLabel") then
+					warn("[AutoBuyDebug] slot missing Mutation label, using Regular", slot and slot.Name)
 					return "Regular"
 				end
 
-				local mutationText = tostring(mutationLabel.Text or "")
-				local visible = mutationLabel.Visible == true
-
-				if not visible or mutationText == "" then
-					debugLog("Slot", slot.Name, "mutation hidden/empty, using Regular")
+				if mutationLabel.Visible ~= true or mutationLabel.Text == "" then
+					warn("[AutoBuyDebug] mutation hidden/empty, using Regular", slot.Name)
 					return "Regular"
 				end
 
-				debugLog("Slot", slot.Name, "mutation =", mutationText)
-				return mutationText
+				warn("[AutoBuyDebug] mutation text", slot.Name, mutationLabel.Text)
+				return tostring(mutationLabel.Text)
 			end
 
 			function Feature:GetMarketBuyName(packName, mutation)
@@ -349,20 +342,23 @@ return {
 			end
 
 			function Feature:TickMarket(values)
+				warn("[AutoBuyDebug] TickMarket running")
+
 				if not values.AutoMarketBuyEnabled then
+					warn("[AutoBuyDebug] AutoMarketBuyEnabled is false")
 					return
 				end
 
 				local selectedPacks = normalizeSelectionArray(values.AutoMarketBuyPack)
 				local selectedMutations = normalizeSelectionArray(values.AutoMarketBuyMutation)
 
+				warn("[AutoBuyDebug] selected market packs", #selectedPacks, table.concat(selectedPacks, ", "))
+				warn("[AutoBuyDebug] selected market mutations", #selectedMutations, table.concat(selectedMutations, ", "))
+
 				if #selectedPacks == 0 or #selectedMutations == 0 then
-					debugLog("No market selections set")
+					warn("[AutoBuyDebug] missing market selections")
 					return
 				end
-
-				debugLog("Selected packs:", table.concat(selectedPacks, ", "))
-				debugLog("Selected mutations:", table.concat(selectedMutations, ", "))
 
 				local scrollingFrame = self:GetStockFrame()
 				if not scrollingFrame then
@@ -370,57 +366,60 @@ return {
 				end
 
 				local now = tick()
-				local sawAnyFrames = false
+				local foundAnySlots = false
 
 				for _, slot in ipairs(scrollingFrame:GetChildren()) do
 					if slot:IsA("Frame") then
-						sawAnyFrames = true
+						foundAnySlots = true
 
 						local packName = self:GetMarketSlotPack(slot)
 						local mutation = self:GetMarketSlotMutation(slot)
 						local buyName = self:GetMarketBuyName(packName, mutation)
 						local matches = packName and self:Matches(packName, mutation, selectedPacks, selectedMutations) or false
 
-						debugLog(
-							"Slot", slot.Name,
-							"pack =", tostring(packName),
-							"mutation =", tostring(mutation),
-							"buyName =", tostring(buyName),
-							"matches =", tostring(matches)
+						warn(
+							"[AutoBuyDebug] slot check",
+							slot.Name,
+							"pack", tostring(packName),
+							"mutation", tostring(mutation),
+							"buy", tostring(buyName),
+							"matches", tostring(matches)
 						)
 
 						if matches and buyName then
 							local lastTime = self.State.LastMarketBuyTimes[buyName]
 							if not lastTime or (now - lastTime) > 1 then
 								self.State.LastMarketBuyTimes[buyName] = now
-								debugLog("Firing Stock remote:", "Buy", buyName)
+								warn("[AutoBuyDebug] firing stock remote", "Buy", buyName)
 								StockRemote:FireServer("Buy", buyName)
 							else
-								debugLog("Skipped by cooldown:", buyName, "elapsed =", now - lastTime)
+								warn("[AutoBuyDebug] cooldown skip", buyName, now - lastTime)
 							end
 						end
 					end
 				end
 
-				if not sawAnyFrames then
-					debugLog("No Frame children found inside stock scrolling frame")
+				if not foundAnySlots then
+					warn("[AutoBuyDebug] no frame slots found in stock scrolling frame")
 				end
 			end
 
 			function Feature:Start(panelRef)
+				warn("[AutoBuyDebug] Start called")
+
 				self.State.PanelRef = panelRef
 
 				if self.State.Polling then
-					debugLog("Polling already running")
+					warn("[AutoBuyDebug] polling already running")
 					return
 				end
 
-				debugLog("Starting polling")
 				self.State.Polling = true
 
 				task.spawn(function()
 					while self.State.Polling do
 						local values = self.State.PanelRef and self.State.PanelRef.Config and self.State.PanelRef.Config.Values
+
 						if values then
 							if values.AutoBuyEnabled then
 								self:Tick(values)
@@ -430,22 +429,26 @@ return {
 								self:TickMarket(values)
 							end
 						else
-							debugLog("Panel values not available yet")
+							warn("[AutoBuyDebug] panel values unavailable")
 						end
+
 						task.wait(0.15)
 					end
-					debugLog("Polling stopped")
+
+					warn("[AutoBuyDebug] polling loop ended")
 				end)
 			end
 
 			function Feature:Stop()
-				debugLog("Stopping polling")
+				warn("[AutoBuyDebug] Stop called")
 				self.State.Polling = false
 			end
 
 			function Feature:GetHandlers()
 				return {
 					AutoBuyEnabled = function(value, values, panelRef)
+						warn("[AutoBuyDebug] AutoBuyEnabled handler", value)
+
 						if value then
 							self:Start(panelRef)
 						else
@@ -458,15 +461,18 @@ return {
 					end,
 
 					AutoBuyPack = function(_, _, panelRef)
+						warn("[AutoBuyDebug] AutoBuyPack changed")
 						self.State.PanelRef = panelRef
 					end,
 
 					AutoBuyMutation = function(_, _, panelRef)
+						warn("[AutoBuyDebug] AutoBuyMutation changed")
 						self.State.PanelRef = panelRef
 					end,
 
 					AutoMarketBuyEnabled = function(value, values, panelRef)
-						debugLog("AutoMarketBuyEnabled changed to", tostring(value))
+						warn("[AutoBuyDebug] AutoMarketBuyEnabled handler", value)
+
 						if value then
 							self:Start(panelRef)
 						else
@@ -479,24 +485,29 @@ return {
 					end,
 
 					AutoMarketBuyPack = function(value, _, panelRef)
+						warn("[AutoBuyDebug] AutoMarketBuyPack changed")
 						self.State.PanelRef = panelRef
-						debugLog("AutoMarketBuyPack changed")
+
 						if type(value) == "table" then
-							debugLog("New market pack selection:", table.concat(normalizeSelectionArray(value), ", "))
+							local normalized = normalizeSelectionArray(value)
+							warn("[AutoBuyDebug] market pack selection", table.concat(normalized, ", "))
 						end
 					end,
 
 					AutoMarketBuyMutation = function(value, _, panelRef)
+						warn("[AutoBuyDebug] AutoMarketBuyMutation changed")
 						self.State.PanelRef = panelRef
-						debugLog("AutoMarketBuyMutation changed")
+
 						if type(value) == "table" then
-							debugLog("New market mutation selection:", table.concat(normalizeSelectionArray(value), ", "))
+							local normalized = normalizeSelectionArray(value)
+							warn("[AutoBuyDebug] market mutation selection", table.concat(normalized, ", "))
 						end
 					end,
 				}
 			end
 
 			function Feature:Cleanup()
+				warn("[AutoBuyDebug] Cleanup called")
 				self:Stop()
 				self.State.PanelRef = nil
 				table.clear(self.State.LastBuyTimes)

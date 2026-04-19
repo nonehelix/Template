@@ -243,31 +243,36 @@ return {
 
 			function Feature:GetMarketSlotPack(slot)
 				local packLabel = slot and slot:FindFirstChild("Packname")
-				if not packLabel or not packLabel:IsA("TextLabel") then
-					warn("[AutoBuyDebug] slot missing Packname label", slot and slot.Name)
+				if not packLabel then
+					warn("[AutoBuyDebug] slot missing Packname", slot and slot.Name)
 					return nil
 				end
 
-				local rawText = tostring(packLabel.Text or "")
-				local packName = trimPackLabel(rawText)
+				if not packLabel:IsA("TextLabel") then
+					warn("[AutoBuyDebug] Packname exists but is not TextLabel", slot.Name, packLabel.ClassName)
+					return nil
+				end
 
-				warn("[AutoBuyDebug] pack text", slot.Name, rawText, "=>", tostring(packName))
+				local rawPacknameText = tostring(packLabel.Text or "")
+				local packName = trimPackLabel(rawPacknameText)
+
+				warn("[AutoBuyDebug] Packname.Text", slot.Name, rawPacknameText, "=>", tostring(packName))
 				return packName
 			end
 
 			function Feature:GetMarketSlotMutation(slot)
 				local mutationLabel = slot and slot:FindFirstChild("Mutation")
 				if not mutationLabel or not mutationLabel:IsA("TextLabel") then
-					warn("[AutoBuyDebug] slot missing Mutation label, using Regular", slot and slot.Name)
+					warn("[AutoBuyDebug] slot missing Mutation, using Regular", slot and slot.Name)
 					return "Regular"
 				end
 
 				if mutationLabel.Visible ~= true or mutationLabel.Text == "" then
-					warn("[AutoBuyDebug] mutation hidden/empty, using Regular", slot.Name)
+					warn("[AutoBuyDebug] Mutation hidden/empty, using Regular", slot.Name)
 					return "Regular"
 				end
 
-				warn("[AutoBuyDebug] mutation text", slot.Name, mutationLabel.Text)
+				warn("[AutoBuyDebug] Mutation.Text", slot.Name, mutationLabel.Text)
 				return tostring(mutationLabel.Text)
 			end
 
@@ -378,19 +383,19 @@ return {
 						local matches = packName and self:Matches(packName, mutation, selectedPacks, selectedMutations) or false
 
 						warn(
-							"[AutoBuyDebug] slot check",
+							"[AutoBuyDebug] market slot",
 							slot.Name,
-							"pack", tostring(packName),
-							"mutation", tostring(mutation),
-							"buy", tostring(buyName),
-							"matches", tostring(matches)
+							"Packname =", tostring(packName),
+							"Mutation =", tostring(mutation),
+							"BuyName =", tostring(buyName),
+							"Matches =", tostring(matches)
 						)
 
 						if matches and buyName then
 							local lastTime = self.State.LastMarketBuyTimes[buyName]
 							if not lastTime or (now - lastTime) > 1 then
 								self.State.LastMarketBuyTimes[buyName] = now
-								warn("[AutoBuyDebug] firing stock remote", "Buy", buyName)
+								warn("[AutoBuyDebug] firing market buy", buyName)
 								StockRemote:FireServer("Buy", buyName)
 							else
 								warn("[AutoBuyDebug] cooldown skip", buyName, now - lastTime)

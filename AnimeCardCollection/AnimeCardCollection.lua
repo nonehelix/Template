@@ -110,12 +110,14 @@ return {
 		end
 
 		local function getAllCardNames()
-			local cards = {}
+			local cards = {"All"}  -- Added "All" option here
 			if CardConfig and CardConfig.Packs then
 				for _, packData in pairs(CardConfig.Packs) do
 					if packData.List then
 						for cardName in pairs(packData.List) do
-							table.insert(cards, cardName)
+							if not table.find(cards, cardName) then
+								table.insert(cards, cardName)
+							end
 						end
 					end
 				end
@@ -277,7 +279,7 @@ return {
 		end
 
 		--==================================================
-		-- FEATURE: AUTO GRADE (Card Selection)
+		-- FEATURE: AUTO GRADE (With "All" Cards Option)
 		--==================================================
 		do
 			local Feature = RegisterFeature({
@@ -287,8 +289,8 @@ return {
 
 				Defaults = {
 					AutoGradeEnabled = false,
-					AutoGradeCards = {},     -- Multi-select card names
-					AutoGradeTarget = {},    -- Target grades
+					AutoGradeCards = {},     -- Now supports "All"
+					AutoGradeTarget = {},
 				},
 
 				State = {
@@ -308,8 +310,8 @@ return {
 						Id = "AutoGradeCards", 
 						Type = "multiselect", 
 						Label = "Select Cards", 
-						Description = "Choose which cards to auto grade",
-						Items = waitForItems(getAllCardNames, 5, {"Chopper", "Luffy"}), 
+						Description = "Choose which cards to auto grade (All = every owned card)",
+						Items = waitForItems(getAllCardNames, 5, {"All", "Chopper", "Luffy"}), 
 						EmptyText = "Nothing selected" 
 					},
 					{ 
@@ -323,7 +325,6 @@ return {
 				}
 			})
 
-			-- Grade order for "better or equal" comparison
 			local gradeOrder = {}
 			if GradesConfig and GradesConfig.List then
 				for i, g in ipairs(GradesConfig.List) do
@@ -363,10 +364,11 @@ return {
 				local ownedCards = self:GetOwnedCards()
 				local eligible = {}
 
-				for _, cardName in ipairs(selectedCards) do
-					local cardData = ownedCards[cardName]
-					if cardData then
-						local currentGrade = cardData.Grade
+				local useAll = arrayContains(selectedCards, "All")
+
+				for cardName, cardData in pairs(ownedCards) do
+					if useAll or arrayContains(selectedCards, cardName) then
+						local currentGrade = cardData and cardData.Grade
 						if not self:IsGradeBetterOrEqual(currentGrade, targetGrades) then
 							table.insert(eligible, cardName)
 						end
@@ -375,7 +377,7 @@ return {
 
 				if #eligible == 0 then return end
 
-				-- Round-robin logic (avoid repeating same card)
+				-- Round-robin (avoid repeating same card)
 				local nextIndex = 1
 				if self.State.LastGradedCard then
 					for i, card in ipairs(eligible) do
@@ -389,7 +391,6 @@ return {
 				local cardToGrade = eligible[nextIndex]
 				self.State.LastGradedCard = cardToGrade
 
-				-- Fire the grading remote
 				CardRemote:FireServer("Roll", cardToGrade)
 			end
 
@@ -472,7 +473,6 @@ return {
 				}
 			})
 
-			-- (Your existing AutoBuyMarket code remains unchanged)
 			function Feature:GetMarketStock()
 				local playerGui = player:FindFirstChild("PlayerGui")
 				if not playerGui then return {} end

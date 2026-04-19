@@ -2,90 +2,57 @@ return function(Shared)
 	local Players = Shared.Players
 	local Workspace = Shared.Workspace
 	local RunService = Shared.RunService
-
 	local RegisterFeature = Shared.RegisterFeature
-	local arrayContains = Shared.arrayContains
-	local copySimpleValue = Shared.copySimpleValue
 
 	--==================================================
-	-- FEATURE: ANTI AFK
+	-- LOCAL HELPERS FOR THIS GAME
 	--==================================================
 
-	do
-		local Feature = RegisterFeature({
-			Key = "AntiAFK",
-			Tab = "Settings",
-			Order = 120,
-
-			Defaults = {
-				AntiAFK = false
-			},
-
-			State = {
-				antiAfkConnection = nil,
-				virtualUser = nil,
-			},
-
-			Options = {
-				{
-					Id = "AntiAFK",
-					Type = "toggle",
-					Label = "Anti-AFK",
-					Description = "Prevent Roblox from kicking you for being idle"
-				}
-			}
-		})
-
-		function Feature:Init(context)
-			self.Context = context
-			self.State.virtualUser = game:GetService("VirtualUser")
-		end
-
-		function Feature:StartAntiAFK()
-			self:StopAntiAFK()
-
-			local localPlayer = Players.LocalPlayer
-
-			if getconnections then
-				for _, connection in pairs(getconnections(localPlayer.Idled)) do
-					if connection.Disable then
-						connection:Disable()
-					elseif connection.Disconnect then
-						connection:Disconnect()
-					end
-				end
+	local function arrayContains(arr, target)
+		for _, v in ipairs(arr or {}) do
+			if tostring(v) == tostring(target) then
+				return true
 			end
+		end
+		return false
+	end
 
-			self.State.antiAfkConnection = localPlayer.Idled:Connect(function()
-				if self.State.virtualUser then
-					self.State.virtualUser:CaptureController()
-					self.State.virtualUser:ClickButton2(Vector2.new())
-				end
-			end)
+	local function normalizeSelectionArray(values)
+		local result = {}
+
+		if type(values) ~= "table" then
+			return result
 		end
 
-		function Feature:StopAntiAFK()
-			if self.State.antiAfkConnection then
-				self.State.antiAfkConnection:Disconnect()
-				self.State.antiAfkConnection = nil
+		for _, value in ipairs(values) do
+			table.insert(result, tostring(value))
+		end
+
+		return result
+	end
+
+	local function getPackItems()
+		local items = {"All"}
+
+		if CardConfig and CardConfig.List and CardConfig.List.Packs then
+			for _, packName in ipairs(CardConfig.List.Packs) do
+				table.insert(items, tostring(packName))
 			end
 		end
 
-		function Feature:GetHandlers()
-			return {
-				AntiAFK = function(enabled)
-					if enabled then
-						self:StartAntiAFK()
-					else
-						self:StopAntiAFK()
-					end
-				end
-			}
+		return items
+	end
+
+	local function getMutationItems()
+		local items = {"All", "Regular"}
+
+		if CardConfig and CardConfig.List and CardConfig.List.Mutations then
+			for _, mutationName in ipairs(CardConfig.List.Mutations) do
+				table.insert(items, tostring(mutationName))
+			end
 		end
 
-		function Feature:Cleanup()
-			self:StopAntiAFK()
-		end
+		return items
 	end
 
 	--==================================================
@@ -93,30 +60,6 @@ return function(Shared)
 	--==================================================
 
 	do
-		local function getPackItems()
-			local items = {"All"}
-
-			if CardConfig and CardConfig.List and CardConfig.List.Packs then
-				for _, packName in ipairs(CardConfig.List.Packs) do
-					table.insert(items, tostring(packName))
-				end
-			end
-
-			return items
-		end
-
-		local function getMutationItems()
-			local items = {"All", "Regular"}
-
-			if CardConfig and CardConfig.List and CardConfig.List.Mutations then
-				for _, mutationName in ipairs(CardConfig.List.Mutations) do
-					table.insert(items, tostring(mutationName))
-				end
-			end
-
-			return items
-		end
-
 		local Feature = RegisterFeature({
 			Key = "AutoBuy",
 			Tab = "Auto Buy",
@@ -159,20 +102,6 @@ return function(Shared)
 				}
 			}
 		})
-
-		function Feature:NormalizeSelectionArray(values)
-			local result = {}
-
-			if type(values) ~= "table" then
-				return result
-			end
-
-			for _, value in ipairs(values) do
-				table.insert(result, tostring(value))
-			end
-
-			return result
-		end
 
 		function Feature:GetPackModelType(packModel)
 			if not packModel then
@@ -223,11 +152,9 @@ return function(Shared)
 			if not packType or packType == "" then
 				return false
 			end
-
 			if type(selectedPacks) ~= "table" or #selectedPacks == 0 then
 				return false
 			end
-
 			if type(selectedMutations) ~= "table" or #selectedMutations == 0 then
 				return false
 			end
@@ -239,16 +166,12 @@ return function(Shared)
 		end
 
 		function Feature:Tick(values)
-			if not values or not values.AutoBuyEnabled then
+			if not values.AutoBuyEnabled then
 				return
 			end
 
-			if not CardRemote then
-				return
-			end
-
-			local selectedPacks = self:NormalizeSelectionArray(values.AutoBuyPack)
-			local selectedMutations = self:NormalizeSelectionArray(values.AutoBuyMutation)
+			local selectedPacks = normalizeSelectionArray(values.AutoBuyPack)
+			local selectedMutations = normalizeSelectionArray(values.AutoBuyMutation)
 
 			if #selectedPacks == 0 or #selectedMutations == 0 then
 				return
@@ -261,6 +184,10 @@ return function(Shared)
 
 			local packsFolder = clientFolder:FindFirstChild("Packs")
 			if not packsFolder then
+				return
+			end
+
+			if not CardRemote then
 				return
 			end
 
@@ -294,13 +221,10 @@ return function(Shared)
 
 			task.spawn(function()
 				while self.State.Polling do
-					local activePanel = self.State.PanelRef
-					local values = activePanel and activePanel.Config and activePanel.Config.Values
-
+					local values = self.State.PanelRef and self.State.PanelRef.Config and self.State.PanelRef.Config.Values
 					if values and values.AutoBuyEnabled then
 						self:Tick(values)
 					end
-
 					task.wait(0.15)
 				end
 			end)
@@ -313,8 +237,6 @@ return function(Shared)
 		function Feature:GetHandlers()
 			return {
 				AutoBuyEnabled = function(value, values, panelRef)
-					self.State.PanelRef = panelRef
-
 					if value then
 						self:Start(panelRef)
 					else
@@ -322,11 +244,11 @@ return function(Shared)
 					end
 				end,
 
-				AutoBuyPack = function(_, values, panelRef)
+				AutoBuyPack = function(value, values, panelRef)
 					self.State.PanelRef = panelRef
 				end,
 
-				AutoBuyMutation = function(_, values, panelRef)
+				AutoBuyMutation = function(value, values, panelRef)
 					self.State.PanelRef = panelRef
 				end,
 			}

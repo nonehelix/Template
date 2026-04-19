@@ -1,9 +1,13 @@
 return function(Shared)
-	local Players = Shared.Players
 	local Workspace = Shared.Workspace
 	local RegisterFeature = Shared.RegisterFeature
+	local RegisterTab = Shared.RegisterTab
 
 	local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+	RegisterTab({
+		Name = "Auto Buy"
+	})
 
 	local CardRemote = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Card")
 	local CardConfig = require(

@@ -13,8 +13,8 @@ return {
 		-- TABS
 		--==================================================
 		RegisterTabs({
-			{Name = "Auto Buy", Order = 20},
-			{Name = "Shop",     Order = 25},
+			{Name = "Card", Order = 20},   -- Renamed from "Auto Buy"
+			{Name = "Shop", Order = 25},
 		})
 
 		--==================================================
@@ -31,8 +31,15 @@ return {
 				:WaitForChild("CardConfig")
 		)
 
+		local GradesConfig = require(
+			ReplicatedStorage:WaitForChild("Modules")
+				:WaitForChild("Config")
+				:WaitForChild("Core")
+				:WaitForChild("Grades")
+		)
+
 		--==================================================
-		-- HELPERS (Cleaned + reuse Shared where possible)
+		-- HELPERS
 		--==================================================
 		local function normalizePackName(name)
 			name = tostring(name or "")
@@ -54,12 +61,9 @@ return {
 			return tonumber(string.match(tostring(text or ""), "%d+")) or 0
 		end
 
-		-- Reuse arrayContains from Shared if available, else fallback
 		local arrayContains = Shared.arrayContains or function(arr, target)
 			for _, v in ipairs(arr or {}) do
-				if tostring(v) == tostring(target) then
-					return true
-				end
+				if tostring(v) == tostring(target) then return true end
 			end
 			return false
 		end
@@ -93,27 +97,37 @@ return {
 			return items
 		end
 
+		local function getGradeItems()
+			local items = {}
+			if GradesConfig and GradesConfig.List then
+				for _, grade in ipairs(GradesConfig.List) do
+					table.insert(items, grade)
+				end
+			else
+				items = {"F", "E", "D", "C", "B", "A", "S", "S+", "SS", "SR", "UR"}
+			end
+			return items
+		end
+
 		local function waitForItems(builder, minCount, fallback, timeout)
 			timeout = timeout or 5
 			local start = os.clock()
 			while os.clock() - start < timeout do
 				local items = builder()
-				if #items >= minCount then
-					return items
-				end
+				if #items >= minCount then return items end
 				task.wait(0.1)
 			end
 			return fallback
 		end
 
 		--==================================================
-		-- FEATURE: AUTO BUY (CONVEYOR)
+		-- FEATURE: AUTO BUY (CONVEYOR) - Now under "Card" tab
 		--==================================================
 		do
 			local Feature = RegisterFeature({
 				Key = "AutoBuy",
-				Tab = "Auto Buy",
-				Order = 20,
+				Tab = "Card",
+				Order = 10,
 
 				Defaults = {
 					AutoBuyEnabled = false,
@@ -128,27 +142,26 @@ return {
 				},
 
 				Options = {
-					{ Id = "AutoBuyEnabled",   Type = "toggle", Label = "Enable Auto Buy", Description = "Auto buys matching conveyor packs" },
+					{ Id = "AutoBuyEnabled", Type = "toggle", Label = "Enable Auto Buy", Description = "Auto buys matching conveyor packs" },
 					{ 
 						Id = "AutoBuyPack", 
 						Type = "multiselect", 
 						Label = "Pack ID", 
 						Description = "Choose one or more packs",
-						Items = waitForItems(getPackItems, 2, {"All"}),
-						EmptyText = "Nothing selected"
+						Items = waitForItems(getPackItems, 2, {"All"}), 
+						EmptyText = "Nothing selected" 
 					},
 					{ 
 						Id = "AutoBuyMutation", 
 						Type = "multiselect", 
 						Label = "Mutation", 
 						Description = "Choose one or more rarities",
-						Items = waitForItems(getMutationItems, 3, {"All", "Regular"}),
-						EmptyText = "Nothing selected"
+						Items = waitForItems(getMutationItems, 3, {"All", "Regular"}), 
+						EmptyText = "Nothing selected" 
 					},
 				}
 			})
 
-			-- Model parsing methods
 			function Feature:GetPackModelType(packModel)
 				if not packModel then return nil end
 				if packModel.PrimaryPart and packModel.PrimaryPart.Name ~= "" then
@@ -179,7 +192,6 @@ return {
 
 				local packOk = arrayContains(selectedPacks, "All") or arrayContains(selectedPacks, packType)
 				local mutOk  = arrayContains(selectedMutations, "All") or arrayContains(selectedMutations, mutation)
-
 				return packOk and mutOk
 			end
 
@@ -255,13 +267,175 @@ return {
 		end
 
 		--==================================================
-		-- FEATURE: AUTO BUY MARKET (Cleaned + less spam)
+		-- FEATURE: AUTO GRADE (New Feature)
+		--==================================================
+		do
+			local Feature = RegisterFeature({
+				Key = "AutoGrade",
+				Tab = "Card",
+				Order = 15,
+
+				Defaults = {
+					AutoGradeEnabled = false,
+					AutoGradePack = {},
+					AutoGradeTarget = {},
+				},
+
+				State = {
+					Grading = false,
+					LastGradedCard = nil,   -- Round-robin support
+					PanelRef = nil,
+				},
+
+				Options = {
+					{ 
+						Id = "AutoGradeEnabled", 
+						Type = "toggle", 
+						Label = "Enable Auto Grade", 
+						Description = "Automatically grades cards from selected packs to target grade(s)" 
+					},
+					{ 
+						Id = "AutoGradePack", 
+						Type = "multiselect", 
+						Label = "Pack", 
+						Description = "Only grade cards from these packs",
+						Items = waitForItems(getPackItems, 2, {"All"}), 
+						EmptyText = "Nothing selected" 
+					},
+					{ 
+						Id = "AutoGradeTarget", 
+						Type = "multiselect", 
+						Label = "Target Grade", 
+						Description = "Stop grading when card reaches any of these grades or better",
+						Items = getGradeItems(),
+						EmptyText = "Nothing selected" 
+					},
+				}
+			})
+
+			-- Grade order for comparison (higher index = better grade)
+			local gradeOrder = {}
+			if GradesConfig and GradesConfig.List then
+				for i, grade in ipairs(GradesConfig.List) do
+					gradeOrder[grade] = i
+				end
+			else
+				local defaults = {"F","E","D","C","B","A","S","S+","SS","SR","UR"}
+				for i, grade in ipairs(defaults) do
+					gradeOrder[grade] = i
+				end
+			end
+
+			function Feature:IsGradeBetterOrEqual(currentGrade, targetGrades)
+				if not currentGrade or #targetGrades == 0 then return false end
+				local currentIdx = gradeOrder[currentGrade] or 0
+				for _, tgt in ipairs(targetGrades) do
+					local tgtIdx = gradeOrder[tgt]
+					if tgtIdx and currentIdx >= tgtIdx then
+						return true
+					end
+				end
+				return false
+			end
+
+			function Feature:GetOwnedCards()
+				-- Try to pull from Shared if ReplicatedData exists (common in these frameworks)
+				if Shared and Shared.ReplicatedData and Shared.ReplicatedData.GetData then
+					return Shared.ReplicatedData.GetData("Cards") or {}
+				end
+				return {}
+			end
+
+			function Feature:Tick()
+				if not self.State.Grading then return end
+
+				local values = self.State.PanelRef and self.State.PanelRef.Config and self.State.PanelRef.Config.Values
+				if not values or not values.AutoGradeEnabled then return end
+
+				local selectedPacks = normalizeSelectionArray(values.AutoGradePack)
+				local targetGrades = normalizeSelectionArray(values.AutoGradeTarget)
+
+				if #selectedPacks == 0 or #targetGrades == 0 then return end
+
+				local ownedCards = self:GetOwnedCards()
+				local eligible = {}
+
+				for cardId, cardData in pairs(ownedCards) do
+					local currentGrade = cardData and cardData.Grade
+					if not self:IsGradeBetterOrEqual(currentGrade, targetGrades) then
+						table.insert(eligible, cardId)
+					end
+				end
+
+				if #eligible == 0 then return end
+
+				-- Round-robin: cycle through eligible cards without repeating the same one consecutively
+				local nextIndex = 1
+				if self.State.LastGradedCard then
+					for i, id in ipairs(eligible) do
+						if id == self.State.LastGradedCard then
+							nextIndex = (i % #eligible) + 1
+							break
+						end
+					end
+				end
+
+				local cardToGrade = eligible[nextIndex]
+				self.State.LastGradedCard = cardToGrade
+
+				-- Fire the grading remote (matches game's own grading system)
+				CardRemote:FireServer("Roll", cardToGrade)
+			end
+
+			function Feature:Start(panelRef)
+				self.State.PanelRef = panelRef
+				if self.State.Grading then return end
+
+				self.State.Grading = true
+				self.State.LastGradedCard = nil
+
+				task.spawn(function()
+					while self.State.Grading do
+						self:Tick()
+						task.wait(0.5)
+					end
+				end)
+			end
+
+			function Feature:Stop()
+				self.State.Grading = false
+			end
+
+			function Feature:GetHandlers()
+				return {
+					AutoGradeEnabled = function(value, _, panelRef)
+						self.State.PanelRef = panelRef
+						if value then
+							self:Start(panelRef)
+						else
+							self:Stop()
+						end
+					end,
+					AutoGradePack = function(_, _, panelRef) self.State.PanelRef = panelRef end,
+					AutoGradeTarget = function(_, _, panelRef) self.State.PanelRef = panelRef end,
+				}
+			end
+
+			function Feature:Cleanup()
+				self:Stop()
+				self.State.PanelRef = nil
+				self.State.LastGradedCard = nil
+			end
+		end
+
+		--==================================================
+		-- FEATURE: AUTO BUY MARKET
 		--==================================================
 		do
 			local Feature = RegisterFeature({
 				Key = "AutoBuyMarket",
 				Tab = "Shop",
-				Order = 10,
+				Order = 20,
 
 				Defaults = {
 					AutoBuyMarketEnabled = false,
@@ -277,17 +451,17 @@ return {
 				},
 
 				Options = {
-					{ Id = "AutoBuyMarketEnabled", Type = "toggle", Label = "Enable Auto Buy Market", 
+					{ Id = "AutoBuyMarketEnabled", Type = "toggle", Label = "Enable Auto Buy Market",
 					  Description = "Automatically buys selected packs from the market every 60 seconds" },
 					{ 
 						Id = "AutoBuyMarketPack", Type = "multiselect", Label = "Pack ID",
 						Description = "Choose packs to buy from market",
-						Items = waitForItems(getPackItems, 2, {"All"}), EmptyText = "Nothing selected"
+						Items = waitForItems(getPackItems, 2, {"All"}), EmptyText = "Nothing selected" 
 					},
 					{ 
 						Id = "AutoBuyMarketMutation", Type = "multiselect", Label = "Mutation",
 						Description = "Choose mutations/rarities to buy",
-						Items = waitForItems(getMutationItems, 3, {"All", "Regular"}), EmptyText = "Nothing selected"
+						Items = waitForItems(getMutationItems, 3, {"All", "Regular"}), EmptyText = "Nothing selected" 
 					},
 				}
 			})
@@ -295,18 +469,14 @@ return {
 			function Feature:GetMarketStock()
 				local playerGui = player:FindFirstChild("PlayerGui")
 				if not playerGui then return {} end
-
 				local stockGui = playerGui:FindFirstChild("Stock")
 				if not stockGui then return {} end
-
 				local frame = stockGui:FindFirstChild("Frame")
 				if not frame then return {} end
-
 				local scrolling = frame:FindFirstChild("ScrollingFrame")
 				if not scrolling then return {} end
 
 				local stockList = {}
-
 				for i = 1, 8 do
 					local slot = scrolling:FindFirstChild(tostring(i))
 					if slot then
@@ -355,7 +525,6 @@ return {
 				if #marketStock == 0 then return end
 
 				local buyQueue = {}
-
 				for _, item in ipairs(marketStock) do
 					local packOk = arrayContains(selectedPacks, "All") or arrayContains(selectedNormalizedPacks, item.NormalizedPackName)
 					local mutationOk = arrayContains(selectedMutations, "All") or arrayContains(selectedMutations, item.Mutation)
@@ -380,16 +549,13 @@ return {
 			function Feature:Start(panelRef)
 				self.State.PanelRef = panelRef
 				self.State.LastCheckTime = 0
-
 				if self.State.Running then return end
 				self.State.Running = true
 
 				task.spawn(function()
 					while self.State.Running do
 						local values = self.State.PanelRef and self.State.PanelRef.Config and self.State.PanelRef.Config.Values
-						if not values or not values.AutoBuyMarketEnabled then
-							break
-						end
+						if not values or not values.AutoBuyMarketEnabled then break end
 
 						if tick() - self.State.LastCheckTime >= 60 then
 							self.State.LastCheckTime = tick()
@@ -416,12 +582,8 @@ return {
 							self:Stop()
 						end
 					end,
-					AutoBuyMarketPack = function(_, _, panelRef)
-						self.State.PanelRef = panelRef
-					end,
-					AutoBuyMarketMutation = function(_, _, panelRef)
-						self.State.PanelRef = panelRef
-					end,
+					AutoBuyMarketPack = function(_, _, panelRef) self.State.PanelRef = panelRef end,
+					AutoBuyMarketMutation = function(_, _, panelRef) self.State.PanelRef = panelRef end,
 				}
 			end
 

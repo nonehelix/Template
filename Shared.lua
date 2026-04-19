@@ -29,13 +29,24 @@ local Theme = {
 Features.Theme = Theme
 
 --==================================================
--- ACCESS CONTROL
+-- SHARED HELPERS
 --==================================================
 
-local ACCESS_LINKS = {
-	"https://www.roblox.com/es/games/76285745979410/Anime-Card-Collection",
-	"https://www.roblox.com/es/games/90462358603255/Anime-Eternal",
-}
+local function roundTo2(num)
+	return math.floor(num * 100 + 0.5) / 100
+end
+
+local function copySimpleValue(value)
+	if type(value) ~= "table" then
+		return value
+	end
+
+	local copy = {}
+	for k, v in pairs(value) do
+		copy[k] = copySimpleValue(v)
+	end
+	return copy
+end
 
 local function extractPlaceIdFromLink(link)
 	if type(link) ~= "string" then
@@ -55,37 +66,17 @@ local function extractPlaceIdFromLink(link)
 	return nil
 end
 
-function Features.IsAllowedGame()
-	local currentPlaceId = game.PlaceId
+local function buildPlaceIdSetFromLinks(links)
+	local placeIdSet = {}
 
-	for _, link in ipairs(ACCESS_LINKS) do
+	for _, link in ipairs(links or {}) do
 		local placeId = extractPlaceIdFromLink(link)
-		if placeId and placeId == currentPlaceId then
-			return true
+		if placeId then
+			placeIdSet[placeId] = true
 		end
 	end
 
-	return false
-end
-
---==================================================
--- SHARED HELPERS
---==================================================
-
-local function roundTo2(num)
-	return math.floor(num * 100 + 0.5) / 100
-end
-
-local function copySimpleValue(value)
-	if type(value) ~= "table" then
-		return value
-	end
-
-	local copy = {}
-	for k, v in pairs(value) do
-		copy[k] = copySimpleValue(v)
-	end
-	return copy
+	return placeIdSet
 end
 
 local function waitForCharacterParts(timeoutSeconds)
@@ -1120,24 +1111,24 @@ local function CompilePanelConfig(baseConfig)
 
 	for _, feature in ipairs(FeatureList) do
 		local tab = tabsByName[feature.Tab]
-		if tab then
-			insertedSectionsByTab[feature.Tab] = insertedSectionsByTab[feature.Tab] or {}
+		assert(tab, "Feature '" .. tostring(feature.Key) .. "' references unregistered tab '" .. tostring(feature.Tab) .. "'")
 
-			if feature.Section and feature.Section ~= "" and not insertedSectionsByTab[feature.Tab][feature.Section] then
-				table.insert(tab.Options, {
-					Type = "section",
-					Label = feature.Section
-				})
-				insertedSectionsByTab[feature.Tab][feature.Section] = true
-			end
+		insertedSectionsByTab[feature.Tab] = insertedSectionsByTab[feature.Tab] or {}
 
-			for _, option in ipairs(feature.Options or {}) do
-				assert(type(option.Id) == "string" and option.Id ~= "", "Option missing valid Id in feature: " .. feature.Key)
-				assert(VALID_OPTION_TYPES[option.Type], "Invalid option type '" .. tostring(option.Type) .. "' in feature: " .. feature.Key)
-				assert(config.Values[option.Id] ~= nil or option.Type == "button", "Missing default for option Id: " .. option.Id)
+		if feature.Section and feature.Section ~= "" and not insertedSectionsByTab[feature.Tab][feature.Section] then
+			table.insert(tab.Options, {
+				Type = "section",
+				Label = feature.Section
+			})
+			insertedSectionsByTab[feature.Tab][feature.Section] = true
+		end
 
-				table.insert(tab.Options, option)
-			end
+		for _, option in ipairs(feature.Options or {}) do
+			assert(type(option.Id) == "string" and option.Id ~= "", "Option missing valid Id in feature: " .. feature.Key)
+			assert(VALID_OPTION_TYPES[option.Type], "Invalid option type '" .. tostring(option.Type) .. "' in feature: " .. feature.Key)
+			assert(config.Values[option.Id] ~= nil or option.Type == "button", "Missing default for option Id: " .. option.Id)
+
+			table.insert(tab.Options, option)
 		end
 
 		local handlers = feature.GetHandlers and feature:GetHandlers() or {}
@@ -1182,6 +1173,9 @@ Features.BuildFeatureDefaults = BuildFeatureDefaults
 Features.FeatureList = FeatureList
 
 Features.copySimpleValue = copySimpleValue
+Features.roundTo2 = roundTo2
 Features.HasSavedSettings = HasSavedSettings
+Features.ExtractPlaceIdFromLink = extractPlaceIdFromLink
+Features.BuildPlaceIdSetFromLinks = buildPlaceIdSetFromLinks
 
 return Features

@@ -419,25 +419,40 @@ return {
 
 			function Feature:GetOwnedCards()
 				if Shared and Shared.ReplicatedData and Shared.ReplicatedData.GetData then
-					return Shared.ReplicatedData.GetData("Cards") or {}
+					local cards = Shared.ReplicatedData.GetData("Cards") or {}
+					print("[AutoGrade] GetOwnedCards success. Count:", next(cards) and "has data" or "empty")
+					return cards
 				end
+
+				warn("[AutoGrade] Shared.ReplicatedData.GetData missing")
 				return {}
 			end
 
 			function Feature:Tick()
 				if not self.State.Grading then
+					print("[AutoGrade] Tick skipped: Grading false")
 					return
 				end
 
 				local values = self.State.PanelRef and self.State.PanelRef.Config and self.State.PanelRef.Config.Values
-				if not values or not values.AutoGradeEnabled then
+				if not values then
+					warn("[AutoGrade] Tick skipped: values missing")
+					return
+				end
+
+				if not values.AutoGradeEnabled then
+					print("[AutoGrade] Tick skipped: AutoGradeEnabled false")
 					return
 				end
 
 				local selectedCards = normalizeSelectionArray(values.AutoGradeCards)
 				local targetGrades = normalizeSelectionArray(values.AutoGradeTarget)
 
+				print("[AutoGrade] Selected cards:", table.concat(selectedCards, ", "))
+				print("[AutoGrade] Target grades:", table.concat(targetGrades, ", "))
+
 				if #selectedCards == 0 or #targetGrades == 0 then
+					warn("[AutoGrade] Tick skipped: no selected cards or no target grades")
 					return
 				end
 
@@ -445,16 +460,28 @@ return {
 				local eligible = {}
 				local useAll = arrayContains(selectedCards, "All")
 
+				local ownedCount = 0
+				for _ in pairs(ownedCards) do
+					ownedCount += 1
+				end
+				print("[AutoGrade] Owned cards count:", ownedCount, "UseAll:", useAll)
+
 				for cardName, cardData in pairs(ownedCards) do
-					if useAll or arrayContains(selectedCards, cardName) then
-						local currentGrade = cardData and cardData.Grade
-						if not self:IsGradeBetterOrEqual(currentGrade, targetGrades) then
-							table.insert(eligible, cardName)
-						end
+					local currentGrade = cardData and cardData.Grade
+					local cardSelected = useAll or arrayContains(selectedCards, cardName)
+					local alreadyGood = self:IsGradeBetterOrEqual(currentGrade, targetGrades)
+
+					print("[AutoGrade] Checking:", tostring(cardName), "Grade:", tostring(currentGrade), "Selected:", cardSelected, "AlreadyTargetOrBetter:", alreadyGood)
+
+					if cardSelected and not alreadyGood then
+						table.insert(eligible, cardName)
 					end
 				end
 
+				print("[AutoGrade] Eligible count:", #eligible)
+
 				if #eligible == 0 then
+					warn("[AutoGrade] No eligible cards found")
 					return
 				end
 
@@ -471,45 +498,64 @@ return {
 				local cardToGrade = eligible[nextIndex]
 				self.State.LastGradedCard = cardToGrade
 
-				GradeRemote:FireServer("Roll", cardToGrade)
+				print("[AutoGrade] Firing GradeRemote:FireServer('Roll',", tostring(cardToGrade), ")")
+
+				local ok, err = pcall(function()
+					GradeRemote:FireServer("Roll", cardToGrade)
+				end)
+
+				if ok then
+					print("[AutoGrade] GradeRemote fired successfully for:", tostring(cardToGrade))
+				else
+					warn("[AutoGrade] GradeRemote fire failed:", tostring(err))
+				end
 			end
 
 			function Feature:Start(panelRef)
 				self.State.PanelRef = panelRef
 				if self.State.Grading then
+					print("[AutoGrade] Start skipped: already grading")
 					return
 				end
 
 				self.State.Grading = true
 				self.State.LastGradedCard = nil
 
+				print("[AutoGrade] Started")
+
 				task.spawn(function()
 					while self.State.Grading do
 						self:Tick()
 						task.wait(0.5)
 					end
+					print("[AutoGrade] Loop ended")
 				end)
 			end
 
 			function Feature:Stop()
 				self.State.Grading = false
+				print("[AutoGrade] Stopped")
 			end
 
 			function Feature:GetHandlers()
 				return {
 					AutoGradeEnabled = function(value, _, panelRef)
 						self.State.PanelRef = panelRef
+						print("[AutoGrade] Toggle changed:", value)
+
 						if value then
 							self:Start(panelRef)
 						else
 							self:Stop()
 						end
 					end,
-					AutoGradeCards = function(_, _, panelRef)
+					AutoGradeCards = function(value, _, panelRef)
 						self.State.PanelRef = panelRef
+						print("[AutoGrade] Cards changed:", type(value) == "table" and table.concat(normalizeSelectionArray(value), ", ") or tostring(value))
 					end,
-					AutoGradeTarget = function(_, _, panelRef)
+					AutoGradeTarget = function(value, _, panelRef)
 						self.State.PanelRef = panelRef
+						print("[AutoGrade] Target grades changed:", type(value) == "table" and table.concat(normalizeSelectionArray(value), ", ") or tostring(value))
 					end,
 				}
 			end
@@ -518,6 +564,7 @@ return {
 				self:Stop()
 				self.State.PanelRef = nil
 				self.State.LastGradedCard = nil
+				print("[AutoGrade] Cleanup complete")
 			end
 		end
 	end

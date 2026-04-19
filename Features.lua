@@ -196,6 +196,10 @@ end
 
 local SETTINGS_FILE = "AnimeCardPanel_Settings.json"
 
+local function HasSavedSettings()
+	return isfile and isfile(SETTINGS_FILE) or false
+end
+
 local function SaveSettings(values)
 	if not writefile then
 		return
@@ -525,40 +529,45 @@ do
 
 	function Feature:Init(context)
 		self.Context = context
-		self.State.globalBag = NewCleanupBag()
 
-		self:CacheCharacterParts(player.Character)
+		if not self.State.globalBag then
+			self.State.globalBag = NewCleanupBag()
 
-		AddCleanupItem(self.State.globalBag, player.CharacterAdded:Connect(function(character)
-			self:CacheCharacterParts(character)
-			resetFlyPressed()
-		end))
+			self:CacheCharacterParts(player.Character)
 
-		AddCleanupItem(self.State.globalBag, UserInputService.InputBegan:Connect(function(input, gameProcessed)
-			if gameProcessed then
-				return
-			end
+			AddCleanupItem(self.State.globalBag, player.CharacterAdded:Connect(function(character)
+				self:CacheCharacterParts(character)
+				resetFlyPressed()
+			end))
 
-			if input.KeyCode == Enum.KeyCode.W then flyPressed.W = true end
-			if input.KeyCode == Enum.KeyCode.A then flyPressed.A = true end
-			if input.KeyCode == Enum.KeyCode.S then flyPressed.S = true end
-			if input.KeyCode == Enum.KeyCode.D then flyPressed.D = true end
-			if input.KeyCode == Enum.KeyCode.Space then flyPressed.Space = true end
-			if input.KeyCode == Enum.KeyCode.LeftControl or input.KeyCode == Enum.KeyCode.RightControl then
-				flyPressed.Ctrl = true
-			end
-		end))
+			AddCleanupItem(self.State.globalBag, UserInputService.InputBegan:Connect(function(input, gameProcessed)
+				if gameProcessed then
+					return
+				end
 
-		AddCleanupItem(self.State.globalBag, UserInputService.InputEnded:Connect(function(input)
-			if input.KeyCode == Enum.KeyCode.W then flyPressed.W = false end
-			if input.KeyCode == Enum.KeyCode.A then flyPressed.A = false end
-			if input.KeyCode == Enum.KeyCode.S then flyPressed.S = false end
-			if input.KeyCode == Enum.KeyCode.D then flyPressed.D = false end
-			if input.KeyCode == Enum.KeyCode.Space then flyPressed.Space = false end
-			if input.KeyCode == Enum.KeyCode.LeftControl or input.KeyCode == Enum.KeyCode.RightControl then
-				flyPressed.Ctrl = false
-			end
-		end))
+				if input.KeyCode == Enum.KeyCode.W then flyPressed.W = true end
+				if input.KeyCode == Enum.KeyCode.A then flyPressed.A = true end
+				if input.KeyCode == Enum.KeyCode.S then flyPressed.S = true end
+				if input.KeyCode == Enum.KeyCode.D then flyPressed.D = true end
+				if input.KeyCode == Enum.KeyCode.Space then flyPressed.Space = true end
+				if input.KeyCode == Enum.KeyCode.LeftControl or input.KeyCode == Enum.KeyCode.RightControl then
+					flyPressed.Ctrl = true
+				end
+			end))
+
+			AddCleanupItem(self.State.globalBag, UserInputService.InputEnded:Connect(function(input)
+				if input.KeyCode == Enum.KeyCode.W then flyPressed.W = false end
+				if input.KeyCode == Enum.KeyCode.A then flyPressed.A = false end
+				if input.KeyCode == Enum.KeyCode.S then flyPressed.S = false end
+				if input.KeyCode == Enum.KeyCode.D then flyPressed.D = false end
+				if input.KeyCode == Enum.KeyCode.Space then flyPressed.Space = false end
+				if input.KeyCode == Enum.KeyCode.LeftControl or input.KeyCode == Enum.KeyCode.RightControl then
+					flyPressed.Ctrl = false
+				end
+			end))
+		else
+			self:CacheCharacterParts(player.Character)
+		end
 	end
 
 	function Feature:ApplyDefaults(values)
@@ -1058,14 +1067,6 @@ local function CompilePanelConfig(baseConfig)
 	end
 
 	for _, feature in ipairs(FeatureList) do
-		if feature.ApplyDefaults then
-			pcall(function()
-				feature:ApplyDefaults(config.Values)
-			end)
-		end
-	end
-
-	for _, feature in ipairs(FeatureList) do
 		local tab = tabsByName[feature.Tab]
 		if tab then
 			insertedSectionsByTab[feature.Tab] = insertedSectionsByTab[feature.Tab] or {}
@@ -1099,7 +1100,19 @@ end
 
 function Features.BuildPanelConfig()
 	local panelConfig = CompilePanelConfig(BASE_CONFIG)
-	panelConfig.Values = LoadSettings(panelConfig.Values)
+
+	if HasSavedSettings() then
+		panelConfig.Values = LoadSettings(panelConfig.Values)
+	else
+		for _, feature in ipairs(FeatureList) do
+			if feature.ApplyDefaults then
+				pcall(function()
+					feature:ApplyDefaults(panelConfig.Values)
+				end)
+			end
+		end
+	end
+
 	return panelConfig
 end
 

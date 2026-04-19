@@ -352,7 +352,6 @@ do
 	local Feature = RegisterFeature({
 		Key = "PlayerMovement",
 		Tab = "Player",
-		Section = "Movement",
 		Order = 10,
 
 		Defaults = {
@@ -813,7 +812,6 @@ do
 	local Feature = RegisterFeature({
 		Key = "SettingsAppearance",
 		Tab = "Settings",
-		Section = "Appearance",
 		Order = 110,
 		Defaults = {
 			UIAccent = "Blue"
@@ -864,7 +862,6 @@ do
 	local Feature = RegisterFeature({
 		Key = "AntiAFK",
 		Tab = "Settings",
-		Section = "Utility",
 		Order = 120,
 		Defaults = {
 			AntiAFK = false
@@ -943,7 +940,6 @@ do
 	local Feature = RegisterFeature({
 		Key = "SettingsGeneral",
 		Tab = "Settings",
-		Section = "General",
 		Order = 500,
 		Defaults = {
 			Minimized = false

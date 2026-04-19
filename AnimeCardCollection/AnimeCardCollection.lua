@@ -20,7 +20,10 @@ return {
 		--==================================================
 		-- GAME REFERENCES
 		--==================================================
-		local CardRemote = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Card")
+		local Remotes = ReplicatedStorage:WaitForChild("Remotes")
+		local CardRemote = Remotes:WaitForChild("Card")
+		local StockRemote = Remotes:WaitForChild("Stock")
+
 		local CardConfig = require(
 			ReplicatedStorage:WaitForChild("Modules")
 				:WaitForChild("Config")
@@ -29,7 +32,7 @@ return {
 		)
 
 		--==================================================
-		-- SHARED HELPERS
+		-- LOCAL HELPERS
 		--==================================================
 		local function arrayContains(arr, target)
 			for _, v in ipairs(arr or {}) do
@@ -55,31 +58,48 @@ return {
 
 		local function normalizePackName(name)
 			name = tostring(name or "")
-			name = string.lower(name)
 			name = name:gsub("%s+", " ")
 			name = name:gsub("^%s+", "")
 			name = name:gsub("%s+$", "")
-			name = name:gsub("%s+pack$", "")
+			name = name:gsub("%s+[Pp]ack$", "")
 			return name
+		end
+
+		local function buildRemotePackId(packName, mutation)
+			local base = normalizePackName(packName)
+
+			if base == "" then
+				return nil
+			end
+
+			if mutation == "Regular" or mutation == nil or mutation == "" then
+				return base
+			end
+
+			return base .. "-" .. tostring(mutation)
 		end
 
 		local function getPackItems()
 			local items = {"All"}
+
 			if CardConfig and CardConfig.List and CardConfig.List.Packs then
 				for _, packName in pairs(CardConfig.List.Packs) do
 					items[#items + 1] = tostring(packName)
 				end
 			end
+
 			return items
 		end
 
 		local function getMutationItems()
 			local items = {"All", "Regular"}
+
 			if CardConfig and CardConfig.List and CardConfig.List.Mutations then
 				for _, mutationName in pairs(CardConfig.List.Mutations) do
 					items[#items + 1] = tostring(mutationName)
 				end
 			end
+
 			return items
 		end
 
@@ -99,7 +119,7 @@ return {
 		end
 
 		--==================================================
-		-- FEATURE: AUTO BUY (Conveyor)
+		-- FEATURE: AUTO BUY (CONVEYOR)
 		--==================================================
 		do
 			local Feature = RegisterFeature({
@@ -146,19 +166,27 @@ return {
 			})
 
 			function Feature:GetPackModelType(packModel)
-				if not packModel then return nil end
+				if not packModel then
+					return nil
+				end
+
 				if packModel.PrimaryPart and packModel.PrimaryPart.Name ~= "" then
 					return packModel.PrimaryPart.Name
 				end
+
 				local primary = packModel:FindFirstChildWhichIsA("BasePart")
 				if primary and primary.Name ~= "" then
 					return primary.Name
 				end
+
 				return nil
 			end
 
 			function Feature:GetPackModelMutation(packModel)
-				if not packModel then return "Regular" end
+				if not packModel then
+					return "Regular"
+				end
+
 				for _, descendant in ipairs(packModel:GetDescendants()) do
 					if descendant:IsA("TextLabel") and descendant.Name == "Mutation" then
 						if descendant.Visible and descendant.Text ~= "" then
@@ -166,38 +194,60 @@ return {
 						end
 					end
 				end
+
 				return "Regular"
 			end
 
 			function Feature:GetPackModelId(packModel)
-				if not packModel then return nil end
-				if packModel.Name ~= "" then return packModel.Name end
+				if not packModel then
+					return nil
+				end
+
+				if packModel.Name ~= "" then
+					return packModel.Name
+				end
+
 				return nil
 			end
 
 			function Feature:Matches(packType, mutation, selectedPacks, selectedMutations)
-				if not packType or packType == "" then return false end
-				if type(selectedPacks) ~= "table" or #selectedPacks == 0 then return false end
-				if type(selectedMutations) ~= "table" or #selectedMutations == 0 then return false end
+				if not packType or packType == "" then
+					return false
+				end
+				if type(selectedPacks) ~= "table" or #selectedPacks == 0 then
+					return false
+				end
+				if type(selectedMutations) ~= "table" or #selectedMutations == 0 then
+					return false
+				end
 
 				local packOk = arrayContains(selectedPacks, "All") or arrayContains(selectedPacks, packType)
 				local mutationOk = arrayContains(selectedMutations, "All") or arrayContains(selectedMutations, mutation)
+
 				return packOk and mutationOk
 			end
 
 			function Feature:Tick(values)
-				if not values.AutoBuyEnabled then return end
+				if not values.AutoBuyEnabled then
+					return
+				end
 
 				local selectedPacks = normalizeSelectionArray(values.AutoBuyPack)
 				local selectedMutations = normalizeSelectionArray(values.AutoBuyMutation)
 
-				if #selectedPacks == 0 or #selectedMutations == 0 then return end
+				if #selectedPacks == 0 or #selectedMutations == 0 then
+					return
+				end
 
 				local clientFolder = Workspace:FindFirstChild("Client")
-				if not clientFolder then return end
+				if not clientFolder then
+					return
+				end
 
 				local packsFolder = clientFolder:FindFirstChild("Packs")
-				if not packsFolder then return end
+				if not packsFolder then
+					return
+				end
 
 				local now = tick()
 
@@ -220,7 +270,10 @@ return {
 
 			function Feature:Start(panelRef)
 				self.State.PanelRef = panelRef
-				if self.State.Polling then return end
+
+				if self.State.Polling then
+					return
+				end
 
 				self.State.Polling = true
 
@@ -248,9 +301,11 @@ return {
 							self:Stop()
 						end
 					end,
+
 					AutoBuyPack = function(_, _, panelRef)
 						self.State.PanelRef = panelRef
 					end,
+
 					AutoBuyMutation = function(_, _, panelRef)
 						self.State.PanelRef = panelRef
 					end,
@@ -265,7 +320,7 @@ return {
 		end
 
 		--==================================================
-		-- FEATURE: AUTO BUY MARKET (Shop Tab)
+		-- FEATURE: AUTO BUY MARKET
 		--==================================================
 		do
 			local Feature = RegisterFeature({
@@ -312,8 +367,6 @@ return {
 			})
 
 			function Feature:GetMarketStock()
-				print("[AutoBuyMarket] Scanning market stock...")
-
 				local playerGui = player:FindFirstChild("PlayerGui")
 				if not playerGui then
 					warn("[AutoBuyMarket] PlayerGui not found")
@@ -322,7 +375,7 @@ return {
 
 				local stockGui = playerGui:FindFirstChild("Stock")
 				if not stockGui then
-					warn("[AutoBuyMarket] Stock GUI not found under PlayerGui")
+					warn("[AutoBuyMarket] Stock GUI not found")
 					return {}
 				end
 
@@ -350,25 +403,21 @@ return {
 						local mutation = "Regular"
 
 						if mutationLabel and mutationLabel.Visible and mutationLabel.Text and mutationLabel.Text ~= "" then
-							mutation = mutationLabel.Text
+							mutation = tostring(mutationLabel.Text)
 						end
-
-						print("[AutoBuyMarket] Slot", i, "Pack =", tostring(packName), "Mutation =", tostring(mutation))
 
 						if packName ~= "" then
 							stockList[#stockList + 1] = {
-								PackName = packName,
+								PackName = tostring(packName),
 								NormalizedPackName = normalizePackName(packName),
 								Mutation = mutation,
+								RemoteId = buildRemotePackId(packName, mutation),
 								Slot = i
 							}
 						end
-					else
-						print("[AutoBuyMarket] Slot", i, "not found")
 					end
 				end
 
-				print("[AutoBuyMarket] Total market items found:", #stockList)
 				return stockList
 			end
 
@@ -376,10 +425,10 @@ return {
 				local now = tick()
 				local elapsed = now - self.State.LastCheckTime
 
-				print("[AutoBuyMarket] Tick called. Elapsed since last check:", elapsed)
+				print("[AutoBuyMarket] Tick | elapsed =", elapsed)
 
 				if elapsed < 60 then
-					print("[AutoBuyMarket] Throttled. Waiting", math.floor(60 - elapsed), "more seconds")
+					print("[AutoBuyMarket] Waiting", math.floor(60 - elapsed), "more seconds")
 					return
 				end
 
@@ -392,18 +441,15 @@ return {
 				end
 
 				if not values.AutoBuyMarketEnabled then
-					print("[AutoBuyMarket] Feature disabled")
+					print("[AutoBuyMarket] Disabled")
 					return
 				end
 
 				local selectedPacks = normalizeSelectionArray(values.AutoBuyMarketPack)
 				local selectedMutations = normalizeSelectionArray(values.AutoBuyMarketMutation)
 
-				print("[AutoBuyMarket] Selected packs:", #selectedPacks > 0 and table.concat(selectedPacks, ", ") or "none")
-				print("[AutoBuyMarket] Selected mutations:", #selectedMutations > 0 and table.concat(selectedMutations, ", ") or "none")
-
 				if #selectedPacks == 0 or #selectedMutations == 0 then
-					warn("[AutoBuyMarket] Missing selections. Pack count =", #selectedPacks, "Mutation count =", #selectedMutations)
+					warn("[AutoBuyMarket] Missing selections")
 					return
 				end
 
@@ -412,7 +458,9 @@ return {
 					selectedNormalizedPacks[#selectedNormalizedPacks + 1] = normalizePackName(packName)
 				end
 
-				print("[AutoBuyMarket] Normalized selected packs:", #selectedNormalizedPacks > 0 and table.concat(selectedNormalizedPacks, ", ") or "none")
+				print("[AutoBuyMarket] Selected raw packs:", table.concat(selectedPacks, ", "))
+				print("[AutoBuyMarket] Selected normalized packs:", table.concat(selectedNormalizedPacks, ", "))
+				print("[AutoBuyMarket] Selected mutations:", table.concat(selectedMutations, ", "))
 
 				local marketStock = self:GetMarketStock()
 				if #marketStock == 0 then
@@ -430,19 +478,19 @@ return {
 						arrayContains(selectedMutations, item.Mutation)
 
 					print(
-						"[AutoBuyMarket] Comparing selected pack(s) with market pack:",
-						"selectedRaw =", #selectedPacks > 0 and table.concat(selectedPacks, ", ") or "none",
-						"| selectedNormalized =", #selectedNormalizedPacks > 0 and table.concat(selectedNormalizedPacks, ", ") or "none",
-						"| marketRaw =", tostring(item.PackName),
-						"| marketNormalized =", tostring(item.NormalizedPackName),
-						"| mutation =", tostring(item.Mutation),
+						"[AutoBuyMarket] Check | selectedRaw =", table.concat(selectedPacks, ", "),
+						"| selectedNormalized =", table.concat(selectedNormalizedPacks, ", "),
+						"| marketRaw =", item.PackName,
+						"| marketNormalized =", item.NormalizedPackName,
+						"| mutation =", item.Mutation,
+						"| remoteId =", tostring(item.RemoteId),
 						"| packOk =", tostring(packOk),
 						"| mutationOk =", tostring(mutationOk)
 					)
 
-					if packOk and mutationOk then
-						print("[AutoBuyMarket] BUYING:", item.PackName, "-", item.Mutation)
-						CardRemote:FireServer("BuyPack", item.PackName)
+					if packOk and mutationOk and item.RemoteId then
+						print("[AutoBuyMarket] Buying with Stock remote:", item.RemoteId)
+						StockRemote:FireServer("Buy", item.RemoteId)
 						task.wait(1.2)
 					end
 				end
@@ -453,23 +501,23 @@ return {
 				self.State.LastCheckTime = 0
 
 				if self.State.Running then
-					print("[AutoBuyMarket] Start ignored, loop already running")
+					print("[AutoBuyMarket] Loop already running")
 					return
 				end
 
-				print("[AutoBuyMarket] Starting market loop")
 				self.State.Running = true
+				print("[AutoBuyMarket] Loop started")
 
 				task.spawn(function()
 					while self.State.Running do
 						local values = self.State.PanelRef and self.State.PanelRef.Config and self.State.PanelRef.Config.Values
 						if not values then
-							warn("[AutoBuyMarket] Loop stopping: no panel values")
+							warn("[AutoBuyMarket] Stopping loop: panel values missing")
 							break
 						end
 
 						if not values.AutoBuyMarketEnabled then
-							print("[AutoBuyMarket] Loop stopping: toggle disabled")
+							print("[AutoBuyMarket] Stopping loop: feature disabled")
 							break
 						end
 
@@ -478,20 +526,20 @@ return {
 					end
 
 					self.State.Running = false
-					print("[AutoBuyMarket] Market loop stopped")
+					print("[AutoBuyMarket] Loop stopped")
 				end)
 			end
 
 			function Feature:Stop()
-				print("[AutoBuyMarket] Stop called")
 				self.State.Running = false
+				print("[AutoBuyMarket] Stop called")
 			end
 
 			function Feature:GetHandlers()
 				return {
 					AutoBuyMarketEnabled = function(value, _, panelRef)
-						print("[AutoBuyMarket] Toggle changed:", tostring(value))
 						self.State.PanelRef = panelRef
+						print("[AutoBuyMarket] Toggle:", tostring(value))
 
 						if value then
 							self.State.LastCheckTime = 0
@@ -503,6 +551,7 @@ return {
 
 					AutoBuyMarketPack = function(value, _, panelRef)
 						self.State.PanelRef = panelRef
+
 						local selected = normalizeSelectionArray(value)
 						local normalized = {}
 
@@ -510,20 +559,20 @@ return {
 							normalized[#normalized + 1] = normalizePackName(packName)
 						end
 
-						print("[AutoBuyMarket] Pack selection changed:", #selected > 0 and table.concat(selected, ", ") or "none")
+						print("[AutoBuyMarket] Pack selection raw:", #selected > 0 and table.concat(selected, ", ") or "none")
 						print("[AutoBuyMarket] Pack selection normalized:", #normalized > 0 and table.concat(normalized, ", ") or "none")
 					end,
 
 					AutoBuyMarketMutation = function(value, _, panelRef)
 						self.State.PanelRef = panelRef
+
 						local selected = normalizeSelectionArray(value)
-						print("[AutoBuyMarket] Mutation selection changed:", #selected > 0 and table.concat(selected, ", ") or "none")
+						print("[AutoBuyMarket] Mutation selection:", #selected > 0 and table.concat(selected, ", ") or "none")
 					end,
 				}
 			end
 
 			function Feature:Cleanup()
-				print("[AutoBuyMarket] Cleanup called")
 				self:Stop()
 				self.State.PanelRef = nil
 			end

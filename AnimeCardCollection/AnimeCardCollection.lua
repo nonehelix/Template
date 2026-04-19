@@ -53,27 +53,33 @@ return {
 			return result
 		end
 
+		local function normalizePackName(name)
+			name = tostring(name or "")
+			name = string.lower(name)
+			name = name:gsub("%s+", " ")
+			name = name:gsub("^%s+", "")
+			name = name:gsub("%s+$", "")
+			name = name:gsub("%s+pack$", "")
+			return name
+		end
+
 		local function getPackItems()
 			local items = {"All"}
-
 			if CardConfig and CardConfig.List and CardConfig.List.Packs then
 				for _, packName in pairs(CardConfig.List.Packs) do
 					items[#items + 1] = tostring(packName)
 				end
 			end
-
 			return items
 		end
 
 		local function getMutationItems()
 			local items = {"All", "Regular"}
-
 			if CardConfig and CardConfig.List and CardConfig.List.Mutations then
 				for _, mutationName in pairs(CardConfig.List.Mutations) do
 					items[#items + 1] = tostring(mutationName)
 				end
 			end
-
 			return items
 		end
 
@@ -140,27 +146,19 @@ return {
 			})
 
 			function Feature:GetPackModelType(packModel)
-				if not packModel then
-					return nil
-				end
-
+				if not packModel then return nil end
 				if packModel.PrimaryPart and packModel.PrimaryPart.Name ~= "" then
 					return packModel.PrimaryPart.Name
 				end
-
 				local primary = packModel:FindFirstChildWhichIsA("BasePart")
 				if primary and primary.Name ~= "" then
 					return primary.Name
 				end
-
 				return nil
 			end
 
 			function Feature:GetPackModelMutation(packModel)
-				if not packModel then
-					return "Regular"
-				end
-
+				if not packModel then return "Regular" end
 				for _, descendant in ipairs(packModel:GetDescendants()) do
 					if descendant:IsA("TextLabel") and descendant.Name == "Mutation" then
 						if descendant.Visible and descendant.Text ~= "" then
@@ -168,60 +166,38 @@ return {
 						end
 					end
 				end
-
 				return "Regular"
 			end
 
 			function Feature:GetPackModelId(packModel)
-				if not packModel then
-					return nil
-				end
-
-				if packModel.Name ~= "" then
-					return packModel.Name
-				end
-
+				if not packModel then return nil end
+				if packModel.Name ~= "" then return packModel.Name end
 				return nil
 			end
 
 			function Feature:Matches(packType, mutation, selectedPacks, selectedMutations)
-				if not packType or packType == "" then
-					return false
-				end
-				if type(selectedPacks) ~= "table" or #selectedPacks == 0 then
-					return false
-				end
-				if type(selectedMutations) ~= "table" or #selectedMutations == 0 then
-					return false
-				end
+				if not packType or packType == "" then return false end
+				if type(selectedPacks) ~= "table" or #selectedPacks == 0 then return false end
+				if type(selectedMutations) ~= "table" or #selectedMutations == 0 then return false end
 
 				local packOk = arrayContains(selectedPacks, "All") or arrayContains(selectedPacks, packType)
 				local mutationOk = arrayContains(selectedMutations, "All") or arrayContains(selectedMutations, mutation)
-
 				return packOk and mutationOk
 			end
 
 			function Feature:Tick(values)
-				if not values.AutoBuyEnabled then
-					return
-				end
+				if not values.AutoBuyEnabled then return end
 
 				local selectedPacks = normalizeSelectionArray(values.AutoBuyPack)
 				local selectedMutations = normalizeSelectionArray(values.AutoBuyMutation)
 
-				if #selectedPacks == 0 or #selectedMutations == 0 then
-					return
-				end
+				if #selectedPacks == 0 or #selectedMutations == 0 then return end
 
 				local clientFolder = Workspace:FindFirstChild("Client")
-				if not clientFolder then
-					return
-				end
+				if not clientFolder then return end
 
 				local packsFolder = clientFolder:FindFirstChild("Packs")
-				if not packsFolder then
-					return
-				end
+				if not packsFolder then return end
 
 				local now = tick()
 
@@ -244,10 +220,7 @@ return {
 
 			function Feature:Start(panelRef)
 				self.State.PanelRef = panelRef
-
-				if self.State.Polling then
-					return
-				end
+				if self.State.Polling then return end
 
 				self.State.Polling = true
 
@@ -385,6 +358,7 @@ return {
 						if packName ~= "" then
 							stockList[#stockList + 1] = {
 								PackName = packName,
+								NormalizedPackName = normalizePackName(packName),
 								Mutation = mutation,
 								Slot = i
 							}
@@ -433,6 +407,13 @@ return {
 					return
 				end
 
+				local selectedNormalizedPacks = {}
+				for _, packName in ipairs(selectedPacks) do
+					selectedNormalizedPacks[#selectedNormalizedPacks + 1] = normalizePackName(packName)
+				end
+
+				print("[AutoBuyMarket] Normalized selected packs:", #selectedNormalizedPacks > 0 and table.concat(selectedNormalizedPacks, ", ") or "none")
+
 				local marketStock = self:GetMarketStock()
 				if #marketStock == 0 then
 					warn("[AutoBuyMarket] No market stock found")
@@ -440,18 +421,23 @@ return {
 				end
 
 				for _, item in ipairs(marketStock) do
-					local packOk = arrayContains(selectedPacks, "All") or arrayContains(selectedPacks, item.PackName)
-					local mutationOk = arrayContains(selectedMutations, "All") or arrayContains(selectedMutations, item.Mutation)
+					local packOk =
+						arrayContains(selectedPacks, "All") or
+						arrayContains(selectedNormalizedPacks, item.NormalizedPackName)
+
+					local mutationOk =
+						arrayContains(selectedMutations, "All") or
+						arrayContains(selectedMutations, item.Mutation)
 
 					print(
-						"[AutoBuyMarket] Checking item:",
-						item.PackName,
-						"| Mutation:",
-						item.Mutation,
-						"| packOk:",
-						tostring(packOk),
-						"| mutationOk:",
-						tostring(mutationOk)
+						"[AutoBuyMarket] Comparing selected pack(s) with market pack:",
+						"selectedRaw =", #selectedPacks > 0 and table.concat(selectedPacks, ", ") or "none",
+						"| selectedNormalized =", #selectedNormalizedPacks > 0 and table.concat(selectedNormalizedPacks, ", ") or "none",
+						"| marketRaw =", tostring(item.PackName),
+						"| marketNormalized =", tostring(item.NormalizedPackName),
+						"| mutation =", tostring(item.Mutation),
+						"| packOk =", tostring(packOk),
+						"| mutationOk =", tostring(mutationOk)
 					)
 
 					if packOk and mutationOk then
@@ -464,6 +450,7 @@ return {
 
 			function Feature:Start(panelRef)
 				self.State.PanelRef = panelRef
+				self.State.LastCheckTime = 0
 
 				if self.State.Running then
 					print("[AutoBuyMarket] Start ignored, loop already running")
@@ -507,6 +494,7 @@ return {
 						self.State.PanelRef = panelRef
 
 						if value then
+							self.State.LastCheckTime = 0
 							self:Start(panelRef)
 						else
 							self:Stop()
@@ -516,7 +504,14 @@ return {
 					AutoBuyMarketPack = function(value, _, panelRef)
 						self.State.PanelRef = panelRef
 						local selected = normalizeSelectionArray(value)
+						local normalized = {}
+
+						for _, packName in ipairs(selected) do
+							normalized[#normalized + 1] = normalizePackName(packName)
+						end
+
 						print("[AutoBuyMarket] Pack selection changed:", #selected > 0 and table.concat(selected, ", ") or "none")
+						print("[AutoBuyMarket] Pack selection normalized:", #normalized > 0 and table.concat(normalized, ", ") or "none")
 					end,
 
 					AutoBuyMarketMutation = function(value, _, panelRef)

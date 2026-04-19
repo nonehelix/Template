@@ -13,7 +13,7 @@ return {
 		-- TABS
 		--==================================================
 		RegisterTabs({
-			{Name = "Card", Order = 20},   -- Renamed from "Auto Buy"
+			{Name = "Card", Order = 20},
 			{Name = "Shop", Order = 25},
 		})
 
@@ -109,6 +109,21 @@ return {
 			return items
 		end
 
+		local function getAllCardNames()
+			local cards = {}
+			if CardConfig and CardConfig.Packs then
+				for _, packData in pairs(CardConfig.Packs) do
+					if packData.List then
+						for cardName in pairs(packData.List) do
+							table.insert(cards, cardName)
+						end
+					end
+				end
+			end
+			table.sort(cards)
+			return cards
+		end
+
 		local function waitForItems(builder, minCount, fallback, timeout)
 			timeout = timeout or 5
 			local start = os.clock()
@@ -121,7 +136,7 @@ return {
 		end
 
 		--==================================================
-		-- FEATURE: AUTO BUY (CONVEYOR) - Now under "Card" tab
+		-- FEATURE: AUTO BUY (CONVEYOR)
 		--==================================================
 		do
 			local Feature = RegisterFeature({
@@ -227,7 +242,6 @@ return {
 			function Feature:Start(panelRef)
 				self.State.PanelRef = panelRef
 				if self.State.Polling then return end
-
 				self.State.Polling = true
 
 				task.spawn(function()
@@ -248,11 +262,7 @@ return {
 			function Feature:GetHandlers()
 				return {
 					AutoBuyEnabled = function(value, _, panelRef)
-						if value then
-							self:Start(panelRef)
-						else
-							self:Stop()
-						end
+						if value then self:Start(panelRef) else self:Stop() end
 					end,
 					AutoBuyPack = function(_, _, panelRef) self.State.PanelRef = panelRef end,
 					AutoBuyMutation = function(_, _, panelRef) self.State.PanelRef = panelRef end,
@@ -267,7 +277,7 @@ return {
 		end
 
 		--==================================================
-		-- FEATURE: AUTO GRADE (New Feature)
+		-- FEATURE: AUTO GRADE (Card Selection)
 		--==================================================
 		do
 			local Feature = RegisterFeature({
@@ -277,13 +287,13 @@ return {
 
 				Defaults = {
 					AutoGradeEnabled = false,
-					AutoGradePack = {},
-					AutoGradeTarget = {},
+					AutoGradeCards = {},     -- Multi-select card names
+					AutoGradeTarget = {},    -- Target grades
 				},
 
 				State = {
 					Grading = false,
-					LastGradedCard = nil,   -- Round-robin support
+					LastGradedCard = nil,
 					PanelRef = nil,
 				},
 
@@ -292,14 +302,14 @@ return {
 						Id = "AutoGradeEnabled", 
 						Type = "toggle", 
 						Label = "Enable Auto Grade", 
-						Description = "Automatically grades cards from selected packs to target grade(s)" 
+						Description = "Automatically grades selected cards to target grade(s)" 
 					},
 					{ 
-						Id = "AutoGradePack", 
+						Id = "AutoGradeCards", 
 						Type = "multiselect", 
-						Label = "Pack", 
-						Description = "Only grade cards from these packs",
-						Items = waitForItems(getPackItems, 2, {"All"}), 
+						Label = "Select Cards", 
+						Description = "Choose which cards to auto grade",
+						Items = waitForItems(getAllCardNames, 5, {"Chopper", "Luffy"}), 
 						EmptyText = "Nothing selected" 
 					},
 					{ 
@@ -313,16 +323,11 @@ return {
 				}
 			})
 
-			-- Grade order for comparison (higher index = better grade)
+			-- Grade order for "better or equal" comparison
 			local gradeOrder = {}
 			if GradesConfig and GradesConfig.List then
-				for i, grade in ipairs(GradesConfig.List) do
-					gradeOrder[grade] = i
-				end
-			else
-				local defaults = {"F","E","D","C","B","A","S","S+","SS","SR","UR"}
-				for i, grade in ipairs(defaults) do
-					gradeOrder[grade] = i
+				for i, g in ipairs(GradesConfig.List) do
+					gradeOrder[g] = i
 				end
 			end
 
@@ -330,8 +335,7 @@ return {
 				if not currentGrade or #targetGrades == 0 then return false end
 				local currentIdx = gradeOrder[currentGrade] or 0
 				for _, tgt in ipairs(targetGrades) do
-					local tgtIdx = gradeOrder[tgt]
-					if tgtIdx and currentIdx >= tgtIdx then
+					if gradeOrder[tgt] and currentIdx >= gradeOrder[tgt] then
 						return true
 					end
 				end
@@ -339,7 +343,6 @@ return {
 			end
 
 			function Feature:GetOwnedCards()
-				-- Try to pull from Shared if ReplicatedData exists (common in these frameworks)
 				if Shared and Shared.ReplicatedData and Shared.ReplicatedData.GetData then
 					return Shared.ReplicatedData.GetData("Cards") or {}
 				end
@@ -352,28 +355,31 @@ return {
 				local values = self.State.PanelRef and self.State.PanelRef.Config and self.State.PanelRef.Config.Values
 				if not values or not values.AutoGradeEnabled then return end
 
-				local selectedPacks = normalizeSelectionArray(values.AutoGradePack)
+				local selectedCards = normalizeSelectionArray(values.AutoGradeCards)
 				local targetGrades = normalizeSelectionArray(values.AutoGradeTarget)
 
-				if #selectedPacks == 0 or #targetGrades == 0 then return end
+				if #selectedCards == 0 or #targetGrades == 0 then return end
 
 				local ownedCards = self:GetOwnedCards()
 				local eligible = {}
 
-				for cardId, cardData in pairs(ownedCards) do
-					local currentGrade = cardData and cardData.Grade
-					if not self:IsGradeBetterOrEqual(currentGrade, targetGrades) then
-						table.insert(eligible, cardId)
+				for _, cardName in ipairs(selectedCards) do
+					local cardData = ownedCards[cardName]
+					if cardData then
+						local currentGrade = cardData.Grade
+						if not self:IsGradeBetterOrEqual(currentGrade, targetGrades) then
+							table.insert(eligible, cardName)
+						end
 					end
 				end
 
 				if #eligible == 0 then return end
 
-				-- Round-robin: cycle through eligible cards without repeating the same one consecutively
+				-- Round-robin logic (avoid repeating same card)
 				local nextIndex = 1
 				if self.State.LastGradedCard then
-					for i, id in ipairs(eligible) do
-						if id == self.State.LastGradedCard then
+					for i, card in ipairs(eligible) do
+						if card == self.State.LastGradedCard then
 							nextIndex = (i % #eligible) + 1
 							break
 						end
@@ -383,7 +389,7 @@ return {
 				local cardToGrade = eligible[nextIndex]
 				self.State.LastGradedCard = cardToGrade
 
-				-- Fire the grading remote (matches game's own grading system)
+				-- Fire the grading remote
 				CardRemote:FireServer("Roll", cardToGrade)
 			end
 
@@ -416,7 +422,7 @@ return {
 							self:Stop()
 						end
 					end,
-					AutoGradePack = function(_, _, panelRef) self.State.PanelRef = panelRef end,
+					AutoGradeCards = function(_, _, panelRef) self.State.PanelRef = panelRef end,
 					AutoGradeTarget = function(_, _, panelRef) self.State.PanelRef = panelRef end,
 				}
 			end
@@ -466,6 +472,7 @@ return {
 				}
 			})
 
+			-- (Your existing AutoBuyMarket code remains unchanged)
 			function Feature:GetMarketStock()
 				local playerGui = player:FindFirstChild("PlayerGui")
 				if not playerGui then return {} end

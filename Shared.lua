@@ -1076,7 +1076,7 @@ local function CompilePanelConfig(baseConfig)
 		Handlers = {},
 		Features = {},
 		Theme = Theme,
-		SaveSettings = SaveSettings
+		SaveSettings = SaveSettings,
 		Shared = Features
 	}
 

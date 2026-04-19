@@ -118,6 +118,12 @@ return {
 			return fallback
 		end
 
+		local function parseStockAmount(text)
+			text = tostring(text or "")
+			local num = tonumber(string.match(text, "%d+"))
+			return num or 0
+		end
+
 		--==================================================
 		-- FEATURE: AUTO BUY (CONVEYOR)
 		--==================================================
@@ -319,24 +325,28 @@ return {
 			end
 		end
 
+		--==================================================
+		-- FEATURE: AUTO BUY MARKET
+		--==================================================
 		do
 			local Feature = RegisterFeature({
 				Key = "AutoBuyMarket",
 				Tab = "Shop",
 				Order = 10,
-		
+
 				Defaults = {
 					AutoBuyMarketEnabled = false,
 					AutoBuyMarketPack = {},
 					AutoBuyMarketMutation = {},
 				},
-		
+
 				State = {
 					LastCheckTime = 0,
 					PanelRef = nil,
 					Running = false,
+					BuyCooldown = 0.08,
 				},
-		
+
 				Options = {
 					{
 						Id = "AutoBuyMarketEnabled",
@@ -362,149 +372,159 @@ return {
 					}
 				}
 			})
-		
+
 			function Feature:GetMarketStock()
 				local playerGui = player:FindFirstChild("PlayerGui")
 				if not playerGui then
 					warn("[AutoBuyMarket] PlayerGui not found")
 					return {}
 				end
-		
+
 				local stockGui = playerGui:FindFirstChild("Stock")
 				if not stockGui then
 					warn("[AutoBuyMarket] Stock GUI not found")
 					return {}
 				end
-		
+
 				local frame = stockGui:FindFirstChild("Frame")
 				if not frame then
 					warn("[AutoBuyMarket] Stock.Frame not found")
 					return {}
 				end
-		
+
 				local scrolling = frame:FindFirstChild("ScrollingFrame")
 				if not scrolling then
 					warn("[AutoBuyMarket] Stock.Frame.ScrollingFrame not found")
 					return {}
 				end
-		
+
 				local stockList = {}
-		
+
 				for i = 1, 8 do
 					local slot = scrolling:FindFirstChild(tostring(i))
 					if slot then
 						local packLabel = slot:FindFirstChild("PackName")
 						local mutationLabel = slot:FindFirstChild("Mutation")
-		
+						local stockLabel = slot:FindFirstChild("Stock")
+
 						local packName = packLabel and packLabel.Text or ""
 						local mutation = "Regular"
-		
+						local amount = stockLabel and parseStockAmount(stockLabel.Text) or 0
+
 						if mutationLabel and mutationLabel.Visible and mutationLabel.Text and mutationLabel.Text ~= "" then
 							mutation = tostring(mutationLabel.Text)
 						end
-		
+
 						if packName ~= "" then
 							stockList[#stockList + 1] = {
 								PackName = tostring(packName),
 								NormalizedPackName = normalizePackName(packName),
 								Mutation = mutation,
 								RemoteId = buildRemotePackId(packName, mutation),
+								Amount = amount,
 								Slot = i
 							}
 						end
 					end
 				end
-		
+
 				return stockList
 			end
-		
+
 			function Feature:RunStockCheck()
 				local values = self.State.PanelRef and self.State.PanelRef.Config and self.State.PanelRef.Config.Values
 				if not values then
 					warn("[AutoBuyMarket] Panel values not found")
 					return
 				end
-		
+
 				if not values.AutoBuyMarketEnabled then
 					print("[AutoBuyMarket] Disabled")
 					return
 				end
-		
+
 				local selectedPacks = normalizeSelectionArray(values.AutoBuyMarketPack)
 				local selectedMutations = normalizeSelectionArray(values.AutoBuyMarketMutation)
-		
+
 				if #selectedPacks == 0 or #selectedMutations == 0 then
 					warn("[AutoBuyMarket] Missing selections")
 					return
 				end
-		
+
 				local selectedNormalizedPacks = {}
 				for _, packName in ipairs(selectedPacks) do
 					selectedNormalizedPacks[#selectedNormalizedPacks + 1] = normalizePackName(packName)
 				end
-		
+
 				print("[AutoBuyMarket] Selected raw packs:", table.concat(selectedPacks, ", "))
 				print("[AutoBuyMarket] Selected normalized packs:", table.concat(selectedNormalizedPacks, ", "))
 				print("[AutoBuyMarket] Selected mutations:", table.concat(selectedMutations, ", "))
-		
+
 				local marketStock = self:GetMarketStock()
 				if #marketStock == 0 then
 					warn("[AutoBuyMarket] No market stock found")
 					return
 				end
-		
+
 				local buyQueue = {}
-		
+
 				for _, item in ipairs(marketStock) do
 					local packOk =
 						arrayContains(selectedPacks, "All") or
 						arrayContains(selectedNormalizedPacks, item.NormalizedPackName)
-		
+
 					local mutationOk =
 						arrayContains(selectedMutations, "All") or
 						arrayContains(selectedMutations, item.Mutation)
-		
+
 					print(
 						"[AutoBuyMarket] Check | selectedRaw =", table.concat(selectedPacks, ", "),
 						"| selectedNormalized =", table.concat(selectedNormalizedPacks, ", "),
 						"| marketRaw =", item.PackName,
 						"| marketNormalized =", item.NormalizedPackName,
 						"| mutation =", item.Mutation,
+						"| amount =", tostring(item.Amount),
 						"| remoteId =", tostring(item.RemoteId),
 						"| packOk =", tostring(packOk),
 						"| mutationOk =", tostring(mutationOk)
 					)
-		
-					if packOk and mutationOk and item.RemoteId then
-						buyQueue[#buyQueue + 1] = item.RemoteId
+
+					if packOk and mutationOk and item.RemoteId and (item.Amount or 0) > 0 then
+						for _ = 1, item.Amount do
+							buyQueue[#buyQueue + 1] = item.RemoteId
+						end
 					end
 				end
-		
+
 				if #buyQueue == 0 then
 					print("[AutoBuyMarket] Nothing matched this stock cycle")
 					return
 				end
-		
-				print("[AutoBuyMarket] Buying", #buyQueue, "matching items this cycle")
-		
-				for _, remoteId in ipairs(buyQueue) do
-					print("[AutoBuyMarket] Buying with Stock remote:", remoteId)
+
+				print("[AutoBuyMarket] Buying", #buyQueue, "items this cycle")
+
+				for index, remoteId in ipairs(buyQueue) do
+					print("[AutoBuyMarket] Fire", index, "/", #buyQueue, "->", remoteId)
 					StockRemote:FireServer("Buy", remoteId)
+
+					if self.State.BuyCooldown > 0 then
+						task.wait(self.State.BuyCooldown)
+					end
 				end
 			end
-		
+
 			function Feature:Start(panelRef)
 				self.State.PanelRef = panelRef
 				self.State.LastCheckTime = 0
-		
+
 				if self.State.Running then
 					print("[AutoBuyMarket] Loop already running")
 					return
 				end
-		
+
 				self.State.Running = true
 				print("[AutoBuyMarket] Loop started")
-		
+
 				task.spawn(function()
 					while self.State.Running do
 						local values = self.State.PanelRef and self.State.PanelRef.Config and self.State.PanelRef.Config.Values
@@ -512,37 +532,37 @@ return {
 							warn("[AutoBuyMarket] Stopping loop: panel values missing")
 							break
 						end
-		
+
 						if not values.AutoBuyMarketEnabled then
 							print("[AutoBuyMarket] Stopping loop: feature disabled")
 							break
 						end
-		
+
 						local now = tick()
 						if now - self.State.LastCheckTime >= 60 then
 							self.State.LastCheckTime = now
 							self:RunStockCheck()
 						end
-		
+
 						task.wait(1)
 					end
-		
+
 					self.State.Running = false
 					print("[AutoBuyMarket] Loop stopped")
 				end)
 			end
-		
+
 			function Feature:Stop()
 				self.State.Running = false
 				print("[AutoBuyMarket] Stop called")
 			end
-		
+
 			function Feature:GetHandlers()
 				return {
 					AutoBuyMarketEnabled = function(value, _, panelRef)
 						self.State.PanelRef = panelRef
 						print("[AutoBuyMarket] Toggle:", tostring(value))
-		
+
 						if value then
 							self.State.LastCheckTime = 0
 							self:Start(panelRef)
@@ -550,30 +570,30 @@ return {
 							self:Stop()
 						end
 					end,
-		
+
 					AutoBuyMarketPack = function(value, _, panelRef)
 						self.State.PanelRef = panelRef
-		
+
 						local selected = normalizeSelectionArray(value)
 						local normalized = {}
-		
+
 						for _, packName in ipairs(selected) do
 							normalized[#normalized + 1] = normalizePackName(packName)
 						end
-		
+
 						print("[AutoBuyMarket] Pack selection raw:", #selected > 0 and table.concat(selected, ", ") or "none")
 						print("[AutoBuyMarket] Pack selection normalized:", #normalized > 0 and table.concat(normalized, ", ") or "none")
 					end,
-		
+
 					AutoBuyMarketMutation = function(value, _, panelRef)
 						self.State.PanelRef = panelRef
-		
+
 						local selected = normalizeSelectionArray(value)
 						print("[AutoBuyMarket] Mutation selection:", #selected > 0 and table.concat(selected, ", ") or "none")
 					end,
 				}
 			end
-		
+
 			function Feature:Cleanup()
 				self:Stop()
 				self.State.PanelRef = nil

@@ -3,7 +3,8 @@ return function(Shared)
 	local Workspace = Shared.Workspace
 	local RunService = Shared.RunService
 	local RegisterFeature = Shared.RegisterFeature
-	
+	local playerGui = player:WaitForChild("PlayerGui")
+
     local CardRemote = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Card")
 	local CardConfig = require(
 		ReplicatedStorage:WaitForChild("Modules")

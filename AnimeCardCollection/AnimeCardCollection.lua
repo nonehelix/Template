@@ -12,6 +12,7 @@ return {
 
 		RegisterTabs({
 			{Name = "Auto Buy", Order = 20},
+			{Name = "Shop", Order = 25},
 		})
 
 		--==================================================

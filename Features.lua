@@ -1100,15 +1100,6 @@ end
 function Features.BuildPanelConfig()
 	local panelConfig = CompilePanelConfig(BASE_CONFIG)
 	panelConfig.Values = LoadSettings(panelConfig.Values)
-
-	for _, feature in ipairs(FeatureList) do
-		if feature.ApplyDefaults then
-			pcall(function()
-				feature:ApplyDefaults(panelConfig.Values)
-			end)
-		end
-	end
-
 	return panelConfig
 end
 

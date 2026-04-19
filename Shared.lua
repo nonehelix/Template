@@ -185,10 +185,28 @@ end
 -- SETTINGS SAVE / LOAD
 --==================================================
 
-local SETTINGS_FILE = "AnimeCardPanel_Settings.json"
+local function sanitizeFileName(text)
+	text = tostring(text or "UnknownGame")
+	text = text:gsub("[^%w%-_]", "_")
+	text = text:gsub("_+", "_")
+	text = text:gsub("^_+", "")
+	text = text:gsub("_+$", "")
+
+	if text == "" then
+		text = "UnknownGame"
+	end
+
+	return text
+end
+
+local function getSettingsFileName()
+	local gameKey = Features.CurrentGameKey or tostring(game.PlaceId) or "UnknownGame"
+	return sanitizeFileName(gameKey) .. ".json"
+end
 
 local function HasSavedSettings()
-	return isfile and isfile(SETTINGS_FILE) or false
+	local file = getSettingsFileName()
+	return isfile and isfile(file) or false
 end
 
 local function SaveSettings(values)
@@ -196,25 +214,28 @@ local function SaveSettings(values)
 		return
 	end
 
+	local file = getSettingsFileName()
+
 	pcall(function()
 		local jsonData = HttpService:JSONEncode(values or {})
-		writefile(SETTINGS_FILE, jsonData)
+		writefile(file, jsonData)
 	end)
 end
 
 local function LoadSettings(defaultValues)
 	local mergedValues = copySimpleValue(defaultValues or {})
+	local file = getSettingsFileName()
 
 	if not (isfile and readfile) then
 		return mergedValues
 	end
 
-	if not isfile(SETTINGS_FILE) then
+	if not isfile(file) then
 		return mergedValues
 	end
 
 	local success, loaded = pcall(function()
-		local data = readfile(SETTINGS_FILE)
+		local data = readfile(file)
 		return HttpService:JSONDecode(data)
 	end)
 
@@ -231,6 +252,8 @@ end
 
 Features.SaveSettings = SaveSettings
 Features.LoadSettings = LoadSettings
+Features.HasSavedSettings = HasSavedSettings
+Features.GetSettingsFileName = getSettingsFileName
 
 --==================================================
 -- FEATURE REGISTRY + CONTEXT
@@ -1174,7 +1197,6 @@ Features.FeatureList = FeatureList
 
 Features.copySimpleValue = copySimpleValue
 Features.roundTo2 = roundTo2
-Features.HasSavedSettings = HasSavedSettings
 Features.ExtractPlaceIdFromLink = extractPlaceIdFromLink
 Features.BuildPlaceIdSetFromLinks = buildPlaceIdSetFromLinks
 

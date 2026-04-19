@@ -4,13 +4,16 @@ return {
 		local RegisterFeature = Shared.RegisterFeature
 		local RegisterTabs = Shared.RegisterTabs
 
+		local Players = game:GetService("Players")
 		local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 		RegisterTabs({
 			{Name = "Auto Buy", Order = 20},
 		})
 
+		local LocalPlayer = Players.LocalPlayer
 		local CardRemote = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Card")
+		local StockRemote = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Stock")
 		local CardConfig = require(
 			ReplicatedStorage:WaitForChild("Modules")
 				:WaitForChild("Config")
@@ -65,6 +68,21 @@ return {
 			return items
 		end
 
+		local function trimPackLabel(text)
+			if type(text) ~= "string" then
+				return nil
+			end
+
+			local cleaned = text:gsub("%s+[Pp]ack$", "")
+			cleaned = cleaned:gsub("^%s+", ""):gsub("%s+$", "")
+
+			if cleaned == "" then
+				return nil
+			end
+
+			return cleaned
+		end
+
 		local function waitForItems(builder, minimumCount, fallback, timeout)
 			timeout = timeout or 5
 			local startTime = tick()
@@ -90,10 +108,15 @@ return {
 					AutoBuyEnabled = false,
 					AutoBuyPack = {},
 					AutoBuyMutation = {},
+
+					AutoMarketBuyEnabled = false,
+					AutoMarketBuyPack = {},
+					AutoMarketBuyMutation = {},
 				},
 
 				State = {
 					LastBuyTimes = {},
+					LastMarketBuyTimes = {},
 					Polling = false,
 					PanelRef = nil,
 				},
@@ -118,6 +141,28 @@ return {
 						Type = "multiselect",
 						Label = "Mutation",
 						Description = "Choose one or more rarities",
+						Items = waitForItems(getMutationItems, 3, {"All", "Regular"}),
+						EmptyText = "Nothing selected"
+					},
+					{
+						Id = "AutoMarketBuyEnabled",
+						Type = "toggle",
+						Label = "Enable Auto Market Buy",
+						Description = "Auto buys matching market packs"
+					},
+					{
+						Id = "AutoMarketBuyPack",
+						Type = "multiselect",
+						Label = "Market Pack ID",
+						Description = "Choose one or more market packs",
+						Items = waitForItems(getPackItems, 2, {"All"}),
+						EmptyText = "Nothing selected"
+					},
+					{
+						Id = "AutoMarketBuyMutation",
+						Type = "multiselect",
+						Label = "Market Mutation",
+						Description = "Choose one or more market rarities",
 						Items = waitForItems(getMutationItems, 3, {"All", "Regular"}),
 						EmptyText = "Nothing selected"
 					}
@@ -167,6 +212,54 @@ return {
 				end
 
 				return nil
+			end
+
+			function Feature:GetStockFrame()
+				local playerGui = LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui")
+				if not playerGui then
+					return nil
+				end
+
+				local stockGui = playerGui:FindFirstChild("Stock")
+				if not stockGui then
+					return nil
+				end
+
+				return stockGui:FindFirstChild("ScrollingFrame")
+			end
+
+			function Feature:GetMarketSlotPack(slot)
+				local stockLabel = slot and slot:FindFirstChild("Stock")
+				if not stockLabel or not stockLabel:IsA("TextLabel") then
+					return nil
+				end
+
+				return trimPackLabel(stockLabel.Text)
+			end
+
+			function Feature:GetMarketSlotMutation(slot)
+				local mutationLabel = slot and slot:FindFirstChild("Mutation")
+				if not mutationLabel or not mutationLabel:IsA("TextLabel") then
+					return "Regular"
+				end
+
+				if mutationLabel.Visible ~= true or mutationLabel.Text == "" then
+					return "Regular"
+				end
+
+				return tostring(mutationLabel.Text)
+			end
+
+			function Feature:GetMarketBuyName(packName, mutation)
+				if not packName or packName == "" then
+					return nil
+				end
+
+				if not mutation or mutation == "Regular" then
+					return packName
+				end
+
+				return string.format("%s-%s", packName, mutation)
 			end
 
 			function Feature:Matches(packType, mutation, selectedPacks, selectedMutations)
@@ -227,6 +320,44 @@ return {
 				end
 			end
 
+			function Feature:TickMarket(values)
+				if not values.AutoMarketBuyEnabled then
+					return
+				end
+
+				local selectedPacks = normalizeSelectionArray(values.AutoMarketBuyPack)
+				local selectedMutations = normalizeSelectionArray(values.AutoMarketBuyMutation)
+
+				if #selectedPacks == 0 or #selectedMutations == 0 then
+					return
+				end
+
+				local scrollingFrame = self:GetStockFrame()
+				if not scrollingFrame then
+					return
+				end
+
+				local now = tick()
+
+				for _, slot in ipairs(scrollingFrame:GetChildren()) do
+					if slot:IsA("Frame") then
+						local packName = self:GetMarketSlotPack(slot)
+						local mutation = self:GetMarketSlotMutation(slot)
+
+						if packName and self:Matches(packName, mutation, selectedPacks, selectedMutations) then
+							local buyName = self:GetMarketBuyName(packName, mutation)
+							if buyName then
+								local lastTime = self.State.LastMarketBuyTimes[buyName]
+								if not lastTime or (now - lastTime) > 1 then
+									self.State.LastMarketBuyTimes[buyName] = now
+									StockRemote:FireServer("Buy", buyName)
+								end
+							end
+						end
+					end
+				end
+			end
+
 			function Feature:Start(panelRef)
 				self.State.PanelRef = panelRef
 
@@ -239,8 +370,14 @@ return {
 				task.spawn(function()
 					while self.State.Polling do
 						local values = self.State.PanelRef and self.State.PanelRef.Config and self.State.PanelRef.Config.Values
-						if values and values.AutoBuyEnabled then
-							self:Tick(values)
+						if values then
+							if values.AutoBuyEnabled then
+								self:Tick(values)
+							end
+
+							if values.AutoMarketBuyEnabled then
+								self:TickMarket(values)
+							end
 						end
 						task.wait(0.15)
 					end
@@ -257,7 +394,11 @@ return {
 						if value then
 							self:Start(panelRef)
 						else
-							self:Stop()
+							if not values.AutoMarketBuyEnabled then
+								self:Stop()
+							else
+								self.State.PanelRef = panelRef
+							end
 						end
 					end,
 
@@ -268,6 +409,26 @@ return {
 					AutoBuyMutation = function(_, _, panelRef)
 						self.State.PanelRef = panelRef
 					end,
+
+					AutoMarketBuyEnabled = function(value, values, panelRef)
+						if value then
+							self:Start(panelRef)
+						else
+							if not values.AutoBuyEnabled then
+								self:Stop()
+							else
+								self.State.PanelRef = panelRef
+							end
+						end
+					end,
+
+					AutoMarketBuyPack = function(_, _, panelRef)
+						self.State.PanelRef = panelRef
+					end,
+
+					AutoMarketBuyMutation = function(_, _, panelRef)
+						self.State.PanelRef = panelRef
+					end,
 				}
 			end
 
@@ -275,6 +436,7 @@ return {
 				self:Stop()
 				self.State.PanelRef = nil
 				table.clear(self.State.LastBuyTimes)
+				table.clear(self.State.LastMarketBuyTimes)
 			end
 		end
 	end

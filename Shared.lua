@@ -1112,5 +1112,17 @@ function Features.BuildPanelConfig()
 
 	return panelConfig
 end
+Features.Players = Players
+Features.UserInputService = UserInputService
+Features.RunService = RunService
+Features.Workspace = Workspace
+Features.HttpService = HttpService
+
+Features.RegisterFeature = RegisterFeature
+Features.BuildFeatureDefaults = BuildFeatureDefaults
+Features.FeatureList = FeatureList
+
+Features.copySimpleValue = copySimpleValue
+Features.HasSavedSettings = HasSavedSettings
 
 return Features

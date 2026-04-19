@@ -1,10 +1,10 @@
 -- GameFeatures.lua
--- Game-specific features (Auto Buy example)
 
 local GameFeatures = {}
 
-function GameFeatures.BuildPanelConfig(Shared)
-    -- Register Auto Buy feature using Shared's registry
+-- Register all game-specific features here
+function GameFeatures.RegisterFeatures(Shared)
+    -- ==================== AUTO BUY FEATURE ====================
     do
         local function getPackItems()
             local items = {"All"}
@@ -67,15 +67,14 @@ function GameFeatures.BuildPanelConfig(Shared)
             }
         })
 
-        -- ==================== ALL YOUR FEATURE METHODS ====================
-
+        -- All your AutoBuy methods
         function Feature:GetPackModelType(packModel)
             if not packModel then return nil end
-            if packModel.PrimaryPart and packModel.PrimaryPart.Name and packModel.PrimaryPart.Name ~= "" then
+            if packModel.PrimaryPart and packModel.PrimaryPart.Name ~= "" then
                 return packModel.PrimaryPart.Name
             end
             local primary = packModel:FindFirstChildWhichIsA("BasePart")
-            if primary and primary.Name and primary.Name ~= "" then
+            if primary and primary.Name ~= "" then
                 return primary.Name
             end
             return nil
@@ -84,10 +83,8 @@ function GameFeatures.BuildPanelConfig(Shared)
         function Feature:GetPackModelMutation(packModel)
             if not packModel then return "Regular" end
             for _, descendant in ipairs(packModel:GetDescendants()) do
-                if descendant:IsA("TextLabel") and descendant.Name == "Mutation" then
-                    if descendant.Visible and descendant.Text and descendant.Text ~= "" then
-                        return tostring(descendant.Text)
-                    end
+                if descendant:IsA("TextLabel") and descendant.Name == "Mutation" and descendant.Visible and descendant.Text ~= "" then
+                    return tostring(descendant.Text)
                 end
             end
             return "Regular"
@@ -95,17 +92,14 @@ function GameFeatures.BuildPanelConfig(Shared)
 
         function Feature:GetPackModelId(packModel)
             if not packModel then return nil end
-            if packModel.Name and packModel.Name ~= "" then
-                return packModel.Name
-            end
-            return nil
+            return packModel.Name ~= "" and packModel.Name or nil
         end
 
         function Feature:NormalizeSelectionArray(values)
             local result = {}
             if type(values) ~= "table" then return result end
-            for _, value in ipairs(values) do
-                table.insert(result, tostring(value))
+            for _, v in ipairs(values) do
+                table.insert(result, tostring(v))
             end
             return result
         end
@@ -130,9 +124,7 @@ function GameFeatures.BuildPanelConfig(Shared)
             if #selectedPacks == 0 or #selectedMutations == 0 then return end
 
             local clientFolder = Workspace:FindFirstChild("Client")
-            if not clientFolder then return end
-
-            local packsFolder = clientFolder:FindFirstChild("Packs")
+            local packsFolder = clientFolder and clientFolder:FindFirstChild("Packs")
             if not packsFolder then return end
 
             local now = tick()
@@ -148,8 +140,6 @@ function GameFeatures.BuildPanelConfig(Shared)
                         if not lastTime or (now - lastTime) > 1 then
                             self.State.LastBuyTimes[packId] = now
                             CardRemote:FireServer("BuyPack", packId)
-
-                            -- Optional logging
                             if values.LogPacks and addPackLog then
                                 addPackLog(packType, mutation, packId)
                             end
@@ -166,9 +156,7 @@ function GameFeatures.BuildPanelConfig(Shared)
             self.State.Polling = true
             self.State.PollThread = task.spawn(function()
                 while self.State.Polling do
-                    local activePanel = self.State.PanelRef
-                    local values = activePanel and activePanel.Config and activePanel.Config.Values
-
+                    local values = self.State.PanelRef and self.State.PanelRef.Config and self.State.PanelRef.Config.Values
                     if values and values.AutoBuyEnabled then
                         self:Tick(values)
                     end
@@ -180,27 +168,19 @@ function GameFeatures.BuildPanelConfig(Shared)
         function Feature:Stop()
             self.State.Polling = false
             if self.State.PollThread then
-                task.cancel(self.State.PollThread)
+                pcall(task.cancel, self.State.PollThread)
                 self.State.PollThread = nil
             end
         end
 
         function Feature:GetHandlers()
             return {
-                AutoBuyEnabled = function(value, values, panelRef)
+                AutoBuyEnabled = function(value, _, panelRef)
                     self.State.PanelRef = panelRef
-                    if value then
-                        self:Start(panelRef)
-                    else
-                        self:Stop()
-                    end
+                    if value then self:Start(panelRef) else self:Stop() end
                 end,
-                AutoBuyPack = function(_, values, panelRef)
-                    self.State.PanelRef = panelRef
-                end,
-                AutoBuyMutation = function(_, values, panelRef)
-                    self.State.PanelRef = panelRef
-                end,
+                AutoBuyPack = function(_, _, panelRef) self.State.PanelRef = panelRef end,
+                AutoBuyMutation = function(_, _, panelRef) self.State.PanelRef = panelRef end,
             }
         end
 
@@ -210,9 +190,13 @@ function GameFeatures.BuildPanelConfig(Shared)
             table.clear(self.State.LastBuyTimes)
         end
     end
+    -- Add more game-specific features here in the future
+end
 
-    -- Let Shared compile the full config (including AutoBuy + all shared features)
-    return Shared.BuildPanelConfig()
+-- This is the function the loader will call
+function GameFeatures.BuildPanelConfig(Shared)
+    GameFeatures.RegisterFeatures(Shared)     -- Register everything first
+    return Shared.BuildPanelConfig()          -- Then let Shared build the final config
 end
 
 return GameFeatures

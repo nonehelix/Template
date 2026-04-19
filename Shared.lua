@@ -287,9 +287,7 @@ local function RegisterTab(tab)
 	ExtraTabs[#ExtraTabs + 1] = {
 		Name = tab.Name,
 		Message = tab.Message,
-		Before = tab.Before,
-		After = tab.After,
-		Index = tab.Index,
+		Order = tab.Order or 999
 	}
 end
 
@@ -1023,8 +1021,8 @@ local BASE_CONFIG = {
 	WindowPosition = UDim2.new(0.5, -380, 0.5, -230),
 
 	Tabs = {
-		{Name = "Player"},
-		{Name = "Settings"}
+		{Name = "Player",Order = "200"},
+		{Name = "Settings", Order = "100"}
 	}
 }
 

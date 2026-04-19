@@ -4,7 +4,7 @@ local REGISTERED_GAMES = {
 	{
 		Name = "Anime Card Collection",
 		Folder = "AnimeCardCollection",
-		Module = "AnimeCardCollection",
+		Module = "AnimeCardCollection.lua",
 		Links = {
 			"https://www.roblox.com/es/games/76285745979410/Anime-Card-Collection",
 		}
@@ -12,7 +12,7 @@ local REGISTERED_GAMES = {
 	{
 		Name = "Anime Eternal",
 		Folder = "AnimeEternal",
-		Module = "AnimeEternal",
+		Module = "AnimeEternal.lua",
 		Links = {
 			"https://www.roblox.com/es/games/90462358603255/Anime-Eternal",
 		}

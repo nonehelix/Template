@@ -1117,6 +1117,7 @@ Features.UserInputService = UserInputService
 Features.RunService = RunService
 Features.Workspace = Workspace
 Features.HttpService = HttpService
+Features.player = player
 
 Features.RegisterFeature = RegisterFeature
 Features.BuildFeatureDefaults = BuildFeatureDefaults

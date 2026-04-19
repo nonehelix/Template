@@ -175,7 +175,9 @@ local function CleanupBag(bag)
 
 	table.clear(bag.Items)
 end
-
+print("panelConfig exists:", panelConfig ~= nil)
+print("panelConfig.Shared exists:", panelConfig and panelConfig.Shared ~= nil)
+print("panelConfig.Shared.player exists:", panelConfig and panelConfig.Shared and panelConfig.Shared.player ~= nil)
 function Panel.new(config)
 	assert(type(config) == "table", "Panel.new requires config")
 	assert(type(config.Shared) == "table", "Panel.new requires config.Shared")

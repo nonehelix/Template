@@ -1,7 +1,6 @@
 return function(Shared)
 	local Players = Shared.Players
 	local Workspace = Shared.Workspace
-	local RunService = Shared.RunService
 	local RegisterFeature = Shared.RegisterFeature
 
 	local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -13,33 +12,7 @@ return function(Shared)
 			:WaitForChild("Core")
 			:WaitForChild("CardConfig")
 	)
-	print("==== AUTO BUY DEBUG START ====")
-	
-	print("CardConfig:", CardConfig)
-	print("CardConfig.List:", CardConfig and CardConfig.List)
-	print("CardConfig.List.Packs:", CardConfig and CardConfig.List and CardConfig.List.Packs)
-	print("CardConfig.List.Mutations:", CardConfig and CardConfig.List and CardConfig.List.Mutations)
-	
-	-- raw iteration (IMPORTANT: pairs, not ipairs)
-	if CardConfig and CardConfig.List and CardConfig.List.Packs then
-		print("---- Packs RAW ----")
-		for k, v in pairs(CardConfig.List.Packs) do
-			print("Pack:", k, v)
-		end
-	else
-		print("Packs table is NIL")
-	end
-	
-	if CardConfig and CardConfig.List and CardConfig.List.Mutations then
-		print("---- Mutations RAW ----")
-		for k, v in pairs(CardConfig.List.Mutations) do
-			print("Mutation:", k, v)
-		end
-	else
-		print("Mutations table is NIL")
-	end
-	
-	print("==== AUTO BUY DEBUG END ====")
+
 	--==================================================
 	-- LOCAL HELPERS FOR THIS GAME
 	--==================================================
@@ -71,7 +44,7 @@ return function(Shared)
 		local items = {"All"}
 
 		if CardConfig and CardConfig.List and CardConfig.List.Packs then
-			for _, packName in ipairs(CardConfig.List.Packs) do
+			for _, packName in pairs(CardConfig.List.Packs) do
 				table.insert(items, tostring(packName))
 			end
 		end
@@ -83,25 +56,50 @@ return function(Shared)
 		local items = {"All", "Regular"}
 
 		if CardConfig and CardConfig.List and CardConfig.List.Mutations then
-			for _, mutationName in ipairs(CardConfig.List.Mutations) do
+			for _, mutationName in pairs(CardConfig.List.Mutations) do
 				table.insert(items, tostring(mutationName))
 			end
 		end
 
 		return items
 	end
-	local debugPacks = getPackItems()
-	local debugMutations = getMutationItems()
-	
-	print("---- Processed Pack Items ----")
-	for i, v in ipairs(debugPacks) do
-		print(i, v)
+
+	local function waitForPackItems(timeout)
+		timeout = timeout or 5
+		local startTime = tick()
+
+		while tick() - startTime < timeout do
+			local items = getPackItems()
+			if #items > 1 then
+				print("[AutoBuy] Pack list loaded:", table.concat(items, ", "))
+				return items
+			end
+			task.wait(0.1)
+		end
+
+		local fallback = {"All"}
+		warn("[AutoBuy] Pack list not loaded in time, using fallback:", table.concat(fallback, ", "))
+		return fallback
 	end
-	
-	print("---- Processed Mutation Items ----")
-	for i, v in ipairs(debugMutations) do
-		print(i, v)
+
+	local function waitForMutationItems(timeout)
+		timeout = timeout or 5
+		local startTime = tick()
+
+		while tick() - startTime < timeout do
+			local items = getMutationItems()
+			if #items > 2 then
+				print("[AutoBuy] Mutation list loaded:", table.concat(items, ", "))
+				return items
+			end
+			task.wait(0.1)
+		end
+
+		local fallback = {"All", "Regular"}
+		warn("[AutoBuy] Mutation list not loaded in time, using fallback:", table.concat(fallback, ", "))
+		return fallback
 	end
+
 	--==================================================
 	-- FEATURE: AUTO BUY
 	--==================================================
@@ -136,7 +134,7 @@ return function(Shared)
 					Type = "multiselect",
 					Label = "Pack ID",
 					Description = "Choose one or more packs",
-					Items = getPackItems(),
+					Items = waitForPackItems(),
 					EmptyText = "Nothing selected"
 				},
 				{
@@ -144,7 +142,7 @@ return function(Shared)
 					Type = "multiselect",
 					Label = "Mutation",
 					Description = "Choose one or more rarities",
-					Items = getMutationItems(),
+					Items = waitForMutationItems(),
 					EmptyText = "Nothing selected"
 				}
 			}

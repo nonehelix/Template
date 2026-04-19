@@ -373,6 +373,9 @@ do
 			descendantAddedConnection = nil,
 			descendantRemovingConnection = nil,
 			panelRef = nil,
+			defaultWalkSpeed = 16,
+			defaultJumpPower = 50,
+			defaultCharacter = nil,
 		},
 
 		Options = {
@@ -388,6 +391,28 @@ do
 			return nil
 		end
 		return self.State.panelRef:GetValue(optionId)
+	end
+
+	function Feature:CaptureCharacterDefaults(character)
+		character = character or player.Character
+		if not character then
+			return
+		end
+
+		if self.State.defaultCharacter == character then
+			return
+		end
+
+		local humanoid = character:FindFirstChildOfClass("Humanoid")
+		if not humanoid then
+			humanoid = character:WaitForChild("Humanoid", 8)
+		end
+
+		if humanoid then
+			self.State.defaultWalkSpeed = roundTo2(humanoid.WalkSpeed)
+			self.State.defaultJumpPower = roundTo2(humanoid.JumpPower)
+			self.State.defaultCharacter = character
+		end
 	end
 
 	function Feature:DisconnectCharacterTracking()
@@ -457,6 +482,7 @@ do
 	function Feature:CacheCharacterParts(character)
 		self:DisconnectCharacterTracking()
 		self:RestoreTrackedCharacterCollision()
+		self:CaptureCharacterDefaults(character)
 
 		self.State.trackedCharacter = character
 		self.State.trackedParts = {}
@@ -501,9 +527,12 @@ do
 		self.Context = context
 		self.State.globalBag = NewCleanupBag()
 
+		self:CaptureCharacterDefaults(player.Character)
 		self:CacheCharacterParts(player.Character)
 
 		AddCleanupItem(self.State.globalBag, player.CharacterAdded:Connect(function(character)
+			self.State.defaultCharacter = nil
+			self:CaptureCharacterDefaults(character)
 			self:CacheCharacterParts(character)
 			resetFlyPressed()
 		end))
@@ -536,14 +565,12 @@ do
 	end
 
 	function Feature:ApplyDefaults(values)
-		local humanoid = self.Context:GetHumanoid(8)
-		if humanoid then
-			if values.WalkSpeed ~= nil then
-				values.WalkSpeed = roundTo2(humanoid.WalkSpeed)
-			end
-			if values.JumpPower ~= nil then
-				values.JumpPower = roundTo2(humanoid.JumpPower)
-			end
+		if values.WalkSpeed ~= nil then
+			values.WalkSpeed = roundTo2(self.State.defaultWalkSpeed or 16)
+		end
+
+		if values.JumpPower ~= nil then
+			values.JumpPower = roundTo2(self.State.defaultJumpPower or 50)
 		end
 	end
 
@@ -724,6 +751,7 @@ do
 		self.State.trackedParts = {}
 		self.State.trackedCharacter = nil
 		self.State.panelRef = nil
+		self.State.defaultCharacter = nil
 	end
 end
 

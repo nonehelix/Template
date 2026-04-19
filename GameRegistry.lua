@@ -2,15 +2,19 @@ local GameRegistry = {}
 
 local REGISTERED_GAMES = {
 	{
+		Key = "AnimeCardCollection",
 		Name = "Anime Card Collection",
-		ModulePath = {"AnimeCardCollection", "AnimeCardCollection.lua"},
+		Folder = "AnimeCardCollection",
+		Module = "AnimeCardCollection",
 		Links = {
 			"https://www.roblox.com/es/games/76285745979410/Anime-Card-Collection",
 		}
 	},
 	{
+		Key = "AnimeEternal",
 		Name = "Anime Eternal",
-		ModulePath = {"AnimeEternal", "AnimeEternal.lua"},
+		Folder = "AnimeEternal",
+		Module = "AnimeEternal",
 		Links = {
 			"https://www.roblox.com/es/games/90462358603255/Anime-Eternal",
 		}

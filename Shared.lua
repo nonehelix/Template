@@ -1021,8 +1021,8 @@ local BASE_CONFIG = {
 	WindowPosition = UDim2.new(0.5, -380, 0.5, -230),
 
 	Tabs = {
-		{Name = "Player",Order = "200"},
-		{Name = "Settings", Order = "100"}
+		{Name = "Player", Order = 100},
+		{Name = "Settings", Order = 10}
 	}
 }
 
@@ -1048,13 +1048,41 @@ local function CompilePanelConfig(baseConfig)
 
 	local tabsByName = {}
 	local seenOptionIds = {}
+	local allTabs = {}
 
 	for _, tab in ipairs(baseConfig.Tabs or {}) do
+		allTabs[#allTabs + 1] = {
+			Name = tab.Name,
+			Message = tab.Message,
+			Order = tab.Order or 999
+		}
+	end
+
+	for _, tab in ipairs(ExtraTabs) do
+		allTabs[#allTabs + 1] = {
+			Name = tab.Name,
+			Message = tab.Message,
+			Order = tab.Order or 999
+		}
+	end
+
+	table.sort(allTabs, function(a, b)
+		if a.Order == b.Order then
+			return a.Name < b.Name
+		end
+		return a.Order < b.Order
+	end)
+
+	for _, tab in ipairs(allTabs) do
+		assert(not tabsByName[tab.Name], "Duplicate tab name: " .. tostring(tab.Name))
+
 		local newTab = {
 			Name = tab.Name,
 			Message = tab.Message,
+			Order = tab.Order,
 			Options = {}
 		}
+
 		tabsByName[tab.Name] = newTab
 		table.insert(config.Tabs, newTab)
 	end

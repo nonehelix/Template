@@ -317,6 +317,9 @@ end
 --==================================================
 
 do
+	local BASE_WALKSPEED_ATTRIBUTE = "AdminPanel_BaseWalkSpeed"
+	local BASE_JUMPPOWER_ATTRIBUTE = "AdminPanel_BaseJumpPower"
+
 	local flyPressed = {
 		W = false,
 		A = false,
@@ -373,9 +376,8 @@ do
 			descendantAddedConnection = nil,
 			descendantRemovingConnection = nil,
 			panelRef = nil,
-			defaultWalkSpeed = 16,
-			defaultJumpPower = 50,
-			defaultCharacter = nil,
+			defaultWalkSpeed = nil,
+			defaultJumpPower = nil,
 		},
 
 		Options = {
@@ -394,25 +396,30 @@ do
 	end
 
 	function Feature:CaptureCharacterDefaults(character)
-		character = character or player.Character
 		if not character then
-			return
-		end
-
-		if self.State.defaultCharacter == character then
 			return
 		end
 
 		local humanoid = character:FindFirstChildOfClass("Humanoid")
 		if not humanoid then
-			humanoid = character:WaitForChild("Humanoid", 8)
+			return
 		end
 
-		if humanoid then
-			self.State.defaultWalkSpeed = roundTo2(humanoid.WalkSpeed)
-			self.State.defaultJumpPower = roundTo2(humanoid.JumpPower)
-			self.State.defaultCharacter = character
+		local storedWalkSpeed = humanoid:GetAttribute(BASE_WALKSPEED_ATTRIBUTE)
+		local storedJumpPower = humanoid:GetAttribute(BASE_JUMPPOWER_ATTRIBUTE)
+
+		if storedWalkSpeed == nil then
+			storedWalkSpeed = roundTo2(humanoid.WalkSpeed)
+			humanoid:SetAttribute(BASE_WALKSPEED_ATTRIBUTE, storedWalkSpeed)
 		end
+
+		if storedJumpPower == nil then
+			storedJumpPower = roundTo2(humanoid.JumpPower)
+			humanoid:SetAttribute(BASE_JUMPPOWER_ATTRIBUTE, storedJumpPower)
+		end
+
+		self.State.defaultWalkSpeed = storedWalkSpeed
+		self.State.defaultJumpPower = storedJumpPower
 	end
 
 	function Feature:DisconnectCharacterTracking()
@@ -482,7 +489,6 @@ do
 	function Feature:CacheCharacterParts(character)
 		self:DisconnectCharacterTracking()
 		self:RestoreTrackedCharacterCollision()
-		self:CaptureCharacterDefaults(character)
 
 		self.State.trackedCharacter = character
 		self.State.trackedParts = {}
@@ -490,6 +496,8 @@ do
 		if not character then
 			return
 		end
+
+		self:CaptureCharacterDefaults(character)
 
 		for _, obj in ipairs(character:GetDescendants()) do
 			if obj:IsA("BasePart") then
@@ -527,12 +535,9 @@ do
 		self.Context = context
 		self.State.globalBag = NewCleanupBag()
 
-		self:CaptureCharacterDefaults(player.Character)
 		self:CacheCharacterParts(player.Character)
 
 		AddCleanupItem(self.State.globalBag, player.CharacterAdded:Connect(function(character)
-			self.State.defaultCharacter = nil
-			self:CaptureCharacterDefaults(character)
 			self:CacheCharacterParts(character)
 			resetFlyPressed()
 		end))
@@ -565,12 +570,17 @@ do
 	end
 
 	function Feature:ApplyDefaults(values)
-		if values.WalkSpeed ~= nil then
-			values.WalkSpeed = roundTo2(self.State.defaultWalkSpeed or 16)
+		local character = self.Context:GetCharacter(8)
+		if character then
+			self:CaptureCharacterDefaults(character)
 		end
 
-		if values.JumpPower ~= nil then
-			values.JumpPower = roundTo2(self.State.defaultJumpPower or 50)
+		if values.WalkSpeed ~= nil and self.State.defaultWalkSpeed ~= nil then
+			values.WalkSpeed = self.State.defaultWalkSpeed
+		end
+
+		if values.JumpPower ~= nil and self.State.defaultJumpPower ~= nil then
+			values.JumpPower = self.State.defaultJumpPower
 		end
 	end
 
@@ -751,7 +761,6 @@ do
 		self.State.trackedParts = {}
 		self.State.trackedCharacter = nil
 		self.State.panelRef = nil
-		self.State.defaultCharacter = nil
 	end
 end
 
@@ -933,12 +942,14 @@ do
 	local Feature = RegisterFeature({
 		Key = "SettingsGeneral",
 		Tab = "Settings",
-		Section = "General",
 		Order = 500,
+
 		Defaults = {
 			Minimized = false
 		},
+
 		State = {},
+
 		Options = {
 			{
 				Id = "ResetDefaults",
@@ -957,10 +968,19 @@ do
 	function Feature:GetHandlers()
 		return {
 			Minimized = function()
+				-- Internal saved setting only.
 			end,
 
 			ResetDefaults = function(_, values, panelRef)
 				local resetValues = BuildFeatureDefaults()
+
+				for _, feature in ipairs(FeatureList) do
+					if feature.ApplyDefaults then
+						pcall(function()
+							feature:ApplyDefaults(resetValues)
+						end)
+					end
+				end
 
 				for optionId, value in pairs(resetValues) do
 					panelRef:SetValue(optionId, copySimpleValue(value), true)

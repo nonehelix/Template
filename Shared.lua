@@ -247,6 +247,8 @@ Features.LoadSettings = LoadSettings
 
 local RegisteredFeatures = {}
 local FeatureList = {}
+local ExtraTabs = {}
+
 local VALID_OPTION_TYPES = {
 	number = true,
 	toggle = true,
@@ -272,6 +274,20 @@ local function RegisterFeature(feature)
 	table.insert(FeatureList, feature)
 
 	return feature
+end
+
+local function RegisterTab(tab)
+	assert(type(tab) == "table", "Tab must be a table")
+	assert(type(tab.Name) == "string" and tab.Name ~= "", "Tab.Name is required")
+
+	for _, existingTab in ipairs(ExtraTabs) do
+		assert(existingTab.Name ~= tab.Name, "Duplicate tab name: " .. tab.Name)
+	end
+
+	table.insert(ExtraTabs, {
+		Name = tab.Name,
+		Message = tab.Message
+	})
 end
 
 local function BuildFeatureDefaults()
@@ -1112,6 +1128,7 @@ function Features.BuildPanelConfig()
 
 	return panelConfig
 end
+
 Features.Players = Players
 Features.UserInputService = UserInputService
 Features.RunService = RunService
@@ -1120,6 +1137,7 @@ Features.HttpService = HttpService
 Features.player = player
 
 Features.RegisterFeature = RegisterFeature
+Features.RegisterTab = RegisterTab
 Features.BuildFeatureDefaults = BuildFeatureDefaults
 Features.FeatureList = FeatureList
 

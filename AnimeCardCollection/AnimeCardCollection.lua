@@ -1,5 +1,4 @@
 return {
-	
 	Load = function(Shared)
 		local Workspace = Shared.Workspace
 		local RegisterFeature = Shared.RegisterFeature
@@ -19,10 +18,6 @@ return {
 				:WaitForChild("CardConfig")
 		)
 
-		--==================================================
-		-- LOCAL HELPERS FOR THIS GAME
-		--==================================================
-
 		local function arrayContains(arr, target)
 			for _, v in ipairs(arr or {}) do
 				if tostring(v) == tostring(target) then
@@ -40,7 +35,7 @@ return {
 			end
 
 			for _, value in ipairs(values) do
-				table.insert(result, tostring(value))
+				result[#result + 1] = tostring(value)
 			end
 
 			return result
@@ -51,7 +46,7 @@ return {
 
 			if CardConfig and CardConfig.List and CardConfig.List.Packs then
 				for _, packName in pairs(CardConfig.List.Packs) do
-					table.insert(items, tostring(packName))
+					items[#items + 1] = tostring(packName)
 				end
 			end
 
@@ -63,52 +58,27 @@ return {
 
 			if CardConfig and CardConfig.List and CardConfig.List.Mutations then
 				for _, mutationName in pairs(CardConfig.List.Mutations) do
-					table.insert(items, tostring(mutationName))
+					items[#items + 1] = tostring(mutationName)
 				end
 			end
 
 			return items
 		end
 
-		local function waitForPackItems(timeout)
+		local function waitForItems(builder, minimumCount, fallback, timeout)
 			timeout = timeout or 5
 			local startTime = tick()
 
 			while tick() - startTime < timeout do
-				local items = getPackItems()
-				if #items > 1 then
-					print("[AutoBuy] Pack list loaded:", table.concat(items, ", "))
+				local items = builder()
+				if #items >= minimumCount then
 					return items
 				end
 				task.wait(0.1)
 			end
 
-			local fallback = {"All"}
-			warn("[AutoBuy] Pack list not loaded in time, using fallback:", table.concat(fallback, ", "))
 			return fallback
 		end
-
-		local function waitForMutationItems(timeout)
-			timeout = timeout or 5
-			local startTime = tick()
-
-			while tick() - startTime < timeout do
-				local items = getMutationItems()
-				if #items > 2 then
-					print("[AutoBuy] Mutation list loaded:", table.concat(items, ", "))
-					return items
-				end
-				task.wait(0.1)
-			end
-
-			local fallback = {"All", "Regular"}
-			warn("[AutoBuy] Mutation list not loaded in time, using fallback:", table.concat(fallback, ", "))
-			return fallback
-		end
-
-		--==================================================
-		-- FEATURE: AUTO BUY
-		--==================================================
 
 		do
 			local Feature = RegisterFeature({
@@ -140,7 +110,7 @@ return {
 						Type = "multiselect",
 						Label = "Pack ID",
 						Description = "Choose one or more packs",
-						Items = waitForPackItems(),
+						Items = waitForItems(getPackItems, 2, {"All"}),
 						EmptyText = "Nothing selected"
 					},
 					{
@@ -148,7 +118,7 @@ return {
 						Type = "multiselect",
 						Label = "Mutation",
 						Description = "Choose one or more rarities",
-						Items = waitForMutationItems(),
+						Items = waitForItems(getMutationItems, 3, {"All", "Regular"}),
 						EmptyText = "Nothing selected"
 					}
 				}
@@ -159,12 +129,12 @@ return {
 					return nil
 				end
 
-				if packModel.PrimaryPart and packModel.PrimaryPart.Name and packModel.PrimaryPart.Name ~= "" then
+				if packModel.PrimaryPart and packModel.PrimaryPart.Name ~= "" then
 					return packModel.PrimaryPart.Name
 				end
 
 				local primary = packModel:FindFirstChildWhichIsA("BasePart")
-				if primary and primary.Name and primary.Name ~= "" then
+				if primary and primary.Name ~= "" then
 					return primary.Name
 				end
 
@@ -178,7 +148,7 @@ return {
 
 				for _, descendant in ipairs(packModel:GetDescendants()) do
 					if descendant:IsA("TextLabel") and descendant.Name == "Mutation" then
-						if descendant.Visible and descendant.Text and descendant.Text ~= "" then
+						if descendant.Visible and descendant.Text ~= "" then
 							return tostring(descendant.Text)
 						end
 					end
@@ -192,7 +162,7 @@ return {
 					return nil
 				end
 
-				if packModel.Name and packModel.Name ~= "" then
+				if packModel.Name ~= "" then
 					return packModel.Name
 				end
 
@@ -291,11 +261,11 @@ return {
 						end
 					end,
 
-					AutoBuyPack = function(value, values, panelRef)
+					AutoBuyPack = function(_, _, panelRef)
 						self.State.PanelRef = panelRef
 					end,
 
-					AutoBuyMutation = function(value, values, panelRef)
+					AutoBuyMutation = function(_, _, panelRef)
 						self.State.PanelRef = panelRef
 					end,
 				}

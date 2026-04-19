@@ -1077,6 +1077,7 @@ local function CompilePanelConfig(baseConfig)
 		Features = {},
 		Theme = Theme,
 		SaveSettings = SaveSettings
+		Shared = Features
 	}
 
 	local tabsByName = {}

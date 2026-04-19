@@ -389,7 +389,7 @@ return {
 			end
 		end
 
-		--==================================================
+				--==================================================
 		-- FEATURE: AUTO GRADE
 		--==================================================
 		do
@@ -412,6 +412,7 @@ return {
 					TargetDone = {},
 					TargetMinRank = nil,
 					RequestDelay = 0.01,
+					ReplicatedData = nil,
 				},
 
 				Options = {
@@ -447,38 +448,57 @@ return {
 				end
 			end
 
-			local function getReplicatedDataModule()
+			local function requireReplicatedDataModule()
 				local modules = ReplicatedStorage:FindFirstChild("Modules")
 				if not modules then
+					warn("[AutoGrade] Missing ReplicatedStorage.Modules")
 					return nil
 				end
 
 				local clientFolder = modules:FindFirstChild("Client")
 				if not clientFolder then
+					warn("[AutoGrade] Missing ReplicatedStorage.Modules.Client")
 					return nil
 				end
 
 				local replicatedDataModule = clientFolder:FindFirstChild("ReplicatedData")
 				if not replicatedDataModule then
+					warn("[AutoGrade] Missing ReplicatedStorage.Modules.Client.ReplicatedData")
 					return nil
 				end
 
 				local ok, result = pcall(require, replicatedDataModule)
-				if ok then
-					return result
-				end
-
-				warn("[AutoGrade] Failed to require ReplicatedData:", tostring(result))
-				return nil
-			end
-
-			function Feature:GetReplicatedData()
-				local replicatedData = getReplicatedDataModule()
-				if not replicatedData or type(replicatedData.GetData) ~= "function" then
-					warn("[AutoGrade] ReplicatedData module missing or invalid")
+				if not ok then
+					warn("[AutoGrade] Failed to require ReplicatedData:", tostring(result))
 					return nil
 				end
-				return replicatedData
+
+				return result
+			end
+
+			function Feature:GetReplicatedData(timeout)
+				if self.State.ReplicatedData and type(self.State.ReplicatedData.GetData) == "function" then
+					return self.State.ReplicatedData
+				end
+
+				timeout = timeout or 10
+
+				local replicatedData = requireReplicatedDataModule()
+				if not replicatedData then
+					return nil
+				end
+
+				local startTime = tick()
+				while tick() - startTime < timeout do
+					if type(replicatedData.GetData) == "function" then
+						self.State.ReplicatedData = replicatedData
+						return replicatedData
+					end
+					task.wait(0.1)
+				end
+
+				warn("[AutoGrade] ReplicatedData loaded but GetData never became available")
+				return nil
 			end
 
 			function Feature:GetOwnedCards()
@@ -545,7 +565,7 @@ return {
 
 			function Feature:GetCardCurrentGrade(cardId)
 				local ownedCards = self:GetOwnedCards()
-				local cardData = ownedCards[cardId]
+				local cardData = ownedCards[tostring(cardId)]
 
 				if type(cardData) ~= "table" then
 					return nil
@@ -604,8 +624,10 @@ return {
 					return
 				end
 
+				local ownedCards = self:GetOwnedCards()
+
 				for _, cardId in ipairs(self.State.Queue) do
-					local cardData = self:GetOwnedCards()[cardId]
+					local cardData = ownedCards[cardId]
 					if not cardData then
 						self.State.TargetDone[cardId] = true
 					elseif self:CardMeetsOrBeatsTarget(cardId, self.State.TargetMinRank) then
@@ -633,6 +655,8 @@ return {
 					return nil
 				end
 
+				local ownedCards = self:GetOwnedCards()
+
 				for _ = 1, count do
 					self.State.QueueIndex += 1
 					if self.State.QueueIndex > count then
@@ -640,7 +664,7 @@ return {
 					end
 
 					local cardId = self.State.Queue[self.State.QueueIndex]
-					if cardId and not self:IsCardDone(cardId) and self:GetOwnedCards()[cardId] ~= nil then
+					if cardId and not self:IsCardDone(cardId) and ownedCards[cardId] ~= nil then
 						return cardId
 					end
 				end
@@ -700,6 +724,12 @@ return {
 				local selectedGrades = normalizeSelectionArray(values.AutoGradeTarget)
 
 				if #selectedCards == 0 or #selectedGrades == 0 then
+					self:Stop()
+					return
+				end
+
+				local replicatedData = self:GetReplicatedData()
+				if not replicatedData then
 					self:Stop()
 					return
 				end
@@ -772,6 +802,7 @@ return {
 			function Feature:Cleanup()
 				self:Stop()
 				self.State.PanelRef = nil
+				self.State.ReplicatedData = nil
 			end
 		end
 

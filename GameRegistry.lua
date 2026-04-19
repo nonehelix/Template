@@ -4,8 +4,6 @@ local REGISTERED_GAMES = {
 	{
 		Key = "AnimeCardCollection",
 		Name = "Anime Card Collection",
-		Folder = "AnimeCardCollection",
-		Module = "AnimeCardCollection",
 		Links = {
 			"https://www.roblox.com/es/games/76285745979410/Anime-Card-Collection",
 		}
@@ -13,8 +11,6 @@ local REGISTERED_GAMES = {
 	{
 		Key = "AnimeEternal",
 		Name = "Anime Eternal",
-		Folder = "AnimeEternal",
-		Module = "AnimeEternal",
 		Links = {
 			"https://www.roblox.com/es/games/90462358603255/Anime-Eternal",
 		}
@@ -44,14 +40,17 @@ local function resolveModule(root, entry)
 		return nil, "Root is nil"
 	end
 
-	local folder = root:FindFirstChild(entry.Folder)
+	local folderName = entry.Key
+	local moduleName = entry.Key .. ".lua" -- 👈 important fix
+
+	local folder = root:FindFirstChild(folderName)
 	if not folder then
-		return nil, "Missing folder '" .. tostring(entry.Folder) .. "' under " .. root:GetFullName()
+		return nil, "Missing folder '" .. tostring(folderName) .. "' under " .. root:GetFullName()
 	end
 
-	local moduleScript = folder:FindFirstChild(entry.Module)
+	local moduleScript = folder:FindFirstChild(moduleName)
 	if not moduleScript then
-		return nil, "Missing module '" .. tostring(entry.Module) .. "' inside folder " .. folder:GetFullName()
+		return nil, "Missing module '" .. tostring(moduleName) .. "' inside folder " .. folder:GetFullName()
 	end
 
 	return moduleScript, nil
@@ -82,6 +81,8 @@ function GameRegistry.LoadCurrentGameFeatures(root, Shared)
 		return false, "Current game is not registered"
 	end
 
+	Shared.CurrentGameKey = entry.Key
+
 	local moduleScript, resolveError = resolveModule(root, entry)
 	if not moduleScript then
 		return false, "Could not find module for game '" .. tostring(entry.Name) .. "': " .. tostring(resolveError)
@@ -93,7 +94,9 @@ function GameRegistry.LoadCurrentGameFeatures(root, Shared)
 	end
 
 	if type(gameModuleOrError) == "table" and type(gameModuleOrError.Load) == "function" then
-		local okLoad, loadError = pcall(gameModuleOrError.Load, Shared)
+		local okLoad, loadError = pcall(function()
+			gameModuleOrError.Load(Shared)
+		end)
 		if not okLoad then
 			return false, "Failed loading game '" .. tostring(entry.Name) .. "': " .. tostring(loadError)
 		end
@@ -101,7 +104,9 @@ function GameRegistry.LoadCurrentGameFeatures(root, Shared)
 	end
 
 	if type(gameModuleOrError) == "function" then
-		local okLoad, loadError = pcall(gameModuleOrError, Shared)
+		local okLoad, loadError = pcall(function()
+			gameModuleOrError(Shared)
+		end)
 		if not okLoad then
 			return false, "Failed loading game '" .. tostring(entry.Name) .. "': " .. tostring(loadError)
 		end

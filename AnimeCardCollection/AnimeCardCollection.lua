@@ -1,10 +1,5 @@
 return {
-	Name = "Anime Card Collection",
-
-	Links = {
-		"https://www.roblox.com/es/games/76285745979410/Anime-Card-Collection",
-	},
-
+	
 	Load = function(Shared)
 		local Workspace = Shared.Workspace
 		local RegisterFeature = Shared.RegisterFeature

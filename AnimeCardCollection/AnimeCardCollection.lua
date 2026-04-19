@@ -5,6 +5,8 @@ return {
 		local RegisterTabs = Shared.RegisterTabs
 
 		local ReplicatedStorage = game:GetService("ReplicatedStorage")
+		local ReplicatedFirst = game:GetService("ReplicatedFirst")
+
 		local Players = game:GetService("Players")
 
 		local player = Players.LocalPlayer
@@ -449,21 +451,9 @@ return {
 			end
 
 			local function requireReplicatedDataModule()
-				local modules = ReplicatedStorage:FindFirstChild("Modules")
-				if not modules then
-					warn("[AutoGrade] Missing ReplicatedStorage.Modules")
-					return nil
-				end
-
-				local clientFolder = modules:FindFirstChild("Client")
-				if not clientFolder then
-					warn("[AutoGrade] Missing ReplicatedStorage.Modules.Client")
-					return nil
-				end
-
-				local replicatedDataModule = clientFolder:FindFirstChild("ReplicatedData")
+				local replicatedDataModule = ReplicatedFirst:FindFirstChild("ReplicatedData")
 				if not replicatedDataModule then
-					warn("[AutoGrade] Missing ReplicatedStorage.Modules.Client.ReplicatedData")
+					warn("[AutoGrade] Missing ReplicatedFirst.ReplicatedData")
 					return nil
 				end
 

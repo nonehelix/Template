@@ -3,7 +3,9 @@ return function(Shared)
 	local Workspace = Shared.Workspace
 	local RunService = Shared.RunService
 	local RegisterFeature = Shared.RegisterFeature
+	local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
+	local CardRemote = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Card")
 	--==================================================
 	-- LOCAL HELPERS FOR THIS GAME
 	--==================================================

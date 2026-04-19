@@ -292,6 +292,165 @@ return {
 				self.State.PanelRef = nil
 				table.clear(self.State.LastBuyTimes)
 			end
+			--==================================================
+		-- FEATURE: AUTO BUY MARKET (New Feature)
+		--==================================================
+
+		do
+			local Feature = RegisterFeature({
+				Key = "AutoBuyMarket",
+				Tab = "Shop",
+				Order = 10,
+
+				Defaults = {
+					AutoBuyMarketEnabled = false,
+					AutoBuyMarketPack = {},
+					AutoBuyMarketMutation = {},
+				},
+
+				State = {
+					LastCheckTime = 0,
+					PanelRef = nil,
+				},
+
+				Options = {
+					{
+						Id = "AutoBuyMarketEnabled",
+						Type = "toggle",
+						Label = "Enable Auto Buy Market",
+						Description = "Automatically buys selected packs from the market every 60 seconds"
+					},
+					{
+						Id = "AutoBuyMarketPack",
+						Type = "multiselect",
+						Label = "Pack ID",
+						Description = "Choose packs to buy from market",
+						Items = waitForItems(getPackItems, 2, {"All"}),
+						EmptyText = "Nothing selected"
+					},
+					{
+						Id = "AutoBuyMarketMutation",
+						Type = "multiselect",
+						Label = "Mutation",
+						Description = "Choose mutations/rarities to buy",
+						Items = waitForItems(getMutationItems, 3, {"All", "Regular"}),
+						EmptyText = "Nothing selected"
+					}
+				}
+			})
+
+			-- Helper to read market stock from GUI
+			function Feature:GetMarketStock()
+				local stockGui = player:WaitForChild("PlayerGui"):FindFirstChild("Stock")
+				if not stockGui then return {} end
+
+				local frame = stockGui:FindFirstChild("Frame")
+				if not frame then return {} end
+
+				local scrolling = frame:FindFirstChild("ScrollingFrame")
+				if not scrolling then return {} end
+
+				local stockList = {}
+
+				for i = 1, 8 do
+					local slot = scrolling:FindFirstChild(tostring(i))
+					if slot then
+						local packLabel = slot:FindFirstChild("PackName")
+						local mutationLabel = slot:FindFirstChild("Mutation")
+
+						local packName = packLabel and packLabel.Text or ""
+						local mutation = "Regular"
+
+						if mutationLabel and mutationLabel.Visible and mutationLabel.Text ~= "" then
+							mutation = mutationLabel.Text
+						end
+
+						if packName ~= "" then
+							table.insert(stockList, {
+								PackName = packName,
+								Mutation = mutation,
+								Slot = i
+							})
+						end
+					end
+				end
+
+				return stockList
+			end
+
+			function Feature:Tick()
+				local now = tick()
+				if now - self.State.LastCheckTime < 60 then
+					return -- Check only every 60 seconds
+				end
+
+				self.State.LastCheckTime = now
+
+				local values = self.State.PanelRef and self.State.PanelRef.Config.Values
+				if not values or not values.AutoBuyMarketEnabled then return end
+
+				local selectedPacks = normalizeSelectionArray(values.AutoBuyMarketPack)
+				local selectedMutations = normalizeSelectionArray(values.AutoBuyMarketMutation)
+
+				if #selectedPacks == 0 or #selectedMutations == 0 then return end
+
+				local marketStock = self:GetMarketStock()
+
+				for _, item in ipairs(marketStock) do
+					local packOk = arrayContains(selectedPacks, "All") or arrayContains(selectedPacks, item.PackName)
+					local mutationOk = arrayContains(selectedMutations, "All") or arrayContains(selectedMutations, item.Mutation)
+
+					if packOk and mutationOk then
+						-- Fire buy event
+						CardRemote:FireServer("BuyPack", item.PackName)
+						print("[AutoBuyMarket] Bought from market:", item.PackName, "-", item.Mutation)
+						task.wait(1.2) -- Small delay between buys to avoid rate limits
+					end
+				end
+			end
+
+			function Feature:Start(panelRef)
+				self.State.PanelRef = panelRef
+
+				task.spawn(function()
+					while self.State.PanelRef and self.State.PanelRef.Config.Values.AutoBuyMarketEnabled do
+						self:Tick()
+						task.wait(5) -- Fast polling but actual check is throttled to 60s
+					end
+				end)
+			end
+
+			function Feature:Stop()
+				-- Nothing extra needed, the loop checks the toggle
+			end
+
+			function Feature:GetHandlers()
+				return {
+					AutoBuyMarketEnabled = function(value, _, panelRef)
+						self.State.PanelRef = panelRef
+						if value then
+							self:Start(panelRef)
+						else
+							self:Stop()
+						end
+					end,
+
+					AutoBuyMarketPack = function(_, _, panelRef)
+						self.State.PanelRef = panelRef
+					end,
+
+					AutoBuyMarketMutation = function(_, _, panelRef)
+						self.State.PanelRef = panelRef
+					end,
+				}
+			end
+
+			function Feature:Cleanup()
+				self.State.PanelRef = nil
+			end
+		end
+	end
+}
 		end
 	end
 }

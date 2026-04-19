@@ -3,7 +3,7 @@ return {
 		local Workspace = Shared.Workspace
 		local RegisterFeature = Shared.RegisterFeature
 		local RegisterTabs = Shared.RegisterTabs
-
+		local ReplicatedFirst = game:GetService("ReplicatedFirst")
 		local ReplicatedStorage = game:GetService("ReplicatedStorage")
 		local Players = game:GetService("Players")
 

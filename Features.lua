@@ -26,15 +26,14 @@ local Theme = {
 	Dropdown = Color3.fromRGB(27, 31, 40)
 }
 
-Features.Theme = Theme
-
 --==================================================
--- ACCESS CONTROL
+-- ACCESS CONTROL (LINK CHECK)
 --==================================================
 
 local ACCESS_LINKS = {
 	"https://www.roblox.com/es/games/76285745979410/Anime-Card-Collection",
 	"https://www.roblox.com/es/games/90462358603255/Anime-Eternal",
+	-- Add more allowed links here if needed
 }
 
 local function extractPlaceIdFromLink(link)
@@ -55,7 +54,7 @@ local function extractPlaceIdFromLink(link)
 	return nil
 end
 
-function Features.IsAllowedGame()
+local function isAllowedGame()
 	local currentPlaceId = game.PlaceId
 
 	for _, link in ipairs(ACCESS_LINKS) do
@@ -191,7 +190,7 @@ local function CleanupBag(bag)
 end
 
 --==================================================
--- SETTINGS SAVE / LOAD
+-- AUTOMATIC SETTINGS SAVE / LOAD
 --==================================================
 
 local SETTINGS_FILE = "AnimeCardPanel_Settings.json"
@@ -773,8 +772,11 @@ do
 		Key = "PlayerUtility",
 		Tab = "Player",
 		Order = 20,
+
 		Defaults = {},
+
 		State = {},
+
 		Options = {
 			{Id = "ResetCharacter", Type = "button", Label = "Reset Character", Description = "Respawn your character", ButtonText = "Reset"}
 		}
@@ -814,10 +816,13 @@ do
 		Tab = "Settings",
 		Section = "Appearance",
 		Order = 110,
+
 		Defaults = {
 			UIAccent = "Blue"
 		},
+
 		State = {},
+
 		Options = {
 			{
 				Id = "UIAccent",
@@ -998,24 +1003,6 @@ do
 end
 
 --==================================================
--- BASE CONFIG
---==================================================
-
-local BASE_CONFIG = {
-	GuiName = "AdminPanel",
-	Title = "Admin Panel",
-	Subtitle = "Universal local template",
-	PageSubtitle = "Live settings update instantly",
-	WindowSize = UDim2.new(0, 760, 0, 460),
-	WindowPosition = UDim2.new(0.5, -380, 0.5, -230),
-
-	Tabs = {
-		{Name = "Player"},
-		{Name = "Settings"}
-	}
-}
-
---==================================================
 -- CONFIG COMPILER
 --==================================================
 
@@ -1030,9 +1017,7 @@ local function CompilePanelConfig(baseConfig)
 		Values = {},
 		Tabs = {},
 		Handlers = {},
-		Features = {},
-		Theme = Theme,
-		SaveSettings = SaveSettings
+		Features = {}
 	}
 
 	local tabsByName = {}
@@ -1106,12 +1091,6 @@ local function CompilePanelConfig(baseConfig)
 	end
 
 	return config
-end
-
-function Features.BuildPanelConfig()
-	local panelConfig = CompilePanelConfig(BASE_CONFIG)
-	panelConfig.Values = LoadSettings(panelConfig.Values)
-	return panelConfig
 end
 
 return Features

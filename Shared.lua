@@ -743,58 +743,129 @@ do
 	function Feature:Cleanup() end
 end
 
-function Feature:StartAntiAFK()
-	self:StopAntiAFK()
+--==================================================
+-- FEATURE: ANTI AFK (Strong 2026 Version with Debug)
+--==================================================
 
-	local localPlayer = Players.LocalPlayer
-	print("[AntiAFK] Starting Anti-AFK...")
+do
+	local Feature = RegisterFeature({
+		Key = "AntiAFK",
+		Tab = "Settings",
+		Order = 120,
 
-	-- Do NOT disable every Idled connection globally unless you really need to.
-	-- It can break other scripts and doesn't help anti-idle reliability.
+		Defaults = {
+			AntiAFK = false
+		},
 
-	local function fireAntiIdle(reason)
-		local vu = self.State.virtualUser
-		local camera = workspace.CurrentCamera
-		if not vu then
-			warn("[AntiAFK] VirtualUser missing (" .. reason .. ")")
-			return
-		end
-		if not camera then
-			warn("[AntiAFK] Camera missing (" .. reason .. ")")
-			return
-		end
+		State = {
+			antiAfkConnection = nil,
+			heartbeatConnection = nil,
+			virtualUser = nil,
+		},
 
-		local ok, err = pcall(function()
-			vu:CaptureController()
-			vu:ClickButton2(Vector2.new(0, 0))
-			-- Optional extra signal:
-			vu:Button2Down(Vector2.new(0, 0), camera.CFrame)
-			task.wait(0.03)
-			vu:Button2Up(Vector2.new(0, 0), camera.CFrame)
-		end)
+		Options = {
+			{
+				Id = "AntiAFK",
+				Type = "toggle",
+				Label = "Anti-AFK",
+				Description = "Prevent Roblox from kicking you for being idle"
+			}
+		}
+	})
 
-		if ok then
-			print("[AntiAFK] Input sent (" .. reason .. ")")
-		else
-			warn("[AntiAFK] Input failed (" .. reason .. "): " .. tostring(err))
-		end
+	function Feature:Init(context)
+		self.Context = context
+		self.State.virtualUser = game:GetService("VirtualUser")
+		print("[AntiAFK] Feature initialized")
 	end
 
-	self.State.antiAfkConnection = localPlayer.Idled:Connect(function(idleTime)
-		print("[AntiAFK] Idled event: " .. tostring(idleTime))
-		fireAntiIdle("Idled")
-	end)
+	function Feature:StartAntiAFK()
+		self:StopAntiAFK()
 
-	-- Stronger fallback cadence
-	self.State.heartbeatConnection = task.spawn(function()
-		while self.State.antiAfkConnection do
-			task.wait(120) -- every 2 min
-			if not self.State.antiAfkConnection then break end
-			fireAntiIdle("Heartbeat")
+		local localPlayer = Players.LocalPlayer
+		print("[AntiAFK] Starting Anti-AFK...")
+
+		-- Do NOT disable every Idled connection globally unless you really need to.
+		-- It can break other scripts and doesn't help anti-idle reliability.
+		local function fireAntiIdle(reason)
+			local vu = self.State.virtualUser
+			local camera = workspace.CurrentCamera
+
+			if not vu then
+				warn("[AntiAFK] VirtualUser missing (" .. reason .. ")")
+				return
+			end
+
+			if not camera then
+				warn("[AntiAFK] Camera missing (" .. reason .. ")")
+				return
+			end
+
+			local ok, err = pcall(function()
+				vu:CaptureController()
+				vu:ClickButton2(Vector2.new(0, 0))
+				-- Optional extra signal:
+				vu:Button2Down(Vector2.new(0, 0), camera.CFrame)
+				task.wait(0.03)
+				vu:Button2Up(Vector2.new(0, 0), camera.CFrame)
+			end)
+
+			if ok then
+				print("[AntiAFK] Input sent (" .. reason .. ")")
+			else
+				warn("[AntiAFK] Input failed (" .. reason .. "): " .. tostring(err))
+			end
 		end
-	end)
 
-	print("[AntiAFK] ACTIVE (Idled + 2min heartbeat)")
+		self.State.antiAfkConnection = localPlayer.Idled:Connect(function(idleTime)
+			print("[AntiAFK] Idled event: " .. tostring(idleTime))
+			fireAntiIdle("Idled")
+		end)
+
+		-- Stronger fallback cadence
+		self.State.heartbeatConnection = task.spawn(function()
+			while self.State.antiAfkConnection do
+				task.wait(120) -- every 2 min
+				if not self.State.antiAfkConnection then
+					break
+				end
+				fireAntiIdle("Heartbeat")
+			end
+		end)
+
+		print("[AntiAFK] ACTIVE (Idled + 2min heartbeat)")
+	end
+
+	function Feature:StopAntiAFK()
+		if self.State.antiAfkConnection then
+			self.State.antiAfkConnection:Disconnect()
+			self.State.antiAfkConnection = nil
+		end
+
+		if self.State.heartbeatConnection then
+			task.cancel(self.State.heartbeatConnection)
+			self.State.heartbeatConnection = nil
+		end
+
+		print("[AntiAFK] Anti-AFK stopped")
+	end
+
+	function Feature:GetHandlers()
+		return {
+			AntiAFK = function(enabled)
+				print("[AntiAFK] Toggle -> " .. (enabled and "ON" or "OFF"))
+				if enabled then
+					self:StartAntiAFK()
+				else
+					self:StopAntiAFK()
+				end
+			end
+		}
+	end
+
+	function Feature:Cleanup()
+		self:StopAntiAFK()
+	end
 end
 
 --==================================================

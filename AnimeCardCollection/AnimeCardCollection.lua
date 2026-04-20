@@ -155,21 +155,6 @@ return {
 			return items
 		end
 
-		local function waitForItems(builder, minCount, fallback, timeout)
-			timeout = timeout or 5
-			local start = os.clock()
-
-			while os.clock() - start < timeout do
-				local items = builder()
-				if #items >= minCount then
-					return items
-				end
-				task.wait(0.1)
-			end
-
-			return fallback
-		end
-
 		--==================================================
 		-- FEATURE: AUTO BUY (CONVEYOR)
 		--==================================================
@@ -190,6 +175,7 @@ return {
 					LastBuyTimes = {},
 					Polling = false,
 					PanelRef = nil,
+					PackMetadata = setmetatable({}, {__mode = "k"}),
 				},
 
 				Options = {
@@ -204,7 +190,7 @@ return {
 						Type = "multiselect",
 						Label = "Pack ID",
 						Description = "Choose one or more packs",
-						Items = waitForItems(getPackItems, 2, {"All"}),
+						Items = getPackItems,
 						EmptyText = "Nothing selected"
 					},
 					{
@@ -212,41 +198,55 @@ return {
 						Type = "multiselect",
 						Label = "Mutation",
 						Description = "Choose one or more rarities",
-						Items = waitForItems(getMutationItems, 3, {"All", "Regular"}),
+						Items = getMutationItems,
 						EmptyText = "Nothing selected"
 					},
 				}
 			})
 
-			function Feature:GetPackModelType(packModel)
+			function Feature:GetPackMetadata(packModel)
 				if not packModel then
 					return nil
 				end
 
-				if packModel.PrimaryPart and packModel.PrimaryPart.Name ~= "" then
-					return packModel.PrimaryPart.Name
+				local cached = self.State.PackMetadata[packModel]
+				if not cached then
+					local packTypePart = packModel.PrimaryPart or packModel:FindFirstChildWhichIsA("BasePart")
+					local mutationLabel = packModel:FindFirstChild("Mutation", true)
+
+					cached = {
+						PackId = packModel.Name ~= "" and packModel.Name or nil,
+						PackTypePart = packTypePart,
+						MutationLabel = mutationLabel and mutationLabel:IsA("TextLabel") and mutationLabel or nil,
+					}
+					self.State.PackMetadata[packModel] = cached
 				end
 
-				local part = packModel:FindFirstChildWhichIsA("BasePart")
-				return part and part.Name ~= "" and part.Name or nil
-			end
+				cached.PackId = packModel.Name ~= "" and packModel.Name or cached.PackId
 
-			function Feature:GetPackModelMutation(packModel)
-				if not packModel then
-					return "Regular"
+				local packTypePart = cached.PackTypePart
+				if not packTypePart or not packTypePart.Parent then
+					packTypePart = packModel.PrimaryPart or packModel:FindFirstChildWhichIsA("BasePart")
+					cached.PackTypePart = packTypePart
 				end
 
-				for _, desc in ipairs(packModel:GetDescendants()) do
-					if desc:IsA("TextLabel") and desc.Name == "Mutation" and desc.Visible and desc.Text ~= "" then
-						return tostring(desc.Text)
-					end
+				local mutationLabel = cached.MutationLabel
+				if not mutationLabel or not mutationLabel.Parent then
+					local foundMutationLabel = packModel:FindFirstChild("Mutation", true)
+					mutationLabel = foundMutationLabel and foundMutationLabel:IsA("TextLabel") and foundMutationLabel or nil
+					cached.MutationLabel = mutationLabel
 				end
 
-				return "Regular"
-			end
+				local mutation = "Regular"
+				if mutationLabel and mutationLabel.Visible and mutationLabel.Text ~= "" then
+					mutation = tostring(mutationLabel.Text)
+				end
 
-			function Feature:GetPackModelId(packModel)
-				return packModel and packModel.Name ~= "" and packModel.Name or nil
+				return {
+					PackId = cached.PackId,
+					PackType = packTypePart and packTypePart.Name ~= "" and packTypePart.Name or nil,
+					Mutation = mutation,
+				}
 			end
 
 			function Feature:Matches(packType, mutation, selectedPacks, selectedMutations)
@@ -287,9 +287,10 @@ return {
 
 				for _, child in ipairs(packsFolder:GetChildren()) do
 					if child:IsA("Model") then
-						local packId = self:GetPackModelId(child)
-						local packType = self:GetPackModelType(child)
-						local mutation = self:GetPackModelMutation(child)
+						local metadata = self:GetPackMetadata(child)
+						local packId = metadata and metadata.PackId
+						local packType = metadata and metadata.PackType
+						local mutation = metadata and metadata.Mutation
 
 						if packId and packType and self:Matches(packType, mutation, selectedPacks, selectedMutations) then
 							if not self.State.LastBuyTimes[packId] or (now - self.State.LastBuyTimes[packId]) > 1 then
@@ -346,6 +347,7 @@ return {
 				self:Stop()
 				self.State.PanelRef = nil
 				table.clear(self.State.LastBuyTimes)
+				self.State.PackMetadata = setmetatable({}, {__mode = "k"})
 			end
 		end
 
@@ -388,7 +390,7 @@ return {
 						Type = "multiselect",
 						Label = "Select Cards",
 						Description = "Choose which cards to auto grade (All = every owned card)",
-						Items = waitForItems(getAllCardNames, 2, {"All"}),
+						Items = getAllCardNames,
 						EmptyText = "Nothing selected"
 					},
 					{
@@ -483,6 +485,13 @@ return {
 				return autoGrades
 			end
 
+			function Feature:GetLoopDataSnapshot()
+				return {
+					OwnedCards = self:GetOwnedCards(),
+					AutoGrades = self:GetServerAutoGrades(),
+				}
+			end
+
 			function Feature:GetGradeRank(gradeName)
 				if not gradeName then
 					return 0
@@ -503,27 +512,27 @@ return {
 				return minRank
 			end
 
-			function Feature:GetCardCurrentGrade(cardId)
-				local cardData = self:GetOwnedCards()[tostring(cardId)]
+			function Feature:GetCardCurrentGrade(cardId, ownedCards)
+				local cardData = (ownedCards or self:GetOwnedCards())[tostring(cardId)]
 				return type(cardData) == "table" and cardData.Grade or nil
 			end
 
-			function Feature:CardMeetsOrBeatsTarget(cardId, targetMinRank)
-				local currentRank = self:GetGradeRank(self:GetCardCurrentGrade(cardId))
+			function Feature:CardMeetsOrBeatsTarget(cardId, targetMinRank, ownedCards)
+				local currentRank = self:GetGradeRank(self:GetCardCurrentGrade(cardId, ownedCards))
 				return currentRank >= (targetMinRank or math.huge)
 			end
 
-			function Feature:CurrentCardNeedsConfirm(cardId)
-				local currentGrade = self:GetCardCurrentGrade(cardId)
+			function Feature:CurrentCardNeedsConfirm(cardId, ownedCards, serverAutoGrades)
+				local currentGrade = self:GetCardCurrentGrade(cardId, ownedCards)
 				if not currentGrade then
 					return false
 				end
 
-				return arrayContains(self:GetServerAutoGrades(), tostring(currentGrade))
+				return arrayContains(serverAutoGrades or self:GetServerAutoGrades(), tostring(currentGrade))
 			end
 
-			function Feature:BuildQueue(selectedCards)
-				local ownedCards = self:GetOwnedCards()
+			function Feature:BuildQueue(selectedCards, ownedCards)
+				ownedCards = ownedCards or self:GetOwnedCards()
 				if type(ownedCards) ~= "table" then
 					return {}
 				end
@@ -551,18 +560,18 @@ return {
 				return queue
 			end
 
-			function Feature:MarkFinishedCards()
+			function Feature:MarkFinishedCards(ownedCards)
 				if not self.State.TargetMinRank then
 					return
 				end
 
-				local ownedCards = self:GetOwnedCards()
+				ownedCards = ownedCards or self:GetOwnedCards()
 
 				for _, cardId in ipairs(self.State.Queue) do
 					local cardData = ownedCards[cardId]
 					if not cardData then
 						self.State.TargetDone[cardId] = true
-					elseif self:CardMeetsOrBeatsTarget(cardId, self.State.TargetMinRank) then
+					elseif self:CardMeetsOrBeatsTarget(cardId, self.State.TargetMinRank, ownedCards) then
 						self.State.TargetDone[cardId] = true
 					end
 				end
@@ -581,13 +590,13 @@ return {
 				return true
 			end
 
-			function Feature:GetNextCardToRoll()
+			function Feature:GetNextCardToRoll(ownedCards)
 				local count = #self.State.Queue
 				if count == 0 then
 					return nil
 				end
 
-				local ownedCards = self:GetOwnedCards()
+				ownedCards = ownedCards or self:GetOwnedCards()
 
 				for _ = 1, count do
 					self.State.QueueIndex += 1
@@ -604,8 +613,8 @@ return {
 				return nil
 			end
 
-			function Feature:SendGradeRoll(cardId)
-				if self:CurrentCardNeedsConfirm(cardId) then
+			function Feature:SendGradeRoll(cardId, ownedCards, serverAutoGrades)
+				if self:CurrentCardNeedsConfirm(cardId, ownedCards, serverAutoGrades) then
 					GradeRemote:FireServer("Roll", cardId, nil, true)
 				else
 					GradeRemote:FireServer("Roll", cardId)
@@ -620,23 +629,27 @@ return {
 						break
 					end
 
-					self:MarkFinishedCards()
+					local snapshot = self:GetLoopDataSnapshot()
+					local ownedCards = snapshot.OwnedCards
+					local serverAutoGrades = snapshot.AutoGrades
+
+					self:MarkFinishedCards(ownedCards)
 
 					if self:AllCardsDone() then
 						self:Stop()
 						break
 					end
 
-					local nextCard = self:GetNextCardToRoll()
+					local nextCard = self:GetNextCardToRoll(ownedCards)
 					if not nextCard then
 						self:Stop()
 						break
 					end
 
-					if self:CardMeetsOrBeatsTarget(nextCard, self.State.TargetMinRank) then
+					if self:CardMeetsOrBeatsTarget(nextCard, self.State.TargetMinRank, ownedCards) then
 						self.State.TargetDone[nextCard] = true
 					else
-						self:SendGradeRoll(nextCard)
+						self:SendGradeRoll(nextCard, ownedCards, serverAutoGrades)
 					end
 
 					task.wait(self.State.RequestDelay)
@@ -672,7 +685,8 @@ return {
 					return
 				end
 
-				local queue = self:BuildQueue(selectedCards)
+				local ownedCards = self:GetOwnedCards()
+				local queue = self:BuildQueue(selectedCards, ownedCards)
 				if #queue == 0 then
 					self:Stop()
 					return
@@ -686,7 +700,7 @@ return {
 				self.State.TargetDone = {}
 				self.State.TargetMinRank = targetMinRank
 
-				self:MarkFinishedCards()
+				self:MarkFinishedCards(ownedCards)
 
 				if self:AllCardsDone() then
 					self:Stop()
@@ -772,7 +786,7 @@ return {
 						Type = "multiselect",
 						Label = "Pack ID",
 						Description = "Choose packs to buy from market",
-						Items = waitForItems(getPackItems, 2, {"All"}),
+						Items = getPackItems,
 						EmptyText = "Nothing selected"
 					},
 					{
@@ -780,7 +794,7 @@ return {
 						Type = "multiselect",
 						Label = "Mutation",
 						Description = "Choose mutations/rarities to buy",
-						Items = waitForItems(getMutationItems, 3, {"All", "Regular"}),
+						Items = getMutationItems,
 						EmptyText = "Nothing selected"
 					},
 				}

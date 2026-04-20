@@ -744,7 +744,7 @@ do
 end
 
 --==================================================
--- FEATURE: ANTI AFK
+-- FEATURE: ANTI AFK (with Debug)
 --==================================================
 
 do
@@ -752,51 +752,99 @@ do
 		Key = "AntiAFK",
 		Tab = "Settings",
 		Order = 120,
-		Defaults = { AntiAFK = false },
-		State = { antiAfkConnection = nil, virtualUser = nil },
+
+		Defaults = {
+			AntiAFK = false
+		},
+
+		State = {
+			antiAfkConnection = nil,
+			virtualUser = nil,
+		},
+
 		Options = {
-			{ Id = "AntiAFK", Type = "toggle", Label = "Anti-AFK", Description = "Prevent Roblox from kicking you for being idle" }
+			{
+				Id = "AntiAFK",
+				Type = "toggle",
+				Label = "Anti-AFK",
+				Description = "Prevent Roblox from kicking you for being idle"
+			}
 		}
 	})
 
 	function Feature:Init(context)
 		self.Context = context
 		self.State.virtualUser = game:GetService("VirtualUser")
+		print("[AntiAFK] Feature initialized - VirtualUser loaded")
 	end
 
 	function Feature:StartAntiAFK()
 		self:StopAntiAFK()
 
 		local localPlayer = Players.LocalPlayer
+		print("[AntiAFK] Starting Anti-AFK...")
 
+		-- Disable original Roblox Idled connections
 		if getconnections then
+			local disabledCount = 0
 			for _, connection in pairs(getconnections(localPlayer.Idled)) do
 				if connection.Disable then
 					connection:Disable()
+					disabledCount += 1
 				elseif connection.Disconnect then
 					connection:Disconnect()
+					disabledCount += 1
 				end
 			end
+			print("[AntiAFK] Disabled " .. disabledCount .. " existing Idled connection(s)")
 		end
 
+		-- Main anti-afk connection with stronger bypass
 		self.State.antiAfkConnection = localPlayer.Idled:Connect(function()
-			if self.State.virtualUser then
-				self.State.virtualUser:CaptureController()
-				self.State.virtualUser:ClickButton2(Vector2.new())
+			print("[AntiAFK] ⚠️ Idled event detected! Running bypass...")
+
+			local vu = self.State.virtualUser
+			if not vu then
+				warn("[AntiAFK] VirtualUser is missing!")
+				return
 			end
+
+			local camera = workspace.CurrentCamera
+			if not camera then
+				print("[AntiAFK] Camera not ready, using simple click")
+				pcall(function()
+					vu:CaptureController()
+					vu:ClickButton2(Vector2.new())
+				end)
+				return
+			end
+
+			-- Stronger bypass
+			pcall(function()
+				vu:CaptureController()
+				vu:Button2Down(Vector2.new(0, 0), camera.CFrame)
+				task.wait(0.1)
+				vu:Button2Up(Vector2.new(0, 0), camera.CFrame)
+			end)
+
+			print("[AntiAFK] ✅ Bypass executed successfully (Button2Down + Button2Up)")
 		end)
+
+		print("[AntiAFK] Anti-AFK is now ACTIVE and listening for Idled events")
 	end
 
 	function Feature:StopAntiAFK()
 		if self.State.antiAfkConnection then
 			self.State.antiAfkConnection:Disconnect()
 			self.State.antiAfkConnection = nil
+			print("[AntiAFK] Anti-AFK has been stopped")
 		end
 	end
 
 	function Feature:GetHandlers()
 		return {
 			AntiAFK = function(enabled)
+				print("[AntiAFK] Toggle changed → " .. (enabled and "ON" or "OFF"))
 				if enabled then
 					self:StartAntiAFK()
 				else
@@ -808,6 +856,7 @@ do
 
 	function Feature:Cleanup()
 		self:StopAntiAFK()
+		print("[AntiAFK] Cleanup completed")
 	end
 end
 

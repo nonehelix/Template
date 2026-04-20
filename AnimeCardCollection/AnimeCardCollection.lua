@@ -349,372 +349,272 @@ return {
 		end
 
 		--==================================================
-		-- FEATURE: AUTO GRADE
+		-- FEATURE: AUTO GRADE (FIXED - SIMPLE + STABLE)
 		--==================================================
 		do
 			local Feature = RegisterFeature({
 				Key = "AutoGrade",
 				Tab = "Card",
 				Order = 15,
-
+		
 				Defaults = {
 					AutoGradeEnabled = false,
 					AutoGradeCards = {},
 					AutoGradeTarget = {},
 				},
-
+		
 				State = {
-					Grading = false,
-					PanelRef = nil,
+					Running = false,
 					Queue = {},
-					CurrentIndex = 1,
+					QueueIndex = 0,
+					TargetDone = {},
 					TargetMinRank = nil,
+					RequestDelay = 0.35, -- 🔥 tuned to server pace
 					ReplicatedData = nil,
-					-- Fixed delay between requests (adjust based on server performance)
-					RequestDelay = 0.5,
 				},
-
+		
 				Options = {
 					{
 						Id = "AutoGradeEnabled",
 						Type = "toggle",
 						Label = "Enable Auto Grade",
-						Description = "Automatically grades selected cards to target grade(s)"
 					},
 					{
 						Id = "AutoGradeCards",
 						Type = "multiselect",
-						Label = "Select Cards",
-						Description = "Choose which cards to auto grade (All = every owned card)",
+						Label = "Cards",
 						Items = waitForItems(getAllCardNames, 2, {"All"}),
-						EmptyText = "Nothing selected"
 					},
 					{
 						Id = "AutoGradeTarget",
 						Type = "multiselect",
-						Label = "Target Grade",
-						Description = "Stop grading when card reaches any of these grades or better",
+						Label = "Grades",
 						Items = getGradeItems(),
-						EmptyText = "Nothing selected"
 					},
 				}
 			})
-
-			local gradeOrder = {}
-			if GradesConfig and GradesConfig.List then
-				for i, g in ipairs(GradesConfig.List) do
-					gradeOrder[tostring(g)] = i
-				end
-			end
-
-			local function requireReplicatedDataModule()
-				local replicatedDataModule = ReplicatedFirst:FindFirstChild("ReplicatedData")
-				if not replicatedDataModule then
-					warn("[AutoGrade] Missing ReplicatedFirst.ReplicatedData")
-					return nil
-				end
-
-				local ok, result = pcall(require, replicatedDataModule)
-				if not ok then
-					warn("[AutoGrade] Failed to require ReplicatedData:", tostring(result))
-					return nil
-				end
-
-				return result
-			end
-
-			function Feature:GetReplicatedData(timeout)
-				if self.State.ReplicatedData and type(self.State.ReplicatedData.GetData) == "function" then
+		
+			--==================================================
+			-- REPLICATED DATA (ReplicatedFirst)
+			--==================================================
+			function Feature:GetReplicatedData()
+				if self.State.ReplicatedData then
 					return self.State.ReplicatedData
 				end
-
-				timeout = timeout or 10
-
-				local replicatedData = requireReplicatedDataModule()
-				if not replicatedData then
-					return nil
+		
+				local module = ReplicatedFirst:FindFirstChild("ReplicatedData")
+				if not module then return nil end
+		
+				local ok, result = pcall(require, module)
+				if ok and type(result.GetData) == "function" then
+					self.State.ReplicatedData = result
+					return result
 				end
-
-				local startTime = tick()
-				while tick() - startTime < timeout do
-					if type(replicatedData.GetData) == "function" then
-						self.State.ReplicatedData = replicatedData
-						return replicatedData
-					end
-					task.wait(0.1)
-				end
-
-				warn("[AutoGrade] ReplicatedData loaded but GetData never became available")
+		
 				return nil
 			end
-
+		
 			function Feature:GetOwnedCards()
-				local replicatedData = self:GetReplicatedData()
-				if not replicatedData then
-					return {}
-				end
-
+				local data = self:GetReplicatedData()
+				if not data then return {} end
+		
 				local ok, cards = pcall(function()
-					return replicatedData.GetData("Cards")
+					return data.GetData("Cards")
 				end)
-
-				if not ok then
-					warn("[AutoGrade] GetData('Cards') failed:", tostring(cards))
-					return {}
-				end
-
-				if type(cards) ~= "table" then
-					warn("[AutoGrade] Cards data is not a table")
-					return {}
-				end
-
-				return cards
+		
+				return (ok and type(cards) == "table") and cards or {}
 			end
-
+		
 			function Feature:GetServerAutoGrades()
-				local replicatedData = self:GetReplicatedData()
-				if not replicatedData then
-					return {}
-				end
-
-				local ok, autoGrades = pcall(function()
-					return replicatedData.GetData("AutoGrades")
+				local data = self:GetReplicatedData()
+				if not data then return {} end
+		
+				local ok, result = pcall(function()
+					return data.GetData("AutoGrades")
 				end)
-
-				if not ok or type(autoGrades) ~= "table" then
-					return {}
-				end
-
-				return autoGrades
+		
+				return (ok and type(result) == "table") and result or {}
 			end
-
-			function Feature:GetGradeRank(gradeName)
-				if not gradeName then
-					return 0
+		
+			--==================================================
+			-- GRADE LOGIC
+			--==================================================
+			local GradeRankMap = {}
+			if GradesConfig and GradesConfig.List then
+				for i, g in ipairs(GradesConfig.List) do
+					GradeRankMap[tostring(g)] = i
 				end
-				return gradeOrder[tostring(gradeName)] or 0
 			end
-
-			function Feature:GetTargetMinRank(selectedGrades)
-				local minRank = nil
-
-				for _, gradeName in ipairs(selectedGrades or {}) do
-					local rank = self:GetGradeRank(gradeName)
-					if rank > 0 and (minRank == nil or rank < minRank) then
-						minRank = rank
+		
+			function Feature:GetGradeRank(grade)
+				return GradeRankMap[tostring(grade)] or 0
+			end
+		
+			function Feature:GetCardGrade(cardId)
+				local card = self:GetOwnedCards()[cardId]
+				return card and card.Grade
+			end
+		
+			function Feature:GetTargetMinRank(targets)
+				local min
+				for _, g in ipairs(targets) do
+					local r = self:GetGradeRank(g)
+					if r > 0 and (not min or r < min) then
+						min = r
 					end
 				end
-
-				return minRank
+				return min
 			end
-
-			function Feature:GetCardCurrentGrade(cardId)
-				local ownedCards = self:GetOwnedCards()
-				local cardData = ownedCards[tostring(cardId)]
-
-				if type(cardData) ~= "table" then
-					return nil
-				end
-
-				return cardData.Grade
+		
+			function Feature:IsDone(cardId)
+				local rank = self:GetGradeRank(self:GetCardGrade(cardId))
+				return rank >= (self.State.TargetMinRank or math.huge)
 			end
-
-			function Feature:CardMeetsOrBeatsTarget(cardId, targetMinRank)
-				local currentRank = self:GetGradeRank(self:GetCardCurrentGrade(cardId))
-				return currentRank >= (targetMinRank or math.huge)
+		
+			function Feature:NeedsConfirm(cardId)
+				local grade = self:GetCardGrade(cardId)
+				return grade and arrayContains(self:GetServerAutoGrades(), grade)
 			end
-
-			function Feature:CurrentCardNeedsConfirm(cardId)
-				local currentGrade = self:GetCardCurrentGrade(cardId)
-				if not currentGrade then
-					return false
-				end
-
-				return arrayContains(self:GetServerAutoGrades(), tostring(currentGrade))
-			end
-
-			function Feature:BuildQueue(selectedCards)
-				local ownedCards = self:GetOwnedCards()
-				if type(ownedCards) ~= "table" then
-					return {}
-				end
-
+		
+			--==================================================
+			-- QUEUE
+			--==================================================
+			function Feature:BuildQueue(selected)
+				local owned = self:GetOwnedCards()
 				local queue = {}
-
-				if arrayContains(selectedCards, "All") then
-					for cardId in pairs(ownedCards) do
-						queue[#queue + 1] = tostring(cardId)
+		
+				if arrayContains(selected, "All") then
+					for id in pairs(owned) do
+						table.insert(queue, tostring(id))
 					end
-
-					table.sort(queue, function(a, b)
-						return tostring(a) < tostring(b)
-					end)
+					table.sort(queue)
 				else
 					local seen = {}
-
-					for _, cardId in ipairs(selectedCards) do
-						cardId = tostring(cardId)
-						if cardId ~= "All" and ownedCards[cardId] ~= nil and not seen[cardId] then
-							seen[cardId] = true
-							queue[#queue + 1] = cardId
+					for _, id in ipairs(selected) do
+						id = tostring(id)
+						if owned[id] and not seen[id] then
+							seen[id] = true
+							table.insert(queue, id)
 						end
 					end
 				end
-
+		
 				return queue
 			end
-
-			-- Get next card that needs grading (simple round robin)
-			function Feature:GetNextCardToRoll()
-				local queue = self.State.Queue
-				local count = #queue
-				if count == 0 then
-					return nil
-				end
-
-				local ownedCards = self:GetOwnedCards()
-				local targetMinRank = self.State.TargetMinRank
-
-				-- Try each card in order, starting from current index
-				for i = 1, count do
-					local idx = ((self.State.CurrentIndex - 1 + i - 1) % count) + 1
-					local cardId = queue[idx]
-
-					-- Skip if card no longer exists
-					if not ownedCards[cardId] then
-						continue
+		
+			function Feature:GetNext()
+				local count = #self.State.Queue
+				if count == 0 then return nil end
+		
+				for _ = 1, count do
+					self.State.QueueIndex += 1
+					if self.State.QueueIndex > count then
+						self.State.QueueIndex = 1
 					end
-
-					-- Skip if already at or above target
-					if self:CardMeetsOrBeatsTarget(cardId, targetMinRank) then
-						continue
+		
+					local id = self.State.Queue[self.State.QueueIndex]
+					if id and not self.State.TargetDone[id] and self:GetOwnedCards()[id] then
+						return id
 					end
-
-					-- Found a valid card - update index for next call
-					self.State.CurrentIndex = (idx % count) + 1
-					return cardId
 				end
-
-				return nil
 			end
-
-			function Feature:SendGradeRoll(cardId)
-				if self:CurrentCardNeedsConfirm(cardId) then
+		
+			--==================================================
+			-- ACTION
+			--==================================================
+			function Feature:Roll(cardId)
+				if self:NeedsConfirm(cardId) then
 					GradeRemote:FireServer("Roll", cardId, nil, true)
 				else
 					GradeRemote:FireServer("Roll", cardId)
 				end
 			end
-
+		
+			--==================================================
+			-- LOOP (SIMPLE + STABLE)
+			--==================================================
 			function Feature:Loop()
-				while self.State.Grading do
-					local values = self.State.PanelRef and self.State.PanelRef.Config and self.State.PanelRef.Config.Values
-					if not values or not values.AutoGradeEnabled then
-						self:Stop()
-						break
+				while self.State.Running do
+					local values = self.State.PanelRef.Config.Values
+					if not values or not values.AutoGradeEnabled then break end
+		
+					local nextCard = self:GetNext()
+					if not nextCard then break end
+		
+					if self:IsDone(nextCard) then
+						self.State.TargetDone[nextCard] = true
+					else
+						self:Roll(nextCard)
 					end
-
-					-- Get next card to roll
-					local cardId = self:GetNextCardToRoll()
-					if not cardId then
-						-- No more cards need grading, wait and check again
-						task.wait(self.State.RequestDelay)
-						continue
-					end
-
-					-- Send the roll request
-					self:SendGradeRoll(cardId)
-
-					-- Fixed delay between requests
-					task.wait(self.State.RequestDelay)
+		
+					task.wait(self.State.RequestDelay) -- 🔥 critical throttle
 				end
+		
+				self:Stop()
 			end
-
+		
+			--==================================================
+			-- CONTROL
+			--==================================================
 			function Feature:Start(panelRef)
+				self:Stop()
+		
 				self.State.PanelRef = panelRef
-
-				local values = panelRef and panelRef.Config and panelRef.Config.Values
-				if not values then
-					self:Stop()
-					return
-				end
-
-				local selectedCards = normalizeSelectionArray(values.AutoGradeCards)
-				local selectedGrades = normalizeSelectionArray(values.AutoGradeTarget)
-
-				if #selectedCards == 0 or #selectedGrades == 0 then
-					self:Stop()
-					return
-				end
-
-				local replicatedData = self:GetReplicatedData()
-				if not replicatedData then
-					self:Stop()
-					return
-				end
-
-				local targetMinRank = self:GetTargetMinRank(selectedGrades)
-				if not targetMinRank then
-					self:Stop()
-					return
-				end
-
-				local queue = self:BuildQueue(selectedCards)
-				if #queue == 0 then
-					self:Stop()
-					return
-				end
-
-				-- Stop any existing loop
-				self.State.Grading = false
-				task.wait(0.1) -- Brief pause to let old loop exit
-
-				-- Reset state
-				self.State.Grading = true
+				local values = panelRef.Config.Values
+		
+				local cards = normalizeSelectionArray(values.AutoGradeCards)
+				local grades = normalizeSelectionArray(values.AutoGradeTarget)
+		
+				if #cards == 0 or #grades == 0 then return end
+		
+				local minRank = self:GetTargetMinRank(grades)
+				if not minRank then return end
+		
+				local queue = self:BuildQueue(cards)
+				if #queue == 0 then return end
+		
+				self.State.Running = true
 				self.State.Queue = queue
-				self.State.CurrentIndex = 1
-				self.State.TargetMinRank = targetMinRank
-
+				self.State.QueueIndex = 0
+				self.State.TargetDone = {}
+				self.State.TargetMinRank = minRank
+		
 				task.spawn(function()
 					self:Loop()
 				end)
 			end
-
+		
 			function Feature:Stop()
-				self.State.Grading = false
+				self.State.Running = false
 				self.State.Queue = {}
-				self.State.CurrentIndex = 1
-				self.State.TargetMinRank = nil
+				self.State.TargetDone = {}
+				self.State.QueueIndex = 0
 			end
-
+		
 			function Feature:GetHandlers()
 				return {
-					AutoGradeEnabled = function(value, _, panelRef)
-						self.State.PanelRef = panelRef
-						if value then
-							self:Start(panelRef)
+					AutoGradeEnabled = function(v, _, panel)
+						if v then
+							self:Start(panel)
 						else
 							self:Stop()
 						end
 					end,
-					AutoGradeCards = function(_, values, panelRef)
-						self.State.PanelRef = panelRef
+					AutoGradeCards = function(_, values, panel)
 						if values.AutoGradeEnabled then
-							self:Start(panelRef)
+							self:Start(panel)
 						end
 					end,
-					AutoGradeTarget = function(_, values, panelRef)
-						self.State.PanelRef = panelRef
+					AutoGradeTarget = function(_, values, panel)
 						if values.AutoGradeEnabled then
-							self:Start(panelRef)
+							self:Start(panel)
 						end
 					end,
 				}
 			end
-
+		
 			function Feature:Cleanup()
 				self:Stop()
-				self.State.PanelRef = nil
 				self.State.ReplicatedData = nil
 			end
 		end

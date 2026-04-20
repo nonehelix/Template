@@ -1,48 +1,61 @@
--- ==================================================
--- SHARED.LUA - Clean & Updated Version
--- ==================================================
+local Panel = {}
+Panel.__index = Panel
 
-local Players = game:GetService("Players")
-local UserInputService = game:GetService("UserInputService")
-local RunService = game:GetService("RunService")
-local Workspace = game:GetService("Workspace")
-local HttpService = game:GetService("HttpService")
+local FALLBACK_PANEL_STATE = {}
 
-local player = Players.LocalPlayer
-local Features = {}
+local function getPanelSharedState()
+	if type(shared) == "table" then
+		shared.__AdminPanelState = shared.__AdminPanelState or {}
+		return shared.__AdminPanelState
+	end
 
---==================================================
--- THEME
---==================================================
+	return FALLBACK_PANEL_STATE
+end
 
-local Theme = {
-	Window = Color3.fromRGB(18, 20, 26),
-	Sidebar = Color3.fromRGB(22, 24, 31),
-	Content = Color3.fromRGB(24, 27, 35),
-	Card = Color3.fromRGB(31, 35, 45),
-	Stroke = Color3.fromRGB(60, 67, 86),
-	Text = Color3.fromRGB(242, 245, 255),
-	SubText = Color3.fromRGB(160, 168, 188),
-	Accent = Color3.fromRGB(90, 140, 255),
-	Green = Color3.fromRGB(60, 200, 120),
-	Input = Color3.fromRGB(20, 23, 30),
-	Dropdown = Color3.fromRGB(27, 31, 40)
-}
+local function createCorner(parent, radius)
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(0, radius)
+	c.Parent = parent
+	return c
+end
 
-Features.Theme = Theme
+local function createStroke(parent, color, thickness, transparency)
+	local s = Instance.new("UIStroke")
+	s.Color = color
+	s.Thickness = thickness or 1
+	s.Transparency = transparency or 0
+	s.Parent = parent
+	return s
+end
 
---==================================================
--- SHARED HELPERS
---==================================================
+local function createPadding(parent, top, bottom, left, right)
+	local p = Instance.new("UIPadding")
+	p.PaddingTop = UDim.new(0, top or 0)
+	p.PaddingBottom = UDim.new(0, bottom or 0)
+	p.PaddingLeft = UDim.new(0, left or 0)
+	p.PaddingRight = UDim.new(0, right or 0)
+	p.Parent = parent
+	return p
+end
 
 local function roundTo2(num)
 	return math.floor(num * 100 + 0.5) / 100
+end
+
+local function formatNumber(num)
+	num = tonumber(num) or 0
+	num = roundTo2(num)
+	if math.floor(num) == num then
+		return tostring(math.floor(num))
+	end
+	return string.format("%.2f", num):gsub("0+$", ""):gsub("%.$", "")
 end
 
 local function copySimpleValue(value)
 	if type(value) ~= "table" then
 		return value
 	end
+
 	local copy = {}
 	for k, v in pairs(value) do
 		copy[k] = copySimpleValue(v)
@@ -50,64 +63,95 @@ local function copySimpleValue(value)
 	return copy
 end
 
-local function extractPlaceIdFromLink(link)
-	if type(link) ~= "string" then return nil end
-	local id = string.match(link, "/games/(%d+)")
-	if id then return tonumber(id) end
-	id = string.match(link, "placeId=(%d+)")
-	if id then return tonumber(id) end
-	return nil
+local function arrayContains(arr, target)
+	for _, v in ipairs(arr or {}) do
+		if tostring(v) == tostring(target) then
+			return true
+		end
+	end
+	return false
 end
 
-local function waitForCharacterParts(timeoutSeconds)
-	timeoutSeconds = timeoutSeconds or 8
-	local deadline = os.clock() + timeoutSeconds
+local function toggleArrayValue(arr, target)
+	local newArr = copySimpleValue(arr or {})
+	target = tostring(target)
 
-	local character = player.Character
-	if not character then
-		local remaining = deadline - os.clock()
-		if remaining <= 0 then return nil, nil end
-
-		local connection
-		local receivedCharacter
-		connection = player.CharacterAdded:Connect(function(newCharacter)
-			receivedCharacter = newCharacter
-		end)
-
-		while not receivedCharacter and os.clock() < deadline do
-			task.wait()
+	local function removeValue(value)
+		for i = #newArr, 1, -1 do
+			if tostring(newArr[i]) == tostring(value) then
+				table.remove(newArr, i)
+			end
 		end
-
-		if connection then connection:Disconnect() end
-		character = receivedCharacter
-		if not character then return nil, nil end
 	end
 
-	local remaining = deadline - os.clock()
-	if remaining <= 0 then return character, nil end
+	local function hasValue(value)
+		for _, v in ipairs(newArr) do
+			if tostring(v) == tostring(value) then
+				return true
+			end
+		end
+		return false
+	end
 
-	local humanoid = character:FindFirstChildOfClass("Humanoid")
-	if humanoid then return character, humanoid end
+	if target == "All" then
+		if hasValue("All") then
+			removeValue("All")
+			return newArr
+		end
+		return {"All"}
+	end
 
-	humanoid = character:WaitForChild("Humanoid", remaining)
-	return character, humanoid
+	if hasValue(target) then
+		removeValue(target)
+		return newArr
+	end
+
+	removeValue("All")
+	table.insert(newArr, target)
+	return newArr
 end
 
-local function getCharacter(timeoutSeconds)
-	local character = player.Character
-	if character then return character end
-	return waitForCharacterParts(timeoutSeconds or 8)
+local function formatMultiSelectLabel(values, emptyText)
+	emptyText = emptyText or "Nothing selected"
+
+	if type(values) ~= "table" or #values == 0 then
+		return emptyText
+	end
+
+	local text = table.concat(values, ", ")
+	if #text > 24 then
+		text = string.sub(text, 1, 21) .. "..."
+	end
+	return text
 end
 
-local function getHumanoid(timeoutSeconds)
-	local _, humanoid = waitForCharacterParts(timeoutSeconds or 8)
-	return humanoid
+local function clampNumber(value, minValue, maxValue)
+	value = tonumber(value)
+	if value == nil then
+		return nil
+	end
+	if minValue ~= nil and value < minValue then
+		value = minValue
+	end
+	if maxValue ~= nil and value > maxValue then
+		value = maxValue
+	end
+	return roundTo2(value)
 end
 
-local function getRootPart(timeoutSeconds)
-	local character = getCharacter(timeoutSeconds or 8)
-	if not character then return nil end
-	return character:FindFirstChild("HumanoidRootPart")
+local function isPointInsideGuiObject(guiObject, point)
+	if not guiObject then
+		return false
+	end
+
+	local absPos = guiObject.AbsolutePosition
+	local absSize = guiObject.AbsoluteSize
+
+	return
+		point.X >= absPos.X and
+		point.X <= absPos.X + absSize.X and
+		point.Y >= absPos.Y and
+		point.Y <= absPos.Y + absSize.Y
 end
 
 local function NewCleanupBag()
@@ -122,867 +166,25 @@ end
 local function CleanupBag(bag)
 	for _, item in ipairs(bag.Items) do
 		local itemType = typeof(item)
+
 		if itemType == "RBXScriptConnection" then
-			if item.Connected then item:Disconnect() end
+			if item.Connected then
+				item:Disconnect()
+			end
 		elseif itemType == "Instance" then
-			if item.Parent then item:Destroy() end
+			if item.Parent then
+				item:Destroy()
+			end
 		elseif type(item) == "function" then
 			pcall(item)
 		elseif type(item) == "table" and item.Destroy then
-			pcall(function() item:Destroy() end)
-		end
-	end
-	table.clear(bag.Items)
-end
-
---==================================================
--- SETTINGS SAVE / LOAD (Saved inside AdminPanel folder)
---==================================================
-
-local function sanitizeFileName(text)
-	text = tostring(text or "UnknownGame")
-	text = text:gsub("[^%w%-_]", "_")
-	text = text:gsub("_+", "_")
-	text = text:gsub("^_+", "")
-	text = text:gsub("_+$", "")
-	if text == "" then text = "UnknownGame" end
-	return text
-end
-
-local function getSettingsFileName()
-	local gameKey = Features.CurrentGameKey or tostring(game.PlaceId) or "UnknownGame"
-	return "AdminPanel/" .. sanitizeFileName(gameKey) .. ".json"
-end
-
-local function ensureFolderExists()
-	if not isfolder then return end
-	if not isfolder("AdminPanel") then
-		pcall(makefolder, "AdminPanel")
-	end
-end
-
-local function HasSavedSettings()
-	local file = getSettingsFileName()
-	return isfile and isfile(file) or false
-end
-
-local function SaveSettings(values)
-	if not writefile then return end
-	ensureFolderExists()
-	local file = getSettingsFileName()
-	local ok, err = pcall(function()
-		writefile(file, HttpService:JSONEncode(values or {}))
-	end)
-	if not ok then
-		warn("[Shared] Failed to save settings to '" .. tostring(file) .. "': " .. tostring(err))
-	end
-end
-
-local function LoadSettings(defaultValues)
-	local mergedValues = copySimpleValue(defaultValues or {})
-	local file = getSettingsFileName()
-
-	if not (isfile and readfile) or not isfile(file) then
-		return mergedValues
-	end
-
-	local success, loaded = pcall(function()
-		local data = readfile(file)
-		return HttpService:JSONDecode(data)
-	end)
-
-	if not success then
-		warn("[Shared] Failed to load settings from '" .. tostring(file) .. "': " .. tostring(loaded))
-	end
-
-	if success and type(loaded) == "table" then
-		for k, v in pairs(loaded) do
-			if mergedValues[k] ~= nil then
-				mergedValues[k] = v
-			end
-		end
-	end
-
-	return mergedValues
-end
-
-Features.SaveSettings = SaveSettings
-Features.LoadSettings = LoadSettings
-Features.HasSavedSettings = HasSavedSettings
-Features.GetSettingsFileName = getSettingsFileName
-
---==================================================
--- FEATURE REGISTRY + CONTEXT
---==================================================
-
-local FeatureList = {}
-local ExtraTabs = {}
-
-local VALID_OPTION_TYPES = {
-	number = true, toggle = true, button = true,
-	select = true, multiselect = true, section = true,
-}
-
-local function findFeatureIndex(featureKey)
-	for index, existing in ipairs(FeatureList) do
-		if existing.Key == featureKey then
-			return index
-		end
-	end
-
-	return nil
-end
-
-local function validateFeatureOptions(feature)
-	for index, option in ipairs(feature.Options or {}) do
-		assert(type(option) == "table", "Feature option #" .. tostring(index) .. " must be a table")
-		assert(VALID_OPTION_TYPES[option.Type], "Invalid option type for feature '" .. feature.Key .. "': " .. tostring(option.Type))
-
-		if option.Type ~= "section" then
-			assert(type(option.Id) == "string" and option.Id ~= "", "Feature option Id is required for feature '" .. feature.Key .. "'")
-		end
-	end
-end
-
-local function RegisterFeature(feature)
-	assert(type(feature) == "table", "Feature must be a table")
-	assert(type(feature.Key) == "string" and feature.Key ~= "", "Feature.Key is required")
-	assert(type(feature.Tab) == "string" and feature.Tab ~= "", "Feature.Tab is required")
-
-	feature.Section = feature.Section or nil
-	feature.Order = feature.Order or 999
-	feature.Defaults = feature.Defaults or {}
-	feature.Options = feature.Options or {}
-	feature.State = feature.State or {}
-
-	validateFeatureOptions(feature)
-
-	local existingIndex = findFeatureIndex(feature.Key)
-	if existingIndex then
-		FeatureList[existingIndex] = feature
-	else
-		table.insert(FeatureList, feature)
-	end
-
-	return feature
-end
-
-local function RegisterTab(tab)
-	assert(type(tab) == "table", "Tab must be a table")
-	assert(type(tab.Name) == "string" and tab.Name ~= "", "Tab.Name is required")
-
-	for index, existing in ipairs(ExtraTabs) do
-		if existing.Name == tab.Name then
-			ExtraTabs[index] = {
-				Name = tab.Name,
-				Message = tab.Message,
-				Order = tonumber(tab.Order) or 999
-			}
-			return ExtraTabs[index]
-		end
-	end
-
-	local newTab = {
-		Name = tab.Name,
-		Message = tab.Message,
-		Order = tonumber(tab.Order) or 999
-	}
-
-	table.insert(ExtraTabs, newTab)
-	return newTab
-end
-
-local function RegisterTabs(tabs)
-	for _, tab in ipairs(tabs) do
-		RegisterTab(tab)
-	end
-end
-
-local function BuildFeatureDefaults()
-	local values = {}
-	for _, feature in ipairs(FeatureList) do
-		for key, value in pairs(feature.Defaults or {}) do
-			values[key] = copySimpleValue(value)
-		end
-	end
-	return values
-end
-
-local FeatureContext = {}
-
-function FeatureContext:GetPlayer() return player end
-function FeatureContext:GetCharacter(timeoutSeconds) return getCharacter(timeoutSeconds) end
-function FeatureContext:GetHumanoid(timeoutSeconds) return getHumanoid(timeoutSeconds) end
-function FeatureContext:GetRootPart(timeoutSeconds) return getRootPart(timeoutSeconds) end
-function FeatureContext:WaitForCharacterParts(timeoutSeconds) return waitForCharacterParts(timeoutSeconds) end
-
---==================================================
--- FEATURE: PLAYER MOVEMENT
---==================================================
-
-do
-	local BASE_WALKSPEED_ATTRIBUTE = "AdminPanel_BaseWalkSpeed"
-	local BASE_JUMPPOWER_ATTRIBUTE = "AdminPanel_BaseJumpPower"
-
-	local flyPressed = { W = false, A = false, S = false, D = false, Space = false, Ctrl = false }
-
-	local function resetFlyPressed()
-		for k in pairs(flyPressed) do flyPressed[k] = false end
-	end
-
-	local function getFlyInputVector()
-		local x, y, z = 0, 0, 0
-		if flyPressed.A then x -= 1 end
-		if flyPressed.D then x += 1 end
-		if flyPressed.Space then y += 1 end
-		if flyPressed.Ctrl then y -= 1 end
-		if flyPressed.W then z -= 1 end
-		if flyPressed.S then z += 1 end
-		return Vector3.new(x, y, z)
-	end
-
-	local Feature = RegisterFeature({
-		Key = "PlayerMovement",
-		Tab = "Player",
-		Order = 10,
-
-		Defaults = {
-			WalkSpeed = 16,
-			JumpPower = 50,
-			Noclip = false,
-			Fly = false
-		},
-
-		State = {
-			noclipEnabled = false,
-			noclipConnection = nil,
-			flyConnection = nil,
-			globalBag = nil,
-			trackedCharacter = nil,
-			trackedParts = {},
-			originalCollision = {},
-			descendantAddedConnection = nil,
-			descendantRemovingConnection = nil,
-			panelRef = nil,
-			defaultWalkSpeed = nil,
-			defaultJumpPower = nil,
-		},
-
-		Options = {
-			{Id = "WalkSpeed", Type = "number", Label = "Walk Speed", Description = "Adjust movement speed", Min = 0, Max = 500},
-			{Id = "JumpPower", Type = "number", Label = "Jump Power", Description = "Adjust jump strength", Min = 0, Max = 500},
-			{Id = "Noclip", Type = "toggle", Label = "Noclip", Description = "Walk through parts"},
-			{Id = "Fly", Type = "toggle", Label = "Fly", Description = "WASD + Space + Ctrl"}
-		}
-	})
-
-	function Feature:GetPanelValue(optionId)
-		if not self.State.panelRef then return nil end
-		return self.State.panelRef:GetValue(optionId)
-	end
-
-	function Feature:CaptureCharacterDefaults(character)
-		if not character then return end
-		local humanoid = character:FindFirstChildOfClass("Humanoid")
-		if not humanoid then return end
-
-		local storedWalkSpeed = humanoid:GetAttribute(BASE_WALKSPEED_ATTRIBUTE)
-		local storedJumpPower = humanoid:GetAttribute(BASE_JUMPPOWER_ATTRIBUTE)
-
-		if storedWalkSpeed == nil then
-			storedWalkSpeed = roundTo2(humanoid.WalkSpeed)
-			humanoid:SetAttribute(BASE_WALKSPEED_ATTRIBUTE, storedWalkSpeed)
-		end
-		if storedJumpPower == nil then
-			storedJumpPower = roundTo2(humanoid.JumpPower)
-			humanoid:SetAttribute(BASE_JUMPPOWER_ATTRIBUTE, storedJumpPower)
-		end
-
-		self.State.defaultWalkSpeed = storedWalkSpeed
-		self.State.defaultJumpPower = storedJumpPower
-	end
-
-	function Feature:DisconnectCharacterTracking()
-		if self.State.descendantAddedConnection then
-			self.State.descendantAddedConnection:Disconnect()
-			self.State.descendantAddedConnection = nil
-		end
-		if self.State.descendantRemovingConnection then
-			self.State.descendantRemovingConnection:Disconnect()
-			self.State.descendantRemovingConnection = nil
-		end
-	end
-
-	function Feature:RestoreTrackedCharacterCollision()
-		for part, originalCanCollide in pairs(self.State.originalCollision) do
-			if part then
-				if part.Parent then
-					part.CanCollide = originalCanCollide
-				end
-				self.State.originalCollision[part] = nil
-			end
-		end
-	end
-
-	function Feature:ApplyNoclipToPart(part)
-		if not part or not part:IsA("BasePart") then return end
-		if self.State.originalCollision[part] == nil then
-			self.State.originalCollision[part] = part.CanCollide
-		end
-		part.CanCollide = false
-	end
-
-	function Feature:RestorePartCollision(part)
-		local original = self.State.originalCollision[part]
-		if original ~= nil then
-			if part and part.Parent then
-				part.CanCollide = original
-			end
-			self.State.originalCollision[part] = nil
-		end
-	end
-
-	function Feature:TrackPart(part)
-		if not part or not part:IsA("BasePart") then return end
-		self.State.trackedParts[part] = true
-		if self.State.noclipEnabled and self:GetPanelValue("Noclip") then
-			self:ApplyNoclipToPart(part)
-		end
-	end
-
-	function Feature:UntrackPart(part)
-		if not part then return end
-		self.State.trackedParts[part] = nil
-		self:RestorePartCollision(part)
-	end
-
-	function Feature:CacheCharacterParts(character)
-		self:DisconnectCharacterTracking()
-		self:RestoreTrackedCharacterCollision()
-
-		self.State.trackedCharacter = character
-		self.State.trackedParts = {}
-
-		if not character then return end
-
-		self:CaptureCharacterDefaults(character)
-
-		for _, obj in ipairs(character:GetDescendants()) do
-			if obj:IsA("BasePart") then
-				self:TrackPart(obj)
-			end
-		end
-
-		self.State.descendantAddedConnection = character.DescendantAdded:Connect(function(obj)
-			if obj:IsA("BasePart") then self:TrackPart(obj) end
-		end)
-
-		self.State.descendantRemovingConnection = character.DescendantRemoving:Connect(function(obj)
-			if obj:IsA("BasePart") then self:UntrackPart(obj) end
-		end)
-	end
-
-	function Feature:GetTrackedParts()
-		local character = player.Character
-		if character ~= self.State.trackedCharacter then
-			self:CacheCharacterParts(character)
-		end
-		return self.State.trackedParts
-	end
-
-	function Feature:Init(context)
-		self.Context = context
-
-		if not self.State.globalBag then
-			self.State.globalBag = NewCleanupBag()
-			self:CacheCharacterParts(player.Character)
-
-			AddCleanupItem(self.State.globalBag, player.CharacterAdded:Connect(function(character)
-				self:CacheCharacterParts(character)
-				resetFlyPressed()
-			end))
-
-			AddCleanupItem(self.State.globalBag, UserInputService.InputBegan:Connect(function(input, gameProcessed)
-				if gameProcessed then return end
-				if input.KeyCode == Enum.KeyCode.W then flyPressed.W = true end
-				if input.KeyCode == Enum.KeyCode.A then flyPressed.A = true end
-				if input.KeyCode == Enum.KeyCode.S then flyPressed.S = true end
-				if input.KeyCode == Enum.KeyCode.D then flyPressed.D = true end
-				if input.KeyCode == Enum.KeyCode.Space then flyPressed.Space = true end
-				if input.KeyCode == Enum.KeyCode.LeftControl or input.KeyCode == Enum.KeyCode.RightControl then
-					flyPressed.Ctrl = true
-				end
-			end))
-
-			AddCleanupItem(self.State.globalBag, UserInputService.InputEnded:Connect(function(input)
-				if input.KeyCode == Enum.KeyCode.W then flyPressed.W = false end
-				if input.KeyCode == Enum.KeyCode.A then flyPressed.A = false end
-				if input.KeyCode == Enum.KeyCode.S then flyPressed.S = false end
-				if input.KeyCode == Enum.KeyCode.D then flyPressed.D = false end
-				if input.KeyCode == Enum.KeyCode.Space then flyPressed.Space = false end
-				if input.KeyCode == Enum.KeyCode.LeftControl or input.KeyCode == Enum.KeyCode.RightControl then
-					flyPressed.Ctrl = false
-				end
-			end))
-		else
-			self:CacheCharacterParts(player.Character)
-		end
-	end
-
-	function Feature:ApplyDefaults(values)
-		local character = self.Context:GetCharacter(8)
-		if character then self:CaptureCharacterDefaults(character) end
-
-		if values.WalkSpeed ~= nil and self.State.defaultWalkSpeed ~= nil then
-			values.WalkSpeed = self.State.defaultWalkSpeed
-		end
-		if values.JumpPower ~= nil and self.State.defaultJumpPower ~= nil then
-			values.JumpPower = self.State.defaultJumpPower
-		end
-	end
-
-	function Feature:StopNoclip()
-		self.State.noclipEnabled = false
-
-		if self.State.noclipConnection then
-			self.State.noclipConnection:Disconnect()
-			self.State.noclipConnection = nil
-		end
-
-		self:RestoreTrackedCharacterCollision()
-	end
-
-	function Feature:StartNoclip(panelRef)
-		self:StopNoclip()
-		self.State.panelRef = panelRef
-		self.State.noclipEnabled = true
-
-		for part in pairs(self:GetTrackedParts()) do
-			self:ApplyNoclipToPart(part)
-		end
-
-		self.State.noclipConnection = RunService.Stepped:Connect(function()
-			if not self.State.noclipEnabled then
-				return
-			end
-
-			for part in pairs(self:GetTrackedParts()) do
-				if part and part.Parent and part.CanCollide ~= false then
-					self:ApplyNoclipToPart(part)
-				end
-			end
-		end)
-	end
-
-	function Feature:StopFly()
-		if self.State.flyConnection then
-			self.State.flyConnection:Disconnect()
-			self.State.flyConnection = nil
-		end
-		resetFlyPressed()
-
-		local character = player.Character
-		if not character then return end
-
-		local root = character:FindFirstChild("HumanoidRootPart")
-		local humanoid = character:FindFirstChildOfClass("Humanoid")
-
-		if humanoid then
-			humanoid.PlatformStand = false
-			humanoid.AutoRotate = true
-		end
-
-		if root then
-			local attachment = root:FindFirstChild("AdminFlyAttachment")
-			local linearVelocity = root:FindFirstChild("AdminFlyLinearVelocity")
-			local alignOrientation = root:FindFirstChild("AdminFlyAlignOrientation")
-
-			if linearVelocity then linearVelocity:Destroy() end
-			if alignOrientation then alignOrientation:Destroy() end
-			if attachment then attachment:Destroy() end
-		end
-	end
-
-	function Feature:StartFly(panelRef)
-		self:StopFly()
-		self.State.panelRef = panelRef
-
-		local character = self.Context:GetCharacter(8)
-		if not character then return end
-
-		local humanoid = character:FindFirstChildOfClass("Humanoid")
-		local root = character:FindFirstChild("HumanoidRootPart")
-		if not humanoid or not root then return end
-
-		humanoid.PlatformStand = true
-		humanoid.AutoRotate = false
-
-		local attachment = Instance.new("Attachment")
-		attachment.Name = "AdminFlyAttachment"
-		attachment.Parent = root
-
-		local linearVelocity = Instance.new("LinearVelocity")
-		linearVelocity.Name = "AdminFlyLinearVelocity"
-		linearVelocity.Attachment0 = attachment
-		linearVelocity.RelativeTo = Enum.ActuatorRelativeTo.World
-		linearVelocity.MaxForce = math.huge
-		linearVelocity.VectorVelocity = Vector3.zero
-		linearVelocity.Parent = root
-
-		local alignOrientation = Instance.new("AlignOrientation")
-		alignOrientation.Name = "AdminFlyAlignOrientation"
-		alignOrientation.Attachment0 = attachment
-		alignOrientation.Mode = Enum.OrientationAlignmentMode.OneAttachment
-		alignOrientation.RigidityEnabled = true
-		alignOrientation.Responsiveness = 200
-		alignOrientation.Parent = root
-
-		self.State.flyConnection = RunService.RenderStepped:Connect(function()
-			if not panelRef or not panelRef:GetValue("Fly") then
-				self:StopFly()
-				return
-			end
-
-			local camera = Workspace.CurrentCamera
-			if not camera or not root or not root.Parent then return end
-
-			local rawForward = camera.CFrame.LookVector
-			local flatForward = Vector3.new(rawForward.X, 0, rawForward.Z)
-			if flatForward.Magnitude <= 0.001 then flatForward = Vector3.zAxis else flatForward = flatForward.Unit end
-
-			local flatRight = Vector3.new(camera.CFrame.RightVector.X, 0, camera.CFrame.RightVector.Z)
-			if flatRight.Magnitude <= 0.001 then flatRight = Vector3.xAxis else flatRight = flatRight.Unit end
-
-			local inputVector = getFlyInputVector()
-			local moveDir = (flatRight * inputVector.X) + (Vector3.yAxis * inputVector.Y) + (flatForward * -inputVector.Z)
-
-			if moveDir.Magnitude > 0 then
-				moveDir = moveDir.Unit * 60
-			end
-
-			linearVelocity.VectorVelocity = moveDir
-			alignOrientation.CFrame = CFrame.lookAt(root.Position, root.Position + flatForward, Vector3.yAxis)
-		end)
-	end
-
-	function Feature:GetHandlers()
-		return {
-			WalkSpeed = function(value)
-				local humanoid = self.Context:GetHumanoid(8)
-				if humanoid and typeof(value) == "number" then humanoid.WalkSpeed = value end
-			end,
-			JumpPower = function(value)
-				local humanoid = self.Context:GetHumanoid(8)
-				if humanoid and typeof(value) == "number" then
-					humanoid.UseJumpPower = true
-					humanoid.JumpPower = value
-				end
-			end,
-			Noclip = function(value, _, panelRef)
-				self.State.panelRef = panelRef
-				if value then self:StartNoclip(panelRef) else self:StopNoclip() end
-			end,
-			Fly = function(value, _, panelRef)
-				self.State.panelRef = panelRef
-				if value then self:StartFly(panelRef) else self:StopFly() end
-			end
-		}
-	end
-
-	function Feature:Cleanup()
-		self:StopFly()
-		self:StopNoclip()
-		self:DisconnectCharacterTracking()
-		resetFlyPressed()
-
-		if self.State.globalBag then
-			CleanupBag(self.State.globalBag)
-			self.State.globalBag = nil
-		end
-
-		self.State.trackedParts = {}
-		self.State.trackedCharacter = nil
-		self.State.panelRef = nil
-	end
-end
-
---==================================================
--- FEATURE: PLAYER UTILITY
---==================================================
-
-do
-	local Feature = RegisterFeature({
-		Key = "PlayerUtility",
-		Tab = "Player",
-		Order = 20,
-		Defaults = {},
-		State = {},
-		Options = {
-			{Id = "ResetCharacter", Type = "button", Label = "Reset Character", Description = "Respawn your character", ButtonText = "Reset"}
-		}
-	})
-
-	function Feature:Init(context)
-		self.Context = context
-	end
-
-	function Feature:GetHandlers()
-		return {
-			ResetCharacter = function()
-				local character = player.Character
-				if not character then return end
-				local humanoid = character:FindFirstChildOfClass("Humanoid")
-				if humanoid and humanoid.Health > 0 then
-					humanoid:ChangeState(Enum.HumanoidStateType.Dead)
-				end
-			end
-		}
-	end
-
-	function Feature:Cleanup() end
-end
-
---==================================================
--- FEATURE: SETTINGS APPEARANCE
---==================================================
-
-do
-	local Feature = RegisterFeature({
-		Key = "SettingsAppearance",
-		Tab = "Settings",
-		Order = 110,
-		Defaults = { UIAccent = "Blue" },
-		State = {},
-		Options = {
-			{
-				Id = "UIAccent",
-				Type = "select",
-				Label = "Accent Preset",
-				Description = "Change the panel accent color",
-				Items = {"Blue", "Green", "Purple"}
-			}
-		}
-	})
-
-	function Feature:Init(context)
-		self.Context = context
-	end
-
-	function Feature:GetHandlers()
-		return {
-			UIAccent = function(value, _, panelRef)
-				if value == "Green" then
-					Theme.Accent = Color3.fromRGB(60, 200, 120)
-				elseif value == "Purple" then
-					Theme.Accent = Color3.fromRGB(170, 110, 255)
-				else
-					Theme.Accent = Color3.fromRGB(90, 140, 255)
-				end
-
-				if panelRef and panelRef.ApplyAccentTheme then
-					panelRef:ApplyAccentTheme()
-				end
-			end
-		}
-	end
-
-	function Feature:Cleanup() end
-end
-
---==================================================
--- FEATURE: ANTI AFK (Strong 2026 Version with Debug)
---==================================================
-
-do
-	local Feature = RegisterFeature({
-		Key = "AntiAFK",
-		Tab = "Settings",
-		Order = 120,
-
-		Defaults = {
-			AntiAFK = false
-		},
-
-		State = {
-			antiAfkConnection = nil,
-			heartbeatConnection = nil,
-			virtualUser = nil,
-		},
-
-		Options = {
-			{
-				Id = "AntiAFK",
-				Type = "toggle",
-				Label = "Anti-AFK",
-				Description = "Prevent Roblox from kicking you for being idle"
-			}
-		}
-	})
-
-	function Feature:Init(context)
-		self.Context = context
-		self.State.virtualUser = game:GetService("VirtualUser")
-		print("[AntiAFK] Feature initialized")
-	end
-
-	function Feature:StartAntiAFK()
-		self:StopAntiAFK()
-
-		local localPlayer = Players.LocalPlayer
-		print("[AntiAFK] Starting Anti-AFK...")
-
-		-- Do NOT disable every Idled connection globally unless you really need to.
-		-- It can break other scripts and doesn't help anti-idle reliability.
-		local function fireAntiIdle(reason)
-			local vu = self.State.virtualUser
-			local camera = workspace.CurrentCamera
-
-			if not vu then
-				warn("[AntiAFK] VirtualUser missing (" .. reason .. ")")
-				return
-			end
-
-			if not camera then
-				warn("[AntiAFK] Camera missing (" .. reason .. ")")
-				return
-			end
-
-			local ok, err = pcall(function()
-				vu:CaptureController()
-				vu:ClickButton2(Vector2.new(0, 0))
-				-- Optional extra signal:
-				vu:Button2Down(Vector2.new(0, 0), camera.CFrame)
-				task.wait(0.03)
-				vu:Button2Up(Vector2.new(0, 0), camera.CFrame)
-			end)
-
-			if ok then
-				print("[AntiAFK] Input sent (" .. reason .. ")")
-			else
-				warn("[AntiAFK] Input failed (" .. reason .. "): " .. tostring(err))
-			end
-		end
-
-		self.State.antiAfkConnection = localPlayer.Idled:Connect(function(idleTime)
-			print("[AntiAFK] Idled event: " .. tostring(idleTime))
-			fireAntiIdle("Idled")
-		end)
-
-		-- Stronger fallback cadence
-		self.State.heartbeatConnection = task.spawn(function()
-			while self.State.antiAfkConnection do
-				task.wait(120) -- every 2 min
-				if not self.State.antiAfkConnection then
-					break
-				end
-				fireAntiIdle("Heartbeat")
-			end
-		end)
-
-		print("[AntiAFK] ACTIVE (Idled + 2min heartbeat)")
-	end
-
-	function Feature:StopAntiAFK()
-		if self.State.antiAfkConnection then
-			self.State.antiAfkConnection:Disconnect()
-			self.State.antiAfkConnection = nil
-		end
-
-		if self.State.heartbeatConnection then
-			task.cancel(self.State.heartbeatConnection)
-			self.State.heartbeatConnection = nil
-		end
-
-		print("[AntiAFK] Anti-AFK stopped")
-	end
-
-	function Feature:GetHandlers()
-		return {
-			AntiAFK = function(enabled)
-				print("[AntiAFK] Toggle -> " .. (enabled and "ON" or "OFF"))
-				if enabled then
-					self:StartAntiAFK()
-				else
-					self:StopAntiAFK()
-				end
-			end
-		}
-	end
-
-	function Feature:Cleanup()
-		self:StopAntiAFK()
-	end
-end
-
---==================================================
--- FEATURE: SETTINGS GENERAL
---==================================================
-
-do
-	local Feature = RegisterFeature({
-		Key = "SettingsGeneral",
-		Tab = "Settings",
-		Order = 500,
-		Defaults = { Minimized = false },
-		State = {},
-		Options = {
-			{
-				Id = "ResetDefaults",
-				Type = "button",
-				Label = "Reset Defaults",
-				Description = "Restore saved settings to defaults",
-				ButtonText = "Reset"
-			}
-		}
-	})
-
-	function Feature:Init(context)
-		self.Context = context
-	end
-
-	function Feature:GetHandlers()
-		return {
-			Minimized = function() end,
-
-			ResetDefaults = function(_, values, panelRef)
-				local resetValues = BuildFeatureDefaults()
-
-				for _, feature in ipairs(FeatureList) do
-					if feature.ApplyDefaults then
-						pcall(function()
-							feature:ApplyDefaults(resetValues)
-						end)
-					end
-				end
-
-				for optionId, value in pairs(resetValues) do
-					panelRef:SetValue(optionId, copySimpleValue(value), true)
-				end
-
-				panelRef:ApplyAll()
-				panelRef:Restore(true)
-				if Features.SaveSettings then
-					Features.SaveSettings(panelRef.Config.Values)
-				end
-			end
-		}
-	end
-
-	function Feature:Cleanup() end
-end
-
---==================================================
--- CONFIG SANITIZING
---==================================================
-
-local function ApplyFeatureDefaults(values)
-	for _, feature in ipairs(FeatureList) do
-		if feature.ApplyDefaults then
 			pcall(function()
-				feature:ApplyDefaults(values)
+				item:Destroy()
 			end)
 		end
 	end
+
+	table.clear(bag.Items)
 end
 
 local function resolveOptionItems(option)
@@ -994,299 +196,1341 @@ local function resolveOptionItems(option)
 			return resolved
 		end
 
-		warn("[Shared] Failed to resolve items for option '" .. tostring(option and option.Id) .. "': " .. tostring(resolved))
-		return nil
+		warn("[Panel] Failed to resolve items for option '" .. tostring(option and option.Id) .. "': " .. tostring(resolved))
+		return {}
 	end
 
 	if type(items) == "table" then
 		return items
 	end
 
-	return nil
+	return {}
 end
 
-local function sanitizeLoadedNumber(value, option)
-	local numericValue = tonumber(value)
-	if numericValue == nil then
-		return nil
-	end
+function Panel.new(config)
+	assert(type(config) == "table", "Panel.new requires config")
+	assert(type(config.Shared) == "table", "Panel.new requires config.Shared")
 
-	if option.Min ~= nil and numericValue < option.Min then
-		numericValue = option.Min
-	end
-	if option.Max ~= nil and numericValue > option.Max then
-		numericValue = option.Max
-	end
+	local self = setmetatable({}, Panel)
 
-	return roundTo2(numericValue)
-end
+	self.Shared = config.Shared
+	self.Player = self.Shared.player
+	self.PlayerGui = self.Player:WaitForChild("PlayerGui")
+	self.UserInputService = self.Shared.UserInputService
+	self.Workspace = self.Shared.Workspace
 
-local function sanitizeLoadedToggle(value)
-	if type(value) == "boolean" then
-		return value
-	end
-	if type(value) == "number" then
-		return value ~= 0
-	end
-	if type(value) == "string" then
-		local lowered = string.lower(value)
-		if lowered == "true" then
-			return true
-		end
-		if lowered == "false" then
-			return false
-		end
-	end
-
-	return nil
-end
-
-local function sanitizeLoadedSelect(value, option)
-	if value == nil then
-		return nil
-	end
-
-	local stringValue = tostring(value)
-	local items = resolveOptionItems(option)
-	if not items or type(option.Items) == "function" then
-		return stringValue
-	end
-
-	for _, item in ipairs(items) do
-		if tostring(item) == stringValue then
-			return item
-		end
-	end
-
-	return nil
-end
-
-local function sanitizeLoadedMultiSelect(value, option)
-	if type(value) ~= "table" then
-		return nil
-	end
-
-	local items = resolveOptionItems(option)
-	local allowedItemsByKey = nil
-	if items and type(option.Items) ~= "function" then
-		allowedItemsByKey = {}
-		for _, item in ipairs(items) do
-			allowedItemsByKey[tostring(item)] = item
-		end
-	end
-
-	local result = {}
-	local seen = {}
-
-	for _, entry in ipairs(value) do
-		local key = tostring(entry)
-		if not seen[key] then
-			if allowedItemsByKey then
-				local allowedItem = allowedItemsByKey[key]
-				if allowedItem ~= nil then
-					result[#result + 1] = allowedItem
-					seen[key] = true
-				end
-			else
-				result[#result + 1] = key
-				seen[key] = true
-			end
-		end
-	end
-
-	return result
-end
-
-local function BuildOptionDefinitions(panelConfig)
-	local definitions = {}
-
-	for _, tab in ipairs(panelConfig.Tabs or {}) do
-		for _, option in ipairs(tab.Options or {}) do
-			if type(option) == "table" and type(option.Id) == "string" and option.Id ~= "" then
-				definitions[option.Id] = option
-			end
-		end
-	end
-
-	return definitions
-end
-
-local function SanitizePanelValues(panelConfig, fallbackValues)
-	local optionDefinitions = BuildOptionDefinitions(panelConfig)
-
-	for optionId, option in pairs(optionDefinitions) do
-		local currentValue = panelConfig.Values[optionId]
-		if currentValue ~= nil then
-			local sanitizedValue = currentValue
-
-			if option.Type == "number" then
-				sanitizedValue = sanitizeLoadedNumber(currentValue, option)
-			elseif option.Type == "toggle" then
-				sanitizedValue = sanitizeLoadedToggle(currentValue)
-			elseif option.Type == "select" then
-				sanitizedValue = sanitizeLoadedSelect(currentValue, option)
-			elseif option.Type == "multiselect" then
-				sanitizedValue = sanitizeLoadedMultiSelect(currentValue, option)
-			end
-
-			if sanitizedValue == nil and option.Type ~= "button" and option.Type ~= "section" then
-				panelConfig.Values[optionId] = copySimpleValue(fallbackValues and fallbackValues[optionId])
-			elseif sanitizedValue ~= nil then
-				panelConfig.Values[optionId] = sanitizedValue
-			end
-		end
-	end
-end
-
---==================================================
--- BASE CONFIG + CONFIG COMPILER
---==================================================
-
-local BASE_CONFIG = {
-	GuiName = "AdminPanel",
-	Title = "Admin Panel",
-	Subtitle = "Universal local template",
-	PageSubtitle = "Live settings update instantly",
-	WindowSize = UDim2.new(0, 760, 0, 460),
-	WindowPosition = UDim2.new(0.5, -380, 0.5, -230),
-	Tabs = {
-		{Name = "Player", Order = 10},
-		{Name = "Settings", Order = 900}
-	}
-}
-
-local function CompilePanelConfig(baseConfig)
-	local config = {
-		GuiName = baseConfig.GuiName,
-		Title = baseConfig.Title,
-		Subtitle = baseConfig.Subtitle,
-		PageSubtitle = baseConfig.PageSubtitle,
-		WindowSize = baseConfig.WindowSize,
-		WindowPosition = baseConfig.WindowPosition,
+	self.Config = {
+		GuiName = config.GuiName,
+		Title = config.Title,
+		Subtitle = config.Subtitle,
+		PageSubtitle = config.PageSubtitle,
+		WindowSize = config.WindowSize,
+		WindowPosition = config.WindowPosition,
 		Values = {},
 		Tabs = {},
-		Handlers = {},
-		Features = {},
-		Theme = Theme,
-		SaveSettings = SaveSettings,
-		Shared = Features
+		Handlers = config.Handlers or {},
+		Features = config.Features or {},
+		Theme = config.Theme,
+		SaveSettings = config.SaveSettings
 	}
 
-	local tabsByName = {}
-	local seenOptionIds = {}
-	local allTabs = {}
+	for key, value in pairs(config.Values or {}) do
+		self.Config.Values[key] = copySimpleValue(value)
+	end
 
-	for _, tab in ipairs(baseConfig.Tabs or {}) do
-		table.insert(allTabs, {
+	for _, tab in ipairs(config.Tabs or {}) do
+		local newTab = {
 			Name = tab.Name,
 			Message = tab.Message,
-			Order = tonumber(tab.Order) or 999
-		})
-	end
+			Options = {}
+		}
 
-	for _, tab in ipairs(ExtraTabs) do
-		table.insert(allTabs, {
-			Name = tab.Name,
-			Message = tab.Message,
-			Order = tonumber(tab.Order) or 999
-		})
-	end
-
-	table.sort(allTabs, function(a, b)
-		if a.Order == b.Order then return a.Name < b.Name end
-		return a.Order < b.Order
-	end)
-
-	for _, tab in ipairs(allTabs) do
-		local newTab = { Name = tab.Name, Message = tab.Message, Order = tab.Order, Options = {} }
-		tabsByName[tab.Name] = newTab
-		table.insert(config.Tabs, newTab)
-	end
-
-	table.sort(FeatureList, function(a, b)
-		if (a.Order or 999) == (b.Order or 999) then return a.Key < b.Key end
-		return (a.Order or 999) < (b.Order or 999)
-	end)
-
-	local insertedSectionsByTab = {}
-
-	for _, feature in ipairs(FeatureList) do
-		table.insert(config.Features, feature)
-
-		if feature.Init then
-			feature:Init(FeatureContext)
+		for _, opt in ipairs(tab.Options or {}) do
+			table.insert(newTab.Options, opt)
 		end
 
-		for key, value in pairs(feature.Defaults or {}) do
-			if seenOptionIds[key] then
-				warn("Duplicate option Id detected: " .. key)
+		table.insert(self.Config.Tabs, newTab)
+	end
+
+	self.State = {
+		CurrentTab = nil,
+		TabButtons = {},
+		Pages = {},
+		Controls = {},
+		Dragging = false,
+		DragStart = nil,
+		StartPos = nil,
+		OpenDropdown = nil,
+		OpenDropdownAnchor = nil,
+		OpenDropdownBag = nil,
+		IsMinimized = false,
+		SaveQueued = false,
+		Destroyed = false,
+		AccentObjects = {
+			TabButtons = {},
+			ActionButtons = {},
+			ToggleEnabledKnobs = {},
+			ToggleEnabledLabels = {},
+			ToggleButtons = {},
+			DropdownButtons = {},
+			DropdownStrokes = {},
+			RowStrokes = {},
+			HeaderButtons = {}
+		}
+	}
+
+	self.Runtime = NewCleanupBag()
+	self.GlobalState = getPanelSharedState()
+
+	return self
+end
+
+function Panel:GetTheme()
+	return self.Config.Theme
+end
+
+function Panel:GetValue(optionId)
+	return self.Config.Values[optionId]
+end
+
+function Panel:RegisterControl(optionId, controlData)
+	self.State.Controls[optionId] = controlData
+end
+
+function Panel:ClaimSingleton()
+	local activeInstance = self.GlobalState.ActiveInstance
+	if activeInstance and activeInstance ~= self and type(activeInstance.Destroy) == "function" then
+		pcall(function()
+			activeInstance:Destroy()
+		end)
+	end
+
+	self.GlobalState.ActiveInstance = self
+end
+
+function Panel:QueueSave()
+	if self.State.Destroyed or self.State.SaveQueued then
+		return
+	end
+
+	self.State.SaveQueued = true
+
+	task.delay(0.15, function()
+		if self.State.Destroyed then
+			return
+		end
+
+		self.State.SaveQueued = false
+		if self.Config.SaveSettings then
+			self.Config.SaveSettings(self.Config.Values)
+		end
+	end)
+end
+
+function Panel:FlushSave()
+	if self.State.Destroyed then
+		return
+	end
+
+	self.State.SaveQueued = false
+	if self.Config.SaveSettings then
+		self.Config.SaveSettings(self.Config.Values)
+	end
+end
+
+function Panel:ApplyAccentTheme()
+	local Theme = self:GetTheme()
+
+	for tabName, button in pairs(self.State.AccentObjects.TabButtons) do
+		if button and button.Parent then
+			button.BackgroundColor3 = (self.State.CurrentTab == tabName) and Theme.Accent or Theme.Card
+		end
+	end
+
+	for _, button in ipairs(self.State.AccentObjects.ActionButtons) do
+		if button and button.Parent then
+			button.BackgroundColor3 = Theme.Accent
+		end
+	end
+
+	for _, knob in ipairs(self.State.AccentObjects.ToggleEnabledKnobs) do
+		if knob and knob.Parent then
+			knob.BackgroundColor3 = Theme.Accent
+		end
+	end
+
+	for _, label in ipairs(self.State.AccentObjects.ToggleEnabledLabels) do
+		if label and label.Parent and label.Text == "Enabled" then
+			label.TextColor3 = Theme.Accent
+		end
+	end
+
+	for _, button in ipairs(self.State.AccentObjects.ToggleButtons) do
+		if button and button.Parent and button.BackgroundColor3 ~= Theme.Input then
+			button.BackgroundColor3 = Color3.fromRGB(28, 42, 34)
+		end
+	end
+
+	for _, button in ipairs(self.State.AccentObjects.DropdownButtons) do
+		if button and button.Parent then
+			button.BackgroundColor3 = Theme.Input
+		end
+	end
+
+	for _, stroke in ipairs(self.State.AccentObjects.DropdownStrokes) do
+		if stroke and stroke.Parent then
+			stroke.Color = Theme.Stroke
+		end
+	end
+
+	for _, stroke in ipairs(self.State.AccentObjects.RowStrokes) do
+		if stroke and stroke.Parent then
+			stroke.Color = Theme.Stroke
+		end
+	end
+
+	for _, button in ipairs(self.State.AccentObjects.HeaderButtons) do
+		if button and button.Parent then
+			button.BackgroundColor3 = Theme.Card
+		end
+	end
+end
+
+function Panel:RefreshControl(optionId)
+	local control = self.State.Controls[optionId]
+	if not control or not control.Update then
+		return
+	end
+
+	control.Update(self:GetValue(optionId))
+end
+
+function Panel:RefreshAllControls()
+	for optionId in pairs(self.State.Controls) do
+		self:RefreshControl(optionId)
+	end
+end
+
+function Panel:SetValue(optionId, value, skipHandler)
+	if self.State.Destroyed then
+		return
+	end
+
+	self.Config.Values[optionId] = value
+	self:RefreshControl(optionId)
+
+	if not skipHandler then
+		local handler = self.Config.Handlers[optionId]
+		if handler then
+			handler(value, self.Config.Values, self)
+		end
+	end
+
+	self:QueueSave()
+end
+
+function Panel:ApplyAll()
+	if self.State.Destroyed then
+		return
+	end
+
+	for optionId, value in pairs(self.Config.Values) do
+		local handler = self.Config.Handlers[optionId]
+		if handler then
+			handler(value, self.Config.Values, self)
+		end
+	end
+
+	self:RefreshAllControls()
+	self:ApplyAccentTheme()
+end
+
+function Panel:CloseDropdown()
+	if self.State.OpenDropdownBag then
+		CleanupBag(self.State.OpenDropdownBag)
+		self.State.OpenDropdownBag = nil
+	elseif self.State.OpenDropdown and self.State.OpenDropdown.Parent then
+		self.State.OpenDropdown:Destroy()
+	end
+
+	self.State.OpenDropdown = nil
+	self.State.OpenDropdownAnchor = nil
+end
+
+function Panel:Minimize(skipSave)
+	self:CloseDropdown()
+	self.State.IsMinimized = true
+
+	if self.MainFrame then
+		self.MainFrame.Visible = false
+	end
+	if self.OpenButton then
+		self.OpenButton.Visible = true
+	end
+
+	if not skipSave and self.Config.Values.Minimized ~= nil then
+		self.Config.Values.Minimized = true
+		self:QueueSave()
+	end
+end
+
+function Panel:Restore(skipSave)
+	self.State.IsMinimized = false
+
+	if self.MainFrame then
+		self.MainFrame.Visible = true
+	end
+	if self.OpenButton then
+		self.OpenButton.Visible = false
+	end
+
+	if not skipSave and self.Config.Values.Minimized ~= nil then
+		self.Config.Values.Minimized = false
+		self:QueueSave()
+	end
+end
+
+function Panel:Destroy()
+	if self.State.Destroyed then
+		return
+	end
+
+	self:CloseDropdown()
+
+	for _, feature in ipairs(self.Config.Features) do
+		if feature.Cleanup then
+			pcall(function()
+				feature:Cleanup()
+			end)
+		end
+	end
+
+	self:FlushSave()
+	self.State.Destroyed = true
+
+	CleanupBag(self.Runtime)
+
+	if self.ScreenGui then
+		self.ScreenGui:Destroy()
+		self.ScreenGui = nil
+	end
+
+	if self.GlobalState.ActiveInstance == self then
+		self.GlobalState.ActiveInstance = nil
+	end
+end
+
+function Panel:CreateGui()
+	local Theme = self:GetTheme()
+
+	local oldGui = self.PlayerGui:FindFirstChild(self.Config.GuiName or "AdminPanel")
+	if oldGui then
+		oldGui:Destroy()
+	end
+
+	local screenGui = Instance.new("ScreenGui")
+	screenGui.Name = self.Config.GuiName or "AdminPanel"
+	screenGui.ResetOnSpawn = false
+	screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	screenGui.DisplayOrder = 999
+	screenGui.Parent = self.PlayerGui
+	self.ScreenGui = screenGui
+
+	local overlay = Instance.new("Frame")
+	overlay.Name = "Overlay"
+	overlay.Size = UDim2.fromScale(1, 1)
+	overlay.BackgroundTransparency = 1
+	overlay.BorderSizePixel = 0
+	overlay.ZIndex = 50
+	overlay.Parent = screenGui
+	self.Overlay = overlay
+
+	local openButton = Instance.new("TextButton")
+	openButton.Name = "OpenButton"
+	openButton.Size = UDim2.new(0, 42, 0, 42)
+	openButton.Position = UDim2.new(0.5, -21, 0, 70)
+	openButton.BackgroundColor3 = Color3.fromRGB(70, 74, 84)
+	openButton.BorderSizePixel = 0
+	openButton.Text = ""
+	openButton.Visible = false
+	openButton.ZIndex = 55
+	openButton.AutoButtonColor = false
+	openButton.Parent = screenGui
+	createCorner(openButton, 12)
+	createStroke(openButton, Color3.fromRGB(255, 255, 255), 1, 0.85)
+
+	local openIcon = Instance.new("TextLabel")
+	openIcon.Size = UDim2.new(1, 0, 1, 0)
+	openIcon.BackgroundTransparency = 1
+	openIcon.Text = "="
+	openIcon.TextColor3 = Color3.fromRGB(255, 255, 255)
+	openIcon.TextSize = 20
+	openIcon.Font = Enum.Font.GothamBold
+	openIcon.ZIndex = 56
+	openIcon.Parent = openButton
+
+	openButton.MouseButton1Click:Connect(function()
+		self:Restore()
+	end)
+
+	local openDragging = false
+	local openDragStart
+	local openStartPos
+
+	AddCleanupItem(self.Runtime, openButton.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			openDragging = true
+			openDragStart = input.Position
+			openStartPos = openButton.Position
+		end
+	end))
+
+	AddCleanupItem(self.Runtime, openButton.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			openDragging = false
+		end
+	end))
+
+	AddCleanupItem(self.Runtime, self.UserInputService.InputChanged:Connect(function(input)
+		if openDragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+			local delta = input.Position - openDragStart
+			openButton.Position = UDim2.new(
+				openStartPos.X.Scale,
+				openStartPos.X.Offset + delta.X,
+				openStartPos.Y.Scale,
+				openStartPos.Y.Offset + delta.Y
+			)
+		end
+	end))
+
+	self.OpenButton = openButton
+
+	local mainFrame = Instance.new("Frame")
+	mainFrame.Name = "MainFrame"
+	mainFrame.Size = self.Config.WindowSize or UDim2.new(0, 760, 0, 460)
+	mainFrame.Position = self.Config.WindowPosition or UDim2.new(0.5, -380, 0.5, -230)
+	mainFrame.BackgroundColor3 = Theme.Window
+	mainFrame.BorderSizePixel = 0
+	mainFrame.Parent = screenGui
+	createCorner(mainFrame, 14)
+	createStroke(mainFrame, Theme.Stroke, 1, 0.2)
+	self.MainFrame = mainFrame
+
+	local sidebar = Instance.new("Frame")
+	sidebar.Size = UDim2.new(0, 190, 1, 0)
+	sidebar.BackgroundColor3 = Theme.Sidebar
+	sidebar.BorderSizePixel = 0
+	sidebar.Parent = mainFrame
+	createCorner(sidebar, 14)
+
+	local sidebarFix = Instance.new("Frame")
+	sidebarFix.Size = UDim2.new(0, 20, 1, 0)
+	sidebarFix.Position = UDim2.new(1, -20, 0, 0)
+	sidebarFix.BackgroundColor3 = Theme.Sidebar
+	sidebarFix.BorderSizePixel = 0
+	sidebarFix.Parent = sidebar
+
+	local title = Instance.new("TextLabel")
+	title.Size = UDim2.new(1, -20, 0, 28)
+	title.Position = UDim2.new(0, 16, 0, 18)
+	title.BackgroundTransparency = 1
+	title.Text = self.Config.Title or "Admin Panel"
+	title.TextColor3 = Theme.Text
+	title.TextSize = 20
+	title.Font = Enum.Font.GothamBold
+	title.TextXAlignment = Enum.TextXAlignment.Left
+	title.Parent = sidebar
+
+	local subtitle = Instance.new("TextLabel")
+	subtitle.Size = UDim2.new(1, -20, 0, 18)
+	subtitle.Position = UDim2.new(0, 16, 0, 44)
+	subtitle.BackgroundTransparency = 1
+	subtitle.Text = self.Config.Subtitle or "Template"
+	subtitle.TextColor3 = Theme.SubText
+	subtitle.TextSize = 12
+	subtitle.Font = Enum.Font.Gotham
+	subtitle.TextXAlignment = Enum.TextXAlignment.Left
+	subtitle.Parent = sidebar
+
+	local tabHolder = Instance.new("Frame")
+	tabHolder.Size = UDim2.new(1, -20, 1, -100)
+	tabHolder.Position = UDim2.new(0, 10, 0, 82)
+	tabHolder.BackgroundTransparency = 1
+	tabHolder.Parent = sidebar
+	self.TabHolder = tabHolder
+
+	local tabList = Instance.new("UIListLayout")
+	tabList.Padding = UDim.new(0, 8)
+	tabList.Parent = tabHolder
+
+	local content = Instance.new("Frame")
+	content.Size = UDim2.new(1, -206, 1, -16)
+	content.Position = UDim2.new(0, 198, 0, 8)
+	content.BackgroundColor3 = Theme.Content
+	content.BorderSizePixel = 0
+	content.Parent = mainFrame
+	createCorner(content, 12)
+	createStroke(content, Theme.Stroke, 1, 0.3)
+	self.Content = content
+
+	local header = Instance.new("Frame")
+	header.Size = UDim2.new(1, 0, 0, 56)
+	header.BackgroundTransparency = 1
+	header.Parent = content
+	self.Header = header
+
+	local pageTitle = Instance.new("TextLabel")
+	pageTitle.Size = UDim2.new(1, -110, 0, 24)
+	pageTitle.Position = UDim2.new(0, 18, 0, 12)
+	pageTitle.BackgroundTransparency = 1
+	pageTitle.Text = ""
+	pageTitle.TextColor3 = Theme.Text
+	pageTitle.TextSize = 18
+	pageTitle.Font = Enum.Font.GothamBold
+	pageTitle.TextXAlignment = Enum.TextXAlignment.Left
+	pageTitle.Parent = header
+	self.PageTitle = pageTitle
+
+	local pageSub = Instance.new("TextLabel")
+	pageSub.Size = UDim2.new(1, -110, 0, 18)
+	pageSub.Position = UDim2.new(0, 18, 0, 32)
+	pageSub.BackgroundTransparency = 1
+	pageSub.Text = self.Config.PageSubtitle or "Live settings update instantly"
+	pageSub.TextColor3 = Theme.SubText
+	pageSub.TextSize = 12
+	pageSub.Font = Enum.Font.Gotham
+	pageSub.TextXAlignment = Enum.TextXAlignment.Left
+	pageSub.Parent = header
+
+	local minimizeBtn = Instance.new("TextButton")
+	minimizeBtn.Size = UDim2.new(0, 30, 0, 30)
+	minimizeBtn.Position = UDim2.new(1, -76, 0, 14)
+	minimizeBtn.BackgroundColor3 = Theme.Card
+	minimizeBtn.Text = "_"
+	minimizeBtn.TextColor3 = Theme.Text
+	minimizeBtn.TextSize = 18
+	minimizeBtn.Font = Enum.Font.GothamBold
+	minimizeBtn.Parent = header
+	createCorner(minimizeBtn, 8)
+	table.insert(self.State.AccentObjects.HeaderButtons, minimizeBtn)
+	table.insert(self.State.AccentObjects.RowStrokes, createStroke(minimizeBtn, Theme.Stroke, 1, 0.35))
+
+	minimizeBtn.MouseButton1Click:Connect(function()
+		self:Minimize()
+	end)
+
+	local closeBtn = Instance.new("TextButton")
+	closeBtn.Size = UDim2.new(0, 30, 0, 30)
+	closeBtn.Position = UDim2.new(1, -42, 0, 14)
+	closeBtn.BackgroundColor3 = Theme.Card
+	closeBtn.Text = "X"
+	closeBtn.TextColor3 = Theme.Text
+	closeBtn.TextSize = 18
+	closeBtn.Font = Enum.Font.GothamBold
+	closeBtn.Parent = header
+	createCorner(closeBtn, 8)
+	table.insert(self.State.AccentObjects.HeaderButtons, closeBtn)
+	table.insert(self.State.AccentObjects.RowStrokes, createStroke(closeBtn, Theme.Stroke, 1, 0.35))
+
+	closeBtn.MouseButton1Click:Connect(function()
+		self:Destroy()
+	end)
+
+	local divider = Instance.new("Frame")
+	divider.Size = UDim2.new(1, -24, 0, 1)
+	divider.Position = UDim2.new(0, 12, 0, 56)
+	divider.BackgroundColor3 = Theme.Stroke
+	divider.BackgroundTransparency = 0.45
+	divider.BorderSizePixel = 0
+	divider.Parent = content
+
+	local pagesHolder = Instance.new("Frame")
+	pagesHolder.Size = UDim2.new(1, -20, 1, -74)
+	pagesHolder.Position = UDim2.new(0, 10, 0, 64)
+	pagesHolder.BackgroundTransparency = 1
+	pagesHolder.Parent = content
+	self.PagesHolder = pagesHolder
+end
+
+function Panel:CreatePage(tabName)
+	local page = Instance.new("ScrollingFrame")
+	page.Name = tabName
+	page.Size = UDim2.new(1, 0, 1, 0)
+	page.BackgroundTransparency = 1
+	page.BorderSizePixel = 0
+	page.ScrollBarThickness = 4
+	page.ScrollingDirection = Enum.ScrollingDirection.Y
+	page.AutomaticCanvasSize = Enum.AutomaticSize.None
+	page.CanvasSize = UDim2.new(0, 0, 0, 0)
+	page.ClipsDescendants = true
+	page.Visible = false
+	page.Parent = self.PagesHolder
+
+	local layout = Instance.new("UIListLayout")
+	layout.Padding = UDim.new(0, 10)
+	layout.Parent = page
+
+	createPadding(page, 4, 10, 4, 8)
+
+	local function updateCanvas()
+		page.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 14)
+	end
+
+	AddCleanupItem(self.Runtime, layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateCanvas))
+	task.defer(updateCanvas)
+
+	self.State.Pages[tabName] = page
+	return page
+end
+
+function Panel:CreateSectionRow(parent, option)
+	local Theme = self:GetTheme()
+
+	local row = Instance.new("Frame")
+	row.Size = UDim2.new(1, 0, 0, 34)
+	row.BackgroundTransparency = 1
+	row.BorderSizePixel = 0
+	row.ZIndex = 2
+	row.Parent = parent
+
+	local lineLeft = Instance.new("Frame")
+	lineLeft.Size = UDim2.new(0.25, -6, 0, 1)
+	lineLeft.Position = UDim2.new(0, 0, 0.5, 0)
+	lineLeft.AnchorPoint = Vector2.new(0, 0.5)
+	lineLeft.BackgroundColor3 = Theme.Stroke
+	lineLeft.BackgroundTransparency = 0.35
+	lineLeft.BorderSizePixel = 0
+	lineLeft.Parent = row
+
+	local title = Instance.new("TextLabel")
+	title.Size = UDim2.new(0.5, 0, 1, 0)
+	title.Position = UDim2.new(0.25, 0, 0, 0)
+	title.BackgroundTransparency = 1
+	title.Text = tostring(option.Label or "Section")
+	title.TextColor3 = Theme.SubText
+	title.TextSize = 12
+	title.Font = Enum.Font.GothamBold
+	title.TextXAlignment = Enum.TextXAlignment.Center
+	title.ZIndex = 3
+	title.Parent = row
+
+	local lineRight = Instance.new("Frame")
+	lineRight.Size = UDim2.new(0.25, -6, 0, 1)
+	lineRight.Position = UDim2.new(1, 0, 0.5, 0)
+	lineRight.AnchorPoint = Vector2.new(1, 0.5)
+	lineRight.BackgroundColor3 = Theme.Stroke
+	lineRight.BackgroundTransparency = 0.35
+	lineRight.BorderSizePixel = 0
+	lineRight.Parent = row
+
+	return row
+end
+
+function Panel:CreateRow(parent, option)
+	local Theme = self:GetTheme()
+
+	local row = Instance.new("Frame")
+	row.Size = UDim2.new(1, 0, 0, 62)
+	row.BackgroundColor3 = Theme.Card
+	row.BorderSizePixel = 0
+	row.ClipsDescendants = true
+	row.ZIndex = 2
+	row.Parent = parent
+	createCorner(row, 10)
+	table.insert(self.State.AccentObjects.RowStrokes, createStroke(row, Theme.Stroke, 1, 0.4))
+
+	local title = Instance.new("TextLabel")
+	title.Size = UDim2.new(0.55, 0, 0, 20)
+	title.Position = UDim2.new(0, 14, 0, 10)
+	title.BackgroundTransparency = 1
+	title.Text = option.Label or option.Id
+	title.TextColor3 = Theme.Text
+	title.TextSize = 14
+	title.Font = Enum.Font.GothamMedium
+	title.TextXAlignment = Enum.TextXAlignment.Left
+	title.ZIndex = 3
+	title.Parent = row
+
+	local desc = Instance.new("TextLabel")
+	desc.Size = UDim2.new(0.58, 0, 0, 16)
+	desc.Position = UDim2.new(0, 14, 0, 32)
+	desc.BackgroundTransparency = 1
+	desc.Text = option.Description or ""
+	desc.TextColor3 = Theme.SubText
+	desc.TextSize = 11
+	desc.Font = Enum.Font.Gotham
+	desc.TextXAlignment = Enum.TextXAlignment.Left
+	desc.ZIndex = 3
+	desc.Parent = row
+
+	return row
+end
+
+function Panel:CreateNumberInput(row, option)
+	local Theme = self:GetTheme()
+
+	local holder = Instance.new("Frame")
+	holder.Size = UDim2.new(0, 110, 0, 34)
+	holder.Position = UDim2.new(1, -124, 0.5, -17)
+	holder.BackgroundColor3 = Theme.Input
+	holder.BorderSizePixel = 0
+	holder.ZIndex = 3
+	holder.Parent = row
+	createCorner(holder, 8)
+	table.insert(self.State.AccentObjects.DropdownStrokes, createStroke(holder, Theme.Stroke, 1, 0.45))
+
+	local box = Instance.new("TextBox")
+	box.Size = UDim2.new(1, -16, 1, 0)
+	box.Position = UDim2.new(0, 8, 0, 0)
+	box.BackgroundTransparency = 1
+	box.Text = formatNumber(self:GetValue(option.Id))
+	box.PlaceholderText = "Value"
+	box.ClearTextOnFocus = false
+	box.TextColor3 = Theme.Text
+	box.PlaceholderColor3 = Theme.SubText
+	box.TextSize = 13
+	box.Font = Enum.Font.Gotham
+	box.ZIndex = 4
+	box.Parent = holder
+
+	box.FocusLost:Connect(function(enterPressed)
+		local value = clampNumber(box.Text, option.Min, option.Max)
+		if value ~= nil then
+			self:SetValue(option.Id, value)
+		else
+			self:RefreshControl(option.Id)
+		end
+	end)
+
+	self:RegisterControl(option.Id, {
+		Update = function(value)
+			box.Text = formatNumber(value)
+		end
+	})
+end
+
+function Panel:CreateToggle(row, option)
+	local Theme = self:GetTheme()
+
+	local stateLabel = Instance.new("TextLabel")
+	stateLabel.Size = UDim2.new(0, 56, 0, 16)
+	stateLabel.Position = UDim2.new(1, -136, 0.5, -8)
+	stateLabel.BackgroundTransparency = 1
+	stateLabel.TextSize = 11
+	stateLabel.Font = Enum.Font.Gotham
+	stateLabel.TextXAlignment = Enum.TextXAlignment.Right
+	stateLabel.ZIndex = 3
+	stateLabel.Parent = row
+
+	local button = Instance.new("TextButton")
+	button.Size = UDim2.new(0, 46, 0, 24)
+	button.Position = UDim2.new(1, -72, 0.5, -12)
+	button.Text = ""
+	button.AutoButtonColor = false
+	button.BorderSizePixel = 0
+	button.ZIndex = 3
+	button.Parent = row
+	createCorner(button, 999)
+
+	local fill = Instance.new("Frame")
+	fill.Size = UDim2.new(0, 18, 0, 18)
+	fill.BorderSizePixel = 0
+	fill.ZIndex = 4
+	fill.Parent = button
+	createCorner(fill, 999)
+
+	table.insert(self.State.AccentObjects.ToggleButtons, button)
+	table.insert(self.State.AccentObjects.ToggleEnabledKnobs, fill)
+	table.insert(self.State.AccentObjects.ToggleEnabledLabels, stateLabel)
+
+	local function updateVisual(state)
+		if state then
+			button.BackgroundColor3 = Color3.fromRGB(28, 42, 34)
+			fill.Position = UDim2.new(1, -22, 0.5, -9)
+			fill.BackgroundColor3 = Theme.Accent
+			stateLabel.Text = "Enabled"
+			stateLabel.TextColor3 = Theme.Accent
+		else
+			button.BackgroundColor3 = Theme.Input
+			fill.Position = UDim2.new(0, 4, 0.5, -9)
+			fill.BackgroundColor3 = Theme.SubText
+			stateLabel.Text = "Disabled"
+			stateLabel.TextColor3 = Theme.SubText
+		end
+	end
+
+	updateVisual(self:GetValue(option.Id))
+
+	button.MouseButton1Click:Connect(function()
+		local newValue = not self:GetValue(option.Id)
+		self:SetValue(option.Id, newValue)
+	end)
+
+	self:RegisterControl(option.Id, {
+		Update = function(value)
+			updateVisual(not not value)
+		end
+	})
+end
+
+function Panel:CreateButton(row, option)
+	local Theme = self:GetTheme()
+
+	local button = Instance.new("TextButton")
+	button.Size = UDim2.new(0, 100, 0, 32)
+	button.Position = UDim2.new(1, -114, 0.5, -16)
+	button.BackgroundColor3 = Theme.Accent
+	button.BorderSizePixel = 0
+	button.Text = option.ButtonText or "Run"
+	button.TextColor3 = Color3.fromRGB(255, 255, 255)
+	button.TextSize = 13
+	button.Font = Enum.Font.GothamMedium
+	button.ZIndex = 3
+	button.Parent = row
+	createCorner(button, 8)
+
+	table.insert(self.State.AccentObjects.ActionButtons, button)
+
+	button.MouseButton1Click:Connect(function()
+		local handler = self.Config.Handlers[option.Id]
+		if handler then
+			handler(self:GetValue(option.Id), self.Config.Values, self)
+		end
+	end)
+
+	self:RegisterControl(option.Id, {
+		Update = function()
+		end
+	})
+end
+
+function Panel:CreateDropdownBase(button, itemCount)
+	local Theme = self:GetTheme()
+	local dropdownBag = NewCleanupBag()
+
+	local dropdown = Instance.new("Frame")
+	dropdown.Name = "Dropdown"
+	dropdown.BackgroundColor3 = Theme.Dropdown
+	dropdown.BorderSizePixel = 0
+	dropdown.ZIndex = 60
+	dropdown.Parent = self.Overlay
+	createCorner(dropdown, 8)
+	createStroke(dropdown, Theme.Stroke, 1, 0.2)
+	AddCleanupItem(dropdownBag, dropdown)
+
+	local buttonPos = button.AbsolutePosition
+	local buttonSize = button.AbsoluteSize
+	local viewport = self.Workspace.CurrentCamera and self.Workspace.CurrentCamera.ViewportSize or Vector2.new(1920, 1080)
+
+	local maxVisible = math.min(itemCount, 6)
+	local dropdownHeight = math.max(34, maxVisible * 30 + 8)
+	local dropdownWidth = buttonSize.X
+
+	local x = buttonPos.X
+	local y = buttonPos.Y + buttonSize.Y + 4
+
+	if x + dropdownWidth > viewport.X - 8 then
+		x = math.max(8, viewport.X - dropdownWidth - 8)
+	end
+
+	if y + dropdownHeight > viewport.Y - 8 then
+		y = math.max(8, buttonPos.Y - dropdownHeight - 4)
+	end
+
+	dropdown.Size = UDim2.new(0, dropdownWidth, 0, dropdownHeight)
+	dropdown.Position = UDim2.new(0, x, 0, y)
+
+	local useScroll = itemCount > 6
+	local parentForItems
+
+	if useScroll then
+		local scroll = Instance.new("ScrollingFrame")
+		scroll.Size = UDim2.new(1, -8, 1, -8)
+		scroll.Position = UDim2.new(0, 4, 0, 4)
+		scroll.BackgroundTransparency = 1
+		scroll.BorderSizePixel = 0
+		scroll.ScrollBarThickness = 4
+		scroll.ZIndex = 61
+		scroll.Parent = dropdown
+
+		local holder = Instance.new("Frame")
+		holder.BackgroundTransparency = 1
+		holder.BorderSizePixel = 0
+		holder.Size = UDim2.new(1, -4, 0, 0)
+		holder.Parent = scroll
+
+		local layout = Instance.new("UIListLayout")
+		layout.Padding = UDim.new(0, 4)
+		layout.Parent = holder
+
+		local function updateScrollCanvas()
+			local contentHeight = layout.AbsoluteContentSize.Y
+			holder.Size = UDim2.new(1, -4, 0, contentHeight)
+			scroll.CanvasSize = UDim2.new(0, 0, 0, contentHeight)
+		end
+
+		AddCleanupItem(dropdownBag, layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(updateScrollCanvas))
+		task.defer(updateScrollCanvas)
+
+		parentForItems = holder
+	else
+		local holder = Instance.new("Frame")
+		holder.BackgroundTransparency = 1
+		holder.BorderSizePixel = 0
+		holder.Size = UDim2.new(1, -8, 1, -8)
+		holder.Position = UDim2.new(0, 4, 0, 4)
+		holder.ZIndex = 61
+		holder.Parent = dropdown
+
+		local layout = Instance.new("UIListLayout")
+		layout.Padding = UDim.new(0, 4)
+		layout.Parent = holder
+
+		parentForItems = holder
+	end
+
+	self.State.OpenDropdown = dropdown
+	self.State.OpenDropdownAnchor = button
+	self.State.OpenDropdownBag = dropdownBag
+
+	return dropdown, parentForItems
+end
+
+function Panel:CreateSelect(row, option)
+	local Theme = self:GetTheme()
+
+	local button = Instance.new("TextButton")
+	button.Size = UDim2.new(0, 140, 0, 34)
+	button.Position = UDim2.new(1, -154, 0.5, -17)
+	button.BackgroundColor3 = Theme.Input
+	button.BorderSizePixel = 0
+	button.Text = ""
+	button.AutoButtonColor = false
+	button.ZIndex = 3
+	button.Parent = row
+	createCorner(button, 8)
+	table.insert(self.State.AccentObjects.DropdownButtons, button)
+	table.insert(self.State.AccentObjects.DropdownStrokes, createStroke(button, Theme.Stroke, 1, 0.45))
+
+	local valueLabel = Instance.new("TextLabel")
+	valueLabel.Size = UDim2.new(1, -26, 1, 0)
+	valueLabel.Position = UDim2.new(0, 10, 0, 0)
+	valueLabel.BackgroundTransparency = 1
+	valueLabel.Text = tostring(self:GetValue(option.Id) or "")
+	valueLabel.TextColor3 = Theme.Text
+	valueLabel.TextSize = 13
+	valueLabel.Font = Enum.Font.Gotham
+	valueLabel.TextXAlignment = Enum.TextXAlignment.Left
+	valueLabel.ZIndex = 4
+	valueLabel.Parent = button
+
+	local arrow = Instance.new("TextLabel")
+	arrow.Size = UDim2.new(0, 16, 1, 0)
+	arrow.Position = UDim2.new(1, -20, 0, 0)
+	arrow.BackgroundTransparency = 1
+	arrow.Text = "v"
+	arrow.TextColor3 = Theme.SubText
+	arrow.TextSize = 11
+	arrow.Font = Enum.Font.GothamBold
+	arrow.ZIndex = 4
+	arrow.Parent = button
+
+	local function openDropdown()
+		self:CloseDropdown()
+
+		local items = resolveOptionItems(option)
+
+		local _, parentForItems = self:CreateDropdownBase(button, #items)
+
+		for _, item in ipairs(items) do
+			local itemButton = Instance.new("TextButton")
+			itemButton.Size = UDim2.new(1, 0, 0, 26)
+			itemButton.BackgroundColor3 = Theme.Input
+			itemButton.BorderSizePixel = 0
+			itemButton.Text = tostring(item)
+			itemButton.TextColor3 = Theme.Text
+			itemButton.TextSize = 13
+			itemButton.Font = Enum.Font.Gotham
+			itemButton.ZIndex = 62
+			itemButton.Parent = parentForItems
+			createCorner(itemButton, 6)
+
+			itemButton.MouseButton1Click:Connect(function()
+				self:SetValue(option.Id, item)
+				self:CloseDropdown()
+			end)
+		end
+	end
+
+	button.MouseButton1Click:Connect(function()
+		if self.State.OpenDropdown then
+			if self.State.OpenDropdownAnchor == button then
+				self:CloseDropdown()
+				return
 			end
-			seenOptionIds[key] = true
-			config.Values[key] = copySimpleValue(value)
+			self:CloseDropdown()
 		end
-	end
+		openDropdown()
+	end)
 
-	for _, feature in ipairs(FeatureList) do
-		local tab = tabsByName[feature.Tab]
-		if not tab then
-			warn("Feature '" .. feature.Key .. "' references unregistered tab '" .. feature.Tab .. "'")
-			continue
+	self:RegisterControl(option.Id, {
+		Update = function(value)
+			valueLabel.Text = tostring(value or "")
 		end
-
-		if feature.Section and not insertedSectionsByTab[feature.Tab] then
-			insertedSectionsByTab[feature.Tab] = {}
-		end
-
-		if feature.Section and feature.Section ~= "" and not insertedSectionsByTab[feature.Tab][feature.Section] then
-			table.insert(tab.Options, { Type = "section", Label = feature.Section })
-			insertedSectionsByTab[feature.Tab][feature.Section] = true
-		end
-
-		for _, option in ipairs(feature.Options or {}) do
-			table.insert(tab.Options, option)
-		end
-
-		local handlers = feature.GetHandlers and feature:GetHandlers() or {}
-		for key, fn in pairs(handlers) do
-			config.Handlers[key] = fn
-		end
-	end
-
-	return config
+	})
 end
 
-function Features.BuildPanelConfig()
-	local panelConfig = CompilePanelConfig(BASE_CONFIG)
-	ApplyFeatureDefaults(panelConfig.Values)
-	local defaultValues = copySimpleValue(panelConfig.Values)
+function Panel:CreateMultiSelect(row, option)
+	local Theme = self:GetTheme()
+	local emptyText = option.EmptyText or "Nothing selected"
 
-	if HasSavedSettings() then
-		panelConfig.Values = LoadSettings(panelConfig.Values)
-		SanitizePanelValues(panelConfig, defaultValues)
+	if type(self.Config.Values[option.Id]) ~= "table" then
+		self.Config.Values[option.Id] = {}
 	end
 
-	return panelConfig
+	local button = Instance.new("TextButton")
+	button.Size = UDim2.new(0, 140, 0, 34)
+	button.Position = UDim2.new(1, -154, 0.5, -17)
+	button.BackgroundColor3 = Theme.Input
+	button.BorderSizePixel = 0
+	button.Text = ""
+	button.AutoButtonColor = false
+	button.ZIndex = 3
+	button.Parent = row
+	createCorner(button, 8)
+	table.insert(self.State.AccentObjects.DropdownButtons, button)
+	table.insert(self.State.AccentObjects.DropdownStrokes, createStroke(button, Theme.Stroke, 1, 0.45))
+
+	local valueLabel = Instance.new("TextLabel")
+	valueLabel.Size = UDim2.new(1, -26, 1, 0)
+	valueLabel.Position = UDim2.new(0, 10, 0, 0)
+	valueLabel.BackgroundTransparency = 1
+	valueLabel.Text = formatMultiSelectLabel(self:GetValue(option.Id), emptyText)
+	valueLabel.TextColor3 = (#self:GetValue(option.Id) == 0) and Theme.SubText or Theme.Text
+	valueLabel.TextSize = 13
+	valueLabel.Font = Enum.Font.Gotham
+	valueLabel.TextXAlignment = Enum.TextXAlignment.Left
+	valueLabel.ZIndex = 4
+	valueLabel.Parent = button
+
+	local arrow = Instance.new("TextLabel")
+	arrow.Size = UDim2.new(0, 16, 1, 0)
+	arrow.Position = UDim2.new(1, -20, 0, 0)
+	arrow.BackgroundTransparency = 1
+	arrow.Text = "v"
+	arrow.TextColor3 = Theme.SubText
+	arrow.TextSize = 11
+	arrow.Font = Enum.Font.GothamBold
+	arrow.ZIndex = 4
+	arrow.Parent = button
+
+	local function openDropdown()
+		self:CloseDropdown()
+
+		local items = resolveOptionItems(option)
+
+		local totalItems = #items + 1
+		local _, parentForItems = self:CreateDropdownBase(button, totalItems)
+
+		local function refreshAllButtons()
+			for _, child in ipairs(parentForItems:GetChildren()) do
+				if child:IsA("TextButton") and child:GetAttribute("ItemValue") ~= nil then
+					local itemValue = child:GetAttribute("ItemValue")
+					local check = child:FindFirstChild("CheckLabel")
+					local selected = arrayContains(self:GetValue(option.Id), itemValue)
+
+					if selected then
+						child.BackgroundColor3 = Color3.fromRGB(28, 42, 34)
+						if check then
+							check.Text = "x"
+							check.TextColor3 = Theme.Accent
+						end
+					else
+						child.BackgroundColor3 = Theme.Input
+						if check then
+							check.Text = ""
+							check.TextColor3 = Theme.SubText
+						end
+					end
+				end
+			end
+		end
+
+		local clearButton = Instance.new("TextButton")
+		clearButton.Size = UDim2.new(1, 0, 0, 26)
+		clearButton.BackgroundColor3 = Theme.Input
+		clearButton.BorderSizePixel = 0
+		clearButton.Text = emptyText
+		clearButton.TextColor3 = Theme.SubText
+		clearButton.TextSize = 13
+		clearButton.Font = Enum.Font.Gotham
+		clearButton.ZIndex = 62
+		clearButton.Parent = parentForItems
+		createCorner(clearButton, 6)
+
+		clearButton.MouseButton1Click:Connect(function()
+			self:SetValue(option.Id, {})
+			refreshAllButtons()
+		end)
+
+		for _, item in ipairs(items) do
+			local itemButton = Instance.new("TextButton")
+			itemButton.Size = UDim2.new(1, 0, 0, 26)
+			itemButton.BorderSizePixel = 0
+			itemButton.Text = ""
+			itemButton.ZIndex = 62
+			itemButton.Parent = parentForItems
+			itemButton:SetAttribute("ItemValue", item)
+			createCorner(itemButton, 6)
+
+			local check = Instance.new("TextLabel")
+			check.Name = "CheckLabel"
+			check.Size = UDim2.new(0, 18, 1, 0)
+			check.Position = UDim2.new(0, 8, 0, 0)
+			check.BackgroundTransparency = 1
+			check.Text = ""
+			check.TextSize = 13
+			check.Font = Enum.Font.GothamBold
+			check.ZIndex = 63
+			check.Parent = itemButton
+
+			local textLabel = Instance.new("TextLabel")
+			textLabel.Size = UDim2.new(1, -32, 1, 0)
+			textLabel.Position = UDim2.new(0, 26, 0, 0)
+			textLabel.BackgroundTransparency = 1
+			textLabel.Text = tostring(item)
+			textLabel.TextColor3 = Theme.Text
+			textLabel.TextSize = 13
+			textLabel.Font = Enum.Font.Gotham
+			textLabel.TextXAlignment = Enum.TextXAlignment.Left
+			textLabel.ZIndex = 63
+			textLabel.Parent = itemButton
+
+			itemButton.MouseButton1Click:Connect(function()
+				local newValues = toggleArrayValue(self:GetValue(option.Id), item)
+				self:SetValue(option.Id, newValues)
+				refreshAllButtons()
+			end)
+		end
+
+		refreshAllButtons()
+	end
+
+	button.MouseButton1Click:Connect(function()
+		if self.State.OpenDropdown then
+			if self.State.OpenDropdownAnchor == button then
+				self:CloseDropdown()
+				return
+			end
+			self:CloseDropdown()
+		end
+		openDropdown()
+	end)
+
+	self:RegisterControl(option.Id, {
+		Update = function(values)
+			values = values or {}
+			valueLabel.Text = formatMultiSelectLabel(values, emptyText)
+			valueLabel.TextColor3 = (#values == 0) and Theme.SubText or Theme.Text
+		end
+	})
 end
 
---==================================================
--- EXPORTS
---==================================================
+function Panel:CreateOption(parent, option)
+	if option.Type == "section" then
+		self:CreateSectionRow(parent, option)
+		return
+	end
 
-Features.Players = Players
-Features.UserInputService = UserInputService
-Features.RunService = RunService
-Features.Workspace = Workspace
-Features.HttpService = HttpService
-Features.player = player
+	local row = self:CreateRow(parent, option)
 
-Features.RegisterFeature = RegisterFeature
-Features.RegisterTab = RegisterTab
-Features.RegisterTabs = RegisterTabs
-Features.BuildFeatureDefaults = BuildFeatureDefaults
-Features.FeatureList = FeatureList
+	if option.Type == "number" then
+		self:CreateNumberInput(row, option)
+	elseif option.Type == "toggle" then
+		self:CreateToggle(row, option)
+	elseif option.Type == "button" then
+		self:CreateButton(row, option)
+	elseif option.Type == "select" then
+		self:CreateSelect(row, option)
+	elseif option.Type == "multiselect" then
+		self:CreateMultiSelect(row, option)
+	end
+end
 
-Features.copySimpleValue = copySimpleValue
-Features.roundTo2 = roundTo2
-Features.ExtractPlaceIdFromLink = extractPlaceIdFromLink
+function Panel:CreateTabButton(tab)
+	local Theme = self:GetTheme()
 
-return Features
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(1, 0, 0, 38)
+	btn.BackgroundColor3 = Theme.Card
+	btn.BorderSizePixel = 0
+	btn.Text = tab.Name
+	btn.TextColor3 = Theme.SubText
+	btn.TextSize = 13
+	btn.Font = Enum.Font.GothamMedium
+	btn.Parent = self.TabHolder
+	createCorner(btn, 10)
+	table.insert(self.State.AccentObjects.RowStrokes, createStroke(btn, Theme.Stroke, 1, 0.45))
+
+	btn.MouseButton1Click:Connect(function()
+		self:CloseDropdown()
+		self:SwitchTab(tab.Name)
+	end)
+
+	self.State.TabButtons[tab.Name] = btn
+	self.State.AccentObjects.TabButtons[tab.Name] = btn
+end
+
+function Panel:SwitchTab(tabName)
+	local Theme = self:GetTheme()
+
+	self.State.CurrentTab = tabName
+	self.PageTitle.Text = tabName
+
+	for name, page in pairs(self.State.Pages) do
+		page.Visible = (name == tabName)
+	end
+
+	for name, button in pairs(self.State.TabButtons) do
+		if name == tabName then
+			button.BackgroundColor3 = Theme.Accent
+			button.TextColor3 = Color3.fromRGB(255, 255, 255)
+		else
+			button.BackgroundColor3 = Theme.Card
+			button.TextColor3 = Theme.SubText
+		end
+	end
+end
+
+function Panel:BuildTabs()
+	local Theme = self:GetTheme()
+
+	for _, tab in ipairs(self.Config.Tabs) do
+		self:CreateTabButton(tab)
+
+		local page = self:CreatePage(tab.Name)
+
+		for _, option in ipairs(tab.Options or {}) do
+			self:CreateOption(page, option)
+		end
+
+		if tab.Message then
+			local card = Instance.new("Frame")
+			card.Size = UDim2.new(1, 0, 0, 90)
+			card.BackgroundColor3 = Theme.Card
+			card.BorderSizePixel = 0
+			card.Parent = page
+			createCorner(card, 10)
+			table.insert(self.State.AccentObjects.RowStrokes, createStroke(card, Theme.Stroke, 1, 0.4))
+
+			local label = Instance.new("TextLabel")
+			label.Size = UDim2.new(1, -24, 1, -24)
+			label.Position = UDim2.new(0, 12, 0, 12)
+			label.BackgroundTransparency = 1
+			label.Text = tab.Message
+			label.TextWrapped = true
+			label.TextColor3 = Theme.SubText
+			label.TextSize = 13
+			label.Font = Enum.Font.Gotham
+			label.TextXAlignment = Enum.TextXAlignment.Left
+			label.TextYAlignment = Enum.TextYAlignment.Top
+			label.Parent = card
+		end
+	end
+
+	if self.Config.Tabs[1] then
+		self:SwitchTab(self.Config.Tabs[1].Name)
+	end
+end
+
+function Panel:SetupDragging()
+	AddCleanupItem(self.Runtime, self.Header.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			self.State.Dragging = true
+			self.State.DragStart = input.Position
+			self.State.StartPos = self.MainFrame.Position
+		end
+	end))
+
+	AddCleanupItem(self.Runtime, self.Header.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			self.State.Dragging = false
+		end
+	end))
+
+	AddCleanupItem(self.Runtime, self.UserInputService.InputChanged:Connect(function(input)
+		if self.State.Dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+			local delta = input.Position - self.State.DragStart
+			self.MainFrame.Position = UDim2.new(
+				self.State.StartPos.X.Scale,
+				self.State.StartPos.X.Offset + delta.X,
+				self.State.StartPos.Y.Scale,
+				self.State.StartPos.Y.Offset + delta.Y
+			)
+			self:CloseDropdown()
+		end
+	end))
+end
+
+function Panel:SetupRespawnApply()
+	AddCleanupItem(self.Runtime, self.Player.CharacterAdded:Connect(function()
+		task.wait(0.8)
+
+		if self.State.Destroyed then
+			return
+		end
+
+		self:ApplyAll()
+
+		if self:GetValue("Minimized") then
+			self:Minimize(true)
+		else
+			self:Restore(true)
+		end
+	end))
+end
+
+function Panel:SetupOutsideClick()
+	AddCleanupItem(self.Runtime, self.UserInputService.InputBegan:Connect(function(input, gameProcessed)
+		if gameProcessed then
+			return
+		end
+
+		if input.UserInputType == Enum.UserInputType.MouseButton1 and self.State.OpenDropdown then
+			local mousePos = input.Position
+			local clickedDropdown = isPointInsideGuiObject(self.State.OpenDropdown, mousePos)
+			local clickedAnchor = isPointInsideGuiObject(self.State.OpenDropdownAnchor, mousePos)
+
+			if not clickedDropdown and not clickedAnchor then
+				task.defer(function()
+					if self.State.Destroyed then
+						return
+					end
+
+					local focused = self.UserInputService:GetFocusedTextBox()
+					if not focused then
+						self:CloseDropdown()
+					end
+				end)
+			end
+		end
+	end))
+end
+
+function Panel:Init()
+	self:ClaimSingleton()
+	self:CreateGui()
+	self:BuildTabs()
+	self:SetupDragging()
+	self:SetupRespawnApply()
+	self:SetupOutsideClick()
+	self:ApplyAll()
+
+	if self:GetValue("Minimized") then
+		self:Minimize(true)
+	else
+		self:Restore(true)
+	end
+end
+
+return Panel

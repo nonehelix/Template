@@ -50,6 +50,27 @@ local function copySimpleValue(value)
 	return copy
 end
 
+Features.DebugEnabled = true
+Features.DebugMessages = {}
+
+local function DebugLog(scope, message, level)
+	if not Features.DebugEnabled then
+		return
+	end
+
+	local line = "[" .. tostring(scope or "Debug") .. "] " .. tostring(message)
+	table.insert(Features.DebugMessages, line)
+	if #Features.DebugMessages > 200 then
+		table.remove(Features.DebugMessages, 1)
+	end
+
+	if level == "warn" then
+		warn(line)
+	else
+		print(line)
+	end
+end
+
 local function arrayContains(arr, target)
 	for _, value in ipairs(arr or {}) do
 		if tostring(value) == tostring(target) then
@@ -1242,6 +1263,7 @@ local function CompilePanelConfig(baseConfig)
 end
 
 function Features.BuildPanelConfig()
+	DebugLog("Shared", "BuildPanelConfig start. CurrentGameKey = " .. tostring(Features.CurrentGameKey) .. ", FeatureList size = " .. tostring(#FeatureList))
 	local panelConfig = CompilePanelConfig(BASE_CONFIG)
 	ApplyFeatureDefaults(panelConfig.Values)
 	local defaultValues = copySimpleValue(panelConfig.Values)
@@ -1250,6 +1272,14 @@ function Features.BuildPanelConfig()
 		panelConfig.Values = LoadSettings(panelConfig.Values)
 		SanitizePanelValues(panelConfig, defaultValues)
 	end
+
+	DebugLog("Shared", "BuildPanelConfig complete. Tab count = " .. tostring(#panelConfig.Tabs) .. ", value count = " .. tostring((function()
+		local count = 0
+		for _ in pairs(panelConfig.Values) do
+			count += 1
+		end
+		return count
+	end)()))
 
 	return panelConfig
 end
@@ -1276,5 +1306,6 @@ Features.roundTo2 = roundTo2
 Features.arrayContains = arrayContains
 Features.ExtractPlaceIdFromLink = extractPlaceIdFromLink
 Features.ResolveOptionItems = resolveOptionItems
+Features.DebugLog = DebugLog
 
 return Features

@@ -6,7 +6,6 @@ return {
 
 		local ReplicatedStorage = game:GetService("ReplicatedStorage")
 		local ReplicatedFirst = game:GetService("ReplicatedFirst")
-
 		local Players = game:GetService("Players")
 
 		local player = Players.LocalPlayer
@@ -42,74 +41,8 @@ return {
 		)
 
 		--==================================================
-		-- LOCAL REPLICATED DATA RESOLVER
-		--==================================================
-		local CachedReplicatedData = nil
-
-		local function tryGetField(container, key)
-			if type(container) == "table" then
-				return container[key]
-			end
-			return nil
-		end
-
-		local function resolveReplicatedData()
-			if CachedReplicatedData and type(CachedReplicatedData.GetData) == "function" then
-				return CachedReplicatedData
-			end
-
-			local candidates = {
-				tryGetField(Shared, "ReplicatedData"),
-				tryGetField(tryGetField(Shared, "Game"), "ReplicatedData"),
-				tryGetField(tryGetField(Shared, "Framework"), "ReplicatedData"),
-				tryGetField(tryGetField(Shared, "Client"), "ReplicatedData"),
-				rawget(_G, "ReplicatedData"),
-			}
-
-			local globalEnv = getgenv and getgenv()
-			if type(globalEnv) == "table" then
-				table.insert(candidates, globalEnv.ReplicatedData)
-			end
-
-			for _, candidate in ipairs(candidates) do
-				if type(candidate) == "table" and type(candidate.GetData) == "function" then
-					CachedReplicatedData = candidate
-					print("[AutoGrade] ReplicatedData resolved:", tostring(candidate))
-					return candidate
-				end
-			end
-
-			warn("[AutoGrade] ReplicatedData resolver could not find a valid object")
-			return nil
-		end
-
-		--==================================================
 		-- HELPERS
 		--==================================================
-		local function normalizePackName(name)
-			name = tostring(name or "")
-			name = name:gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
-			name = name:gsub("%s+[Pp]ack$", "")
-			return name
-		end
-
-		local function buildRemotePackId(packName, mutation)
-			local base = normalizePackName(packName)
-			if base == "" then
-				return nil
-			end
-
-			if mutation == "Regular" or not mutation or mutation == "" then
-				return base
-			end
-
-			return base .. "-" .. tostring(mutation)
-		end
-
-		local function parseStockAmount(text)
-			return tonumber(string.match(tostring(text or ""), "%d+")) or 0
-		end
-
 		local arrayContains = Shared.arrayContains or function(arr, target)
 			for _, v in ipairs(arr or {}) do
 				if tostring(v) == tostring(target) then
@@ -126,10 +59,34 @@ return {
 			end
 
 			for _, v in ipairs(values) do
-				table.insert(result, tostring(v))
+				result[#result + 1] = tostring(v)
 			end
 
 			return result
+		end
+
+		local function normalizePackName(name)
+			name = tostring(name or "")
+			name = name:gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
+			name = name:gsub("%s+[Pp]ack$", "")
+			return name
+		end
+
+		local function buildRemotePackId(packName, mutation)
+			local base = normalizePackName(packName)
+			if base == "" then
+				return nil
+			end
+
+			if mutation == "Regular" or mutation == nil or mutation == "" then
+				return base
+			end
+
+			return base .. "-" .. tostring(mutation)
+		end
+
+		local function parseStockAmount(text)
+			return tonumber(string.match(tostring(text or ""), "%d+")) or 0
 		end
 
 		local function getPackItems()
@@ -137,7 +94,7 @@ return {
 
 			if CardConfig and CardConfig.List and CardConfig.List.Packs then
 				for _, packName in pairs(CardConfig.List.Packs) do
-					table.insert(items, tostring(packName))
+					items[#items + 1] = tostring(packName)
 				end
 			end
 
@@ -149,7 +106,7 @@ return {
 
 			if CardConfig and CardConfig.List and CardConfig.List.Mutations then
 				for _, mut in pairs(CardConfig.List.Mutations) do
-					table.insert(items, tostring(mut))
+					items[#items + 1] = tostring(mut)
 				end
 			end
 
@@ -161,7 +118,7 @@ return {
 
 			if GradesConfig and GradesConfig.List then
 				for _, grade in ipairs(GradesConfig.List) do
-					table.insert(items, grade)
+					items[#items + 1] = tostring(grade)
 				end
 			else
 				items = {"F", "E", "D", "C", "B", "A", "S", "S+", "SS", "SR", "UR"}
@@ -181,7 +138,7 @@ return {
 							cardName = tostring(cardName)
 							if not seen[cardName] then
 								seen[cardName] = true
-								table.insert(cardNames, cardName)
+								cardNames[#cardNames + 1] = cardName
 							end
 						end
 					end
@@ -192,7 +149,7 @@ return {
 
 			local items = {"All"}
 			for _, cardName in ipairs(cardNames) do
-				table.insert(items, cardName)
+				items[#items + 1] = cardName
 			end
 
 			return items
@@ -391,7 +348,7 @@ return {
 			end
 		end
 
-				--==================================================
+		--==================================================
 		-- FEATURE: AUTO GRADE
 		--==================================================
 		do
@@ -472,7 +429,6 @@ return {
 				end
 
 				timeout = timeout or 10
-
 				local replicatedData = requireReplicatedDataModule()
 				if not replicatedData then
 					return nil
@@ -501,13 +457,7 @@ return {
 					return replicatedData.GetData("Cards")
 				end)
 
-				if not ok then
-					warn("[AutoGrade] GetData('Cards') failed:", tostring(cards))
-					return {}
-				end
-
-				if type(cards) ~= "table" then
-					warn("[AutoGrade] Cards data is not a table")
+				if not ok or type(cards) ~= "table" then
 					return {}
 				end
 
@@ -543,10 +493,8 @@ return {
 
 				for _, gradeName in ipairs(selectedGrades or {}) do
 					local rank = self:GetGradeRank(gradeName)
-					if rank > 0 then
-						if minRank == nil or rank < minRank then
-							minRank = rank
-						end
+					if rank > 0 and (minRank == nil or rank < minRank) then
+						minRank = rank
 					end
 				end
 
@@ -554,14 +502,8 @@ return {
 			end
 
 			function Feature:GetCardCurrentGrade(cardId)
-				local ownedCards = self:GetOwnedCards()
-				local cardData = ownedCards[tostring(cardId)]
-
-				if type(cardData) ~= "table" then
-					return nil
-				end
-
-				return cardData.Grade
+				local cardData = self:GetOwnedCards()[tostring(cardId)]
+				return type(cardData) == "table" and cardData.Grade or nil
 			end
 
 			function Feature:CardMeetsOrBeatsTarget(cardId, targetMinRank)
@@ -588,20 +530,18 @@ return {
 
 				if arrayContains(selectedCards, "All") then
 					for cardId in pairs(ownedCards) do
-						table.insert(queue, tostring(cardId))
+						queue[#queue + 1] = tostring(cardId)
 					end
-
 					table.sort(queue, function(a, b)
 						return tostring(a) < tostring(b)
 					end)
 				else
 					local seen = {}
-
 					for _, cardId in ipairs(selectedCards) do
 						cardId = tostring(cardId)
 						if cardId ~= "All" and ownedCards[cardId] ~= nil and not seen[cardId] then
 							seen[cardId] = true
-							table.insert(queue, cardId)
+							queue[#queue + 1] = cardId
 						end
 					end
 				end
@@ -883,14 +823,14 @@ return {
 						end
 
 						if packName ~= "" then
-							table.insert(stockList, {
+							stockList[#stockList + 1] = {
 								PackName = packName,
 								NormalizedPackName = normalizePackName(packName),
 								Mutation = mutation,
 								RemoteId = buildRemotePackId(packName, mutation),
 								Amount = amount,
 								Slot = i
-							})
+							}
 						end
 					end
 				end
@@ -913,7 +853,7 @@ return {
 
 				local selectedNormalizedPacks = {}
 				for _, p in ipairs(selectedPacks) do
-					table.insert(selectedNormalizedPacks, normalizePackName(p))
+					selectedNormalizedPacks[#selectedNormalizedPacks + 1] = normalizePackName(p)
 				end
 
 				local marketStock = self:GetMarketStock()
@@ -929,7 +869,7 @@ return {
 
 					if packOk and mutationOk and item.RemoteId and item.Amount > 0 then
 						for _ = 1, item.Amount do
-							table.insert(buyQueue, item.RemoteId)
+							buyQueue[#buyQueue + 1] = item.RemoteId
 						end
 					end
 				end

@@ -369,7 +369,7 @@ return {
 					QueueIndex = 0,
 					TargetDone = {},
 					TargetMinRank = nil,
-					RequestDelay = 0.35, -- 🔥 tuned to server pace
+					RequestDelay = 0.1, -- 🔥 tuned to server pace
 					ReplicatedData = nil,
 				},
 		

@@ -3,8 +3,10 @@ return {
 		local Workspace = Shared.Workspace
 		local RegisterFeature = Shared.RegisterFeature
 		local RegisterTabs = Shared.RegisterTabs
-		local ReplicatedFirst = game:GetService("ReplicatedFirst")
+
 		local ReplicatedStorage = game:GetService("ReplicatedStorage")
+		local ReplicatedFirst = game:GetService("ReplicatedFirst")
+
 		local Players = game:GetService("Players")
 
 		local player = Players.LocalPlayer
@@ -40,11 +42,77 @@ return {
 		)
 
 		--==================================================
+		-- LOCAL REPLICATED DATA RESOLVER
+		--==================================================
+		local CachedReplicatedData = nil
+
+		local function tryGetField(container, key)
+			if type(container) == "table" then
+				return container[key]
+			end
+			return nil
+		end
+
+		local function resolveReplicatedData()
+			if CachedReplicatedData and type(CachedReplicatedData.GetData) == "function" then
+				return CachedReplicatedData
+			end
+
+			local candidates = {
+				tryGetField(Shared, "ReplicatedData"),
+				tryGetField(tryGetField(Shared, "Game"), "ReplicatedData"),
+				tryGetField(tryGetField(Shared, "Framework"), "ReplicatedData"),
+				tryGetField(tryGetField(Shared, "Client"), "ReplicatedData"),
+				rawget(_G, "ReplicatedData"),
+			}
+
+			local globalEnv = getgenv and getgenv()
+			if type(globalEnv) == "table" then
+				table.insert(candidates, globalEnv.ReplicatedData)
+			end
+
+			for _, candidate in ipairs(candidates) do
+				if type(candidate) == "table" and type(candidate.GetData) == "function" then
+					CachedReplicatedData = candidate
+					print("[AutoGrade] ReplicatedData resolved:", tostring(candidate))
+					return candidate
+				end
+			end
+
+			warn("[AutoGrade] ReplicatedData resolver could not find a valid object")
+			return nil
+		end
+
+		--==================================================
 		-- HELPERS
 		--==================================================
-		local function arrayContains(arr, target)
-			for _, value in ipairs(arr or {}) do
-				if value == target then
+		local function normalizePackName(name)
+			name = tostring(name or "")
+			name = name:gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
+			name = name:gsub("%s+[Pp]ack$", "")
+			return name
+		end
+
+		local function buildRemotePackId(packName, mutation)
+			local base = normalizePackName(packName)
+			if base == "" then
+				return nil
+			end
+
+			if mutation == "Regular" or not mutation or mutation == "" then
+				return base
+			end
+
+			return base .. "-" .. tostring(mutation)
+		end
+
+		local function parseStockAmount(text)
+			return tonumber(string.match(tostring(text or ""), "%d+")) or 0
+		end
+
+		local arrayContains = Shared.arrayContains or function(arr, target)
+			for _, v in ipairs(arr or {}) do
+				if tostring(v) == tostring(target) then
 					return true
 				end
 			end
@@ -57,71 +125,54 @@ return {
 				return result
 			end
 
-			for _, value in ipairs(values) do
-				result[#result + 1] = tostring(value)
+			for _, v in ipairs(values) do
+				table.insert(result, tostring(v))
 			end
 
 			return result
 		end
 
-		local function normalizePackName(name)
-			name = tostring(name or "")
-			name = name:gsub("%s+", " ")
-			name = name:gsub("^%s+", "")
-			name = name:gsub("%s+$", "")
-			name = name:gsub("%s+[Pp]ack$", "")
-			return name
-		end
+		local function getPackItems()
+			local items = {"All"}
 
-		local function buildRemotePackId(packName, mutation)
-			local base = normalizePackName(packName)
-			if base == "" then
-				return nil
-			end
-
-			if not mutation or mutation == "" or mutation == "Regular" then
-				return base
-			end
-
-			return base .. "-" .. tostring(mutation)
-		end
-
-		local function parseStockAmount(text)
-			return tonumber(string.match(tostring(text or ""), "%d+")) or 0
-		end
-
-		local function buildListItems(baseItems, sourceList)
-			local items = {}
-			for _, value in ipairs(baseItems or {}) do
-				items[#items + 1] = tostring(value)
-			end
-
-			for _, value in pairs(sourceList or {}) do
-				items[#items + 1] = tostring(value)
+			if CardConfig and CardConfig.List and CardConfig.List.Packs then
+				for _, packName in pairs(CardConfig.List.Packs) do
+					table.insert(items, tostring(packName))
+				end
 			end
 
 			return items
 		end
 
-		local function getPackItems()
-			return buildListItems({"All"}, CardConfig and CardConfig.List and CardConfig.List.Packs)
-		end
-
 		local function getMutationItems()
-			return buildListItems({"All", "Regular"}, CardConfig and CardConfig.List and CardConfig.List.Mutations)
+			local items = {"All", "Regular"}
+
+			if CardConfig and CardConfig.List and CardConfig.List.Mutations then
+				for _, mut in pairs(CardConfig.List.Mutations) do
+					table.insert(items, tostring(mut))
+				end
+			end
+
+			return items
 		end
 
 		local function getGradeItems()
+			local items = {}
+
 			if GradesConfig and GradesConfig.List then
-				return buildListItems({}, GradesConfig.List)
+				for _, grade in ipairs(GradesConfig.List) do
+					table.insert(items, grade)
+				end
+			else
+				items = {"F", "E", "D", "C", "B", "A", "S", "S+", "SS", "SR", "UR"}
 			end
 
-			return {"F", "E", "D", "C", "B", "A", "S", "S+", "SS", "SR", "UR"}
+			return items
 		end
 
 		local function getAllCardNames()
 			local seen = {}
-			local cards = {}
+			local cardNames = {}
 
 			if CardConfig and CardConfig.Packs then
 				for _, packData in pairs(CardConfig.Packs) do
@@ -130,41 +181,28 @@ return {
 							cardName = tostring(cardName)
 							if not seen[cardName] then
 								seen[cardName] = true
-								cards[#cards + 1] = cardName
+								table.insert(cardNames, cardName)
 							end
 						end
 					end
 				end
 			end
 
-			table.sort(cards)
+			table.sort(cardNames)
 
 			local items = {"All"}
-			for _, cardName in ipairs(cards) do
-				items[#items + 1] = cardName
+			for _, cardName in ipairs(cardNames) do
+				table.insert(items, cardName)
 			end
 
 			return items
 		end
 
-		local function getStockScrollingFrame()
-			local playerGui = player:FindFirstChild("PlayerGui")
-			local stockGui = playerGui and playerGui:FindFirstChild("Stock")
-			local frame = stockGui and stockGui:FindFirstChild("Frame")
-			return frame and frame:FindFirstChild("ScrollingFrame")
-		end
-
-		local function selectionMatches(packName, mutation, selectedPacks, selectedMutations)
-			local packOk = arrayContains(selectedPacks, "All") or arrayContains(selectedPacks, packName)
-			local mutationOk = arrayContains(selectedMutations, "All") or arrayContains(selectedMutations, mutation)
-			return packOk and mutationOk
-		end
-
 		local function waitForItems(builder, minCount, fallback, timeout)
 			timeout = timeout or 5
-			local startTime = os.clock()
+			local start = os.clock()
 
-			while os.clock() - startTime < timeout do
+			while os.clock() - start < timeout do
 				local items = builder()
 				if #items >= minCount then
 					return items
@@ -191,9 +229,9 @@ return {
 				},
 
 				State = {
+					LastBuyTimes = {},
 					Polling = false,
 					PanelRef = nil,
-					LastBuyTimes = {},
 				},
 
 				Options = {
@@ -222,11 +260,6 @@ return {
 				}
 			})
 
-			function Feature:GetValues()
-				local panel = self.State.PanelRef
-				return panel and panel.Config and panel.Config.Values or nil
-			end
-
 			function Feature:GetPackModelType(packModel)
 				if not packModel then
 					return nil
@@ -245,9 +278,9 @@ return {
 					return "Regular"
 				end
 
-				for _, descendant in ipairs(packModel:GetDescendants()) do
-					if descendant:IsA("TextLabel") and descendant.Name == "Mutation" and descendant.Visible and descendant.Text ~= "" then
-						return tostring(descendant.Text)
+				for _, desc in ipairs(packModel:GetDescendants()) do
+					if desc:IsA("TextLabel") and desc.Name == "Mutation" and desc.Visible and desc.Text ~= "" then
+						return tostring(desc.Text)
 					end
 				end
 
@@ -258,8 +291,25 @@ return {
 				return packModel and packModel.Name ~= "" and packModel.Name or nil
 			end
 
+			function Feature:Matches(packType, mutation, selectedPacks, selectedMutations)
+				if not packType or packType == "" then
+					return false
+				end
+				if type(selectedPacks) ~= "table" or #selectedPacks == 0 then
+					return false
+				end
+				if type(selectedMutations) ~= "table" or #selectedMutations == 0 then
+					return false
+				end
+
+				local packOk = arrayContains(selectedPacks, "All") or arrayContains(selectedPacks, packType)
+				local mutOk = arrayContains(selectedMutations, "All") or arrayContains(selectedMutations, mutation)
+
+				return packOk and mutOk
+			end
+
 			function Feature:Tick(values)
-				if not values or not values.AutoBuyEnabled then
+				if not values.AutoBuyEnabled then
 					return
 				end
 
@@ -270,8 +320,7 @@ return {
 					return
 				end
 
-				local clientFolder = Workspace:FindFirstChild("Client")
-				local packsFolder = clientFolder and clientFolder:FindFirstChild("Packs")
+				local packsFolder = Workspace:FindFirstChild("Client") and Workspace.Client:FindFirstChild("Packs")
 				if not packsFolder then
 					return
 				end
@@ -284,9 +333,8 @@ return {
 						local packType = self:GetPackModelType(child)
 						local mutation = self:GetPackModelMutation(child)
 
-						if packId and packType and selectionMatches(packType, mutation, selectedPacks, selectedMutations) then
-							local lastTime = self.State.LastBuyTimes[packId]
-							if not lastTime or (now - lastTime) > 1 then
+						if packId and packType and self:Matches(packType, mutation, selectedPacks, selectedMutations) then
+							if not self.State.LastBuyTimes[packId] or (now - self.State.LastBuyTimes[packId]) > 1 then
 								self.State.LastBuyTimes[packId] = now
 								CardRemote:FireServer("BuyPack", packId)
 							end
@@ -305,7 +353,7 @@ return {
 
 				task.spawn(function()
 					while self.State.Polling do
-						local values = self:GetValues()
+						local values = self.State.PanelRef and self.State.PanelRef.Config and self.State.PanelRef.Config.Values
 						if values and values.AutoBuyEnabled then
 							self:Tick(values)
 						end
@@ -343,7 +391,7 @@ return {
 			end
 		end
 
-		--==================================================
+				--==================================================
 		-- FEATURE: AUTO GRADE
 		--==================================================
 		do
@@ -764,9 +812,9 @@ return {
 				},
 
 				State = {
-					Running = false,
 					LastCheckTime = 0,
 					PanelRef = nil,
+					Running = false,
 					BuyCooldown = 0.08,
 				},
 
@@ -796,13 +844,23 @@ return {
 				}
 			})
 
-			function Feature:GetValues()
-				local panel = self.State.PanelRef
-				return panel and panel.Config and panel.Config.Values or nil
-			end
-
 			function Feature:GetMarketStock()
-				local scrolling = getStockScrollingFrame()
+				local playerGui = player:FindFirstChild("PlayerGui")
+				if not playerGui then
+					return {}
+				end
+
+				local stockGui = playerGui:FindFirstChild("Stock")
+				if not stockGui then
+					return {}
+				end
+
+				local frame = stockGui:FindFirstChild("Frame")
+				if not frame then
+					return {}
+				end
+
+				local scrolling = frame:FindFirstChild("ScrollingFrame")
 				if not scrolling then
 					return {}
 				end
@@ -825,14 +883,14 @@ return {
 						end
 
 						if packName ~= "" then
-							stockList[#stockList + 1] = {
+							table.insert(stockList, {
 								PackName = packName,
 								NormalizedPackName = normalizePackName(packName),
 								Mutation = mutation,
 								RemoteId = buildRemotePackId(packName, mutation),
 								Amount = amount,
-								Slot = i,
-							}
+								Slot = i
+							})
 						end
 					end
 				end
@@ -841,7 +899,7 @@ return {
 			end
 
 			function Feature:RunStockCheck()
-				local values = self:GetValues()
+				local values = self.State.PanelRef and self.State.PanelRef.Config and self.State.PanelRef.Config.Values
 				if not values or not values.AutoBuyMarketEnabled then
 					return
 				end
@@ -854,8 +912,8 @@ return {
 				end
 
 				local selectedNormalizedPacks = {}
-				for _, packName in ipairs(selectedPacks) do
-					selectedNormalizedPacks[#selectedNormalizedPacks + 1] = normalizePackName(packName)
+				for _, p in ipairs(selectedPacks) do
+					table.insert(selectedNormalizedPacks, normalizePackName(p))
 				end
 
 				local marketStock = self:GetMarketStock()
@@ -871,7 +929,7 @@ return {
 
 					if packOk and mutationOk and item.RemoteId and item.Amount > 0 then
 						for _ = 1, item.Amount do
-							buyQueue[#buyQueue + 1] = item.RemoteId
+							table.insert(buyQueue, item.RemoteId)
 						end
 					end
 				end
@@ -891,7 +949,6 @@ return {
 			function Feature:Start(panelRef)
 				self.State.PanelRef = panelRef
 				self.State.LastCheckTime = 0
-
 				if self.State.Running then
 					return
 				end
@@ -900,7 +957,7 @@ return {
 
 				task.spawn(function()
 					while self.State.Running do
-						local values = self:GetValues()
+						local values = self.State.PanelRef and self.State.PanelRef.Config and self.State.PanelRef.Config.Values
 						if not values or not values.AutoBuyMarketEnabled then
 							break
 						end

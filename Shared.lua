@@ -52,6 +52,7 @@ end
 
 Features.DebugEnabled = true
 Features.DebugMessages = {}
+Features.DebugToggleColors = false
 
 local function DebugLog(scope, message, level)
 	if not Features.DebugEnabled then
@@ -809,6 +810,10 @@ do
 					Theme.Accent = Color3.fromRGB(170, 110, 255)
 				else
 					Theme.Accent = Color3.fromRGB(90, 140, 255)
+				end
+
+				if panelRef and panelRef.RefreshAllControls then
+					panelRef:RefreshAllControls()
 				end
 
 				if panelRef and panelRef.ApplyAccentTheme then

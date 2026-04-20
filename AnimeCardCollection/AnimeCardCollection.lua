@@ -348,8 +348,8 @@ return {
 			end
 		end
 
-		--==================================================
-		-- FEATURE: AUTO GRADE (FIXED - SIMPLE + STABLE)
+				--==================================================
+		-- FEATURE: AUTO GRADE (EVENT-DRIVEN - FINAL)
 		--==================================================
 		do
 			local Feature = RegisterFeature({
@@ -369,33 +369,20 @@ return {
 					QueueIndex = 0,
 					TargetDone = {},
 					TargetMinRank = nil,
-					RequestDelay = 0.1, -- 🔥 tuned to server pace
 					ReplicatedData = nil,
+					Connection = nil,
+					Busy = false, -- 🔥 prevents multi-fire
 				},
 		
 				Options = {
-					{
-						Id = "AutoGradeEnabled",
-						Type = "toggle",
-						Label = "Enable Auto Grade",
-					},
-					{
-						Id = "AutoGradeCards",
-						Type = "multiselect",
-						Label = "Cards",
-						Items = waitForItems(getAllCardNames, 2, {"All"}),
-					},
-					{
-						Id = "AutoGradeTarget",
-						Type = "multiselect",
-						Label = "Grades",
-						Items = getGradeItems(),
-					},
+					{Id = "AutoGradeEnabled", Type = "toggle", Label = "Enable Auto Grade"},
+					{Id = "AutoGradeCards", Type = "multiselect", Label = "Cards", Items = waitForItems(getAllCardNames, 2, {"All"})},
+					{Id = "AutoGradeTarget", Type = "multiselect", Label = "Grades", Items = getGradeItems()},
 				}
 			})
 		
 			--==================================================
-			-- REPLICATED DATA (ReplicatedFirst)
+			-- REPLICATED DATA
 			--==================================================
 			function Feature:GetReplicatedData()
 				if self.State.ReplicatedData then
@@ -406,12 +393,17 @@ return {
 				if not module then return nil end
 		
 				local ok, result = pcall(require, module)
-				if ok and type(result.GetData) == "function" then
+				if ok and type(result.GetData) == "function" and type(result.GetReplica) == "function" then
 					self.State.ReplicatedData = result
 					return result
 				end
 		
 				return nil
+			end
+		
+			function Feature:GetReplica()
+				local data = self:GetReplicatedData()
+				return data and data.GetReplica and data.GetReplica()
 			end
 		
 			function Feature:GetOwnedCards()
@@ -446,13 +438,23 @@ return {
 				end
 			end
 		
-			function Feature:GetGradeRank(grade)
-				return GradeRankMap[tostring(grade)] or 0
+			function Feature:GetGradeRank(g)
+				return GradeRankMap[tostring(g)] or 0
 			end
 		
-			function Feature:GetCardGrade(cardId)
-				local card = self:GetOwnedCards()[cardId]
-				return card and card.Grade
+			function Feature:GetCardGrade(id)
+				local c = self:GetOwnedCards()[id]
+				return c and c.Grade
+			end
+		
+			function Feature:IsDone(id)
+				local rank = self:GetGradeRank(self:GetCardGrade(id))
+				return rank >= (self.State.TargetMinRank or math.huge)
+			end
+		
+			function Feature:NeedsConfirm(id)
+				local grade = self:GetCardGrade(id)
+				return grade and arrayContains(self:GetServerAutoGrades(), grade)
 			end
 		
 			function Feature:GetTargetMinRank(targets)
@@ -466,40 +468,30 @@ return {
 				return min
 			end
 		
-			function Feature:IsDone(cardId)
-				local rank = self:GetGradeRank(self:GetCardGrade(cardId))
-				return rank >= (self.State.TargetMinRank or math.huge)
-			end
-		
-			function Feature:NeedsConfirm(cardId)
-				local grade = self:GetCardGrade(cardId)
-				return grade and arrayContains(self:GetServerAutoGrades(), grade)
-			end
-		
 			--==================================================
 			-- QUEUE
 			--==================================================
 			function Feature:BuildQueue(selected)
 				local owned = self:GetOwnedCards()
-				local queue = {}
+				local q = {}
 		
 				if arrayContains(selected, "All") then
 					for id in pairs(owned) do
-						table.insert(queue, tostring(id))
+						table.insert(q, tostring(id))
 					end
-					table.sort(queue)
+					table.sort(q)
 				else
 					local seen = {}
 					for _, id in ipairs(selected) do
 						id = tostring(id)
 						if owned[id] and not seen[id] then
 							seen[id] = true
-							table.insert(queue, id)
+							table.insert(q, id)
 						end
 					end
 				end
 		
-				return queue
+				return q
 			end
 		
 			function Feature:GetNext()
@@ -520,37 +512,53 @@ return {
 			end
 		
 			--==================================================
-			-- ACTION
+			-- CORE STEP (EVENT DRIVEN)
 			--==================================================
-			function Feature:Roll(cardId)
-				if self:NeedsConfirm(cardId) then
-					GradeRemote:FireServer("Roll", cardId, nil, true)
+			function Feature:ProcessNext()
+				if self.State.Busy then return end
+				if not self.State.Running then return end
+		
+				local nextCard = self:GetNext()
+				if not nextCard then
+					self:Stop()
+					return
+				end
+		
+				if self:IsDone(nextCard) then
+					self.State.TargetDone[nextCard] = true
+					self:ProcessNext()
+					return
+				end
+		
+				self.State.Busy = true
+		
+				if self:NeedsConfirm(nextCard) then
+					GradeRemote:FireServer("Roll", nextCard, nil, true)
 				else
-					GradeRemote:FireServer("Roll", cardId)
+					GradeRemote:FireServer("Roll", nextCard)
 				end
 			end
 		
 			--==================================================
-			-- LOOP (SIMPLE + STABLE)
+			-- REPLICA LISTENER (THIS IS THE MAGIC)
 			--==================================================
-			function Feature:Loop()
-				while self.State.Running do
-					local values = self.State.PanelRef.Config.Values
-					if not values or not values.AutoGradeEnabled then break end
+			function Feature:BindReplica()
+				local replica = self:GetReplica()
+				if not replica then return end
 		
-					local nextCard = self:GetNext()
-					if not nextCard then break end
-		
-					if self:IsDone(nextCard) then
-						self.State.TargetDone[nextCard] = true
-					else
-						self:Roll(nextCard)
-					end
-		
-					task.wait(self.State.RequestDelay) -- 🔥 critical throttle
+				if self.State.Connection then
+					self.State.Connection:Disconnect()
 				end
 		
-				self:Stop()
+				self.State.Connection = replica:OnChange(function(action, path)
+					-- listen ONLY for card grade updates
+					if action == "Set" and path[1] == "Cards" then
+						self.State.Busy = false
+						task.defer(function()
+							self:ProcessNext()
+						end)
+					end
+				end)
 			end
 		
 			--==================================================
@@ -579,9 +587,8 @@ return {
 				self.State.TargetDone = {}
 				self.State.TargetMinRank = minRank
 		
-				task.spawn(function()
-					self:Loop()
-				end)
+				self:BindReplica()
+				self:ProcessNext() -- 🔥 start chain
 			end
 		
 			function Feature:Stop()
@@ -589,6 +596,12 @@ return {
 				self.State.Queue = {}
 				self.State.TargetDone = {}
 				self.State.QueueIndex = 0
+				self.State.Busy = false
+		
+				if self.State.Connection then
+					self.State.Connection:Disconnect()
+					self.State.Connection = nil
+				end
 			end
 		
 			function Feature:GetHandlers()

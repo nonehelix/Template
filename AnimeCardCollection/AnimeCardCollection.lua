@@ -411,7 +411,7 @@ return {
 					return self.State.ReplicatedData
 				end
 
-				local module = ReplicatedStorage:FindFirstChild("ReplicatedData")
+				local module = ReplicatedFirst:FindFirstChild("ReplicatedData")
 				if not module then
 					return nil
 				end

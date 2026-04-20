@@ -154,6 +154,19 @@ local function isPointInsideGuiObject(guiObject, point)
 		point.Y <= absPos.Y + absSize.Y
 end
 
+local function formatColor3(color)
+	if typeof(color) ~= "Color3" then
+		return tostring(color)
+	end
+
+	return string.format(
+		"(%d,%d,%d)",
+		math.floor(color.R * 255 + 0.5),
+		math.floor(color.G * 255 + 0.5),
+		math.floor(color.B * 255 + 0.5)
+	)
+end
+
 local function NewCleanupBag()
 	return {Items = {}}
 end
@@ -281,6 +294,23 @@ function Panel:GetOptionItems(option)
 	end
 
 	return {}
+end
+
+function Panel:LogToggleVisual(optionId, state, button, fill)
+	if not (self.Shared and self.Shared.DebugToggleColors and type(self.Shared.DebugLog) == "function") then
+		return
+	end
+
+	self.Shared.DebugLog(
+		"PanelUI",
+		string.format(
+			"Toggle %s => %s, track=%s, knob=%s",
+			tostring(optionId),
+			state and "enabled" or "disabled",
+			formatColor3(button and button.BackgroundColor3),
+			formatColor3(fill and fill.BackgroundColor3)
+		)
+	)
 end
 
 function Panel:BindDrag(handle, getPosition, setPosition, onMove)
@@ -428,24 +458,6 @@ function Panel:ApplyAccentTheme()
 	for _, button in ipairs(self.State.AccentObjects.ActionButtons) do
 		if button and button.Parent then
 			button.BackgroundColor3 = Theme.Accent
-		end
-	end
-
-	for _, knob in ipairs(self.State.AccentObjects.ToggleEnabledKnobs) do
-		if knob and knob.Parent then
-			knob.BackgroundColor3 = Theme.Accent
-		end
-	end
-
-	for _, label in ipairs(self.State.AccentObjects.ToggleEnabledLabels) do
-		if label and label.Parent and label.Text == "Enabled" then
-			label.TextColor3 = Theme.Accent
-		end
-	end
-
-	for _, button in ipairs(self.State.AccentObjects.ToggleButtons) do
-		if button and button.Parent and button.BackgroundColor3 ~= Theme.Input then
-			button.BackgroundColor3 = Color3.fromRGB(28, 42, 34)
 		end
 	end
 
@@ -968,8 +980,6 @@ function Panel:CreateNumberInput(row, option)
 end
 
 function Panel:CreateToggle(row, option)
-	local Theme = self:GetTheme()
-
 	local stateLabel = Instance.new("TextLabel")
 	stateLabel.Size = UDim2.new(0, 56, 0, 16)
 	stateLabel.Position = UDim2.new(1, -136, 0.5, -8)
@@ -1002,19 +1012,27 @@ function Panel:CreateToggle(row, option)
 	table.insert(self.State.AccentObjects.ToggleEnabledLabels, stateLabel)
 
 	local function updateVisual(state)
+		local currentTheme = self:GetTheme()
+
+		button:SetAttribute("ToggleEnabled", state)
+		fill:SetAttribute("ToggleEnabled", state)
+		stateLabel:SetAttribute("ToggleEnabled", state)
+
 		if state then
 			button.BackgroundColor3 = Color3.fromRGB(28, 42, 34)
 			fill.Position = UDim2.new(1, -22, 0.5, -9)
-			fill.BackgroundColor3 = Theme.Accent
+			fill.BackgroundColor3 = currentTheme.Accent
 			stateLabel.Text = "Enabled"
-			stateLabel.TextColor3 = Theme.Accent
+			stateLabel.TextColor3 = currentTheme.Accent
 		else
-			button.BackgroundColor3 = Theme.Input
+			button.BackgroundColor3 = currentTheme.Input
 			fill.Position = UDim2.new(0, 4, 0.5, -9)
-			fill.BackgroundColor3 = Theme.SubText
+			fill.BackgroundColor3 = currentTheme.Accent
 			stateLabel.Text = "Disabled"
-			stateLabel.TextColor3 = Theme.SubText
+			stateLabel.TextColor3 = currentTheme.SubText
 		end
+
+		self:LogToggleVisual(option.Id, state, button, fill)
 	end
 
 	updateVisual(self:GetValue(option.Id))

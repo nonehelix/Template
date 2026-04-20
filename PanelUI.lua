@@ -1350,18 +1350,6 @@ function Panel:BuildTabs()
 	local Theme = self:GetTheme()
 
 	for _, tab in ipairs(self.Config.Tabs) do
-		print("[Panel] Tab:", tostring(tab.Name))
-
-		for i, option in ipairs(tab.Options or {}) do
-			print(
-				"[Panel] Option",
-				i,
-				"Type:", tostring(option.Type),
-				"Label:", tostring(option.Label),
-				"Id:", tostring(option.Id)
-			)
-		end
-
 		self:CreateTabButton(tab)
 
 		local page = self:CreatePage(tab.Name)

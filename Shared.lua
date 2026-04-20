@@ -170,9 +170,12 @@ local function SaveSettings(values)
 	if not writefile then return end
 	ensureFolderExists()
 	local file = getSettingsFileName()
-	pcall(function()
+	local ok, err = pcall(function()
 		writefile(file, HttpService:JSONEncode(values or {}))
 	end)
+	if not ok then
+		warn("[Shared] Failed to save settings to '" .. tostring(file) .. "': " .. tostring(err))
+	end
 end
 
 local function LoadSettings(defaultValues)
@@ -187,6 +190,10 @@ local function LoadSettings(defaultValues)
 		local data = readfile(file)
 		return HttpService:JSONDecode(data)
 	end)
+
+	if not success then
+		warn("[Shared] Failed to load settings from '" .. tostring(file) .. "': " .. tostring(loaded))
+	end
 
 	if success and type(loaded) == "table" then
 		for k, v in pairs(loaded) do
@@ -216,6 +223,27 @@ local VALID_OPTION_TYPES = {
 	select = true, multiselect = true, section = true,
 }
 
+local function findFeatureIndex(featureKey)
+	for index, existing in ipairs(FeatureList) do
+		if existing.Key == featureKey then
+			return index
+		end
+	end
+
+	return nil
+end
+
+local function validateFeatureOptions(feature)
+	for index, option in ipairs(feature.Options or {}) do
+		assert(type(option) == "table", "Feature option #" .. tostring(index) .. " must be a table")
+		assert(VALID_OPTION_TYPES[option.Type], "Invalid option type for feature '" .. feature.Key .. "': " .. tostring(option.Type))
+
+		if option.Type ~= "section" then
+			assert(type(option.Id) == "string" and option.Id ~= "", "Feature option Id is required for feature '" .. feature.Key .. "'")
+		end
+	end
+end
+
 local function RegisterFeature(feature)
 	assert(type(feature) == "table", "Feature must be a table")
 	assert(type(feature.Key) == "string" and feature.Key ~= "", "Feature.Key is required")
@@ -227,7 +255,15 @@ local function RegisterFeature(feature)
 	feature.Options = feature.Options or {}
 	feature.State = feature.State or {}
 
-	table.insert(FeatureList, feature)
+	validateFeatureOptions(feature)
+
+	local existingIndex = findFeatureIndex(feature.Key)
+	if existingIndex then
+		FeatureList[existingIndex] = feature
+	else
+		table.insert(FeatureList, feature)
+	end
+
 	return feature
 end
 
@@ -235,15 +271,25 @@ local function RegisterTab(tab)
 	assert(type(tab) == "table", "Tab must be a table")
 	assert(type(tab.Name) == "string" and tab.Name ~= "", "Tab.Name is required")
 
-	for _, existing in ipairs(ExtraTabs) do
-		assert(existing.Name ~= tab.Name, "Duplicate tab name: " .. tab.Name)
+	for index, existing in ipairs(ExtraTabs) do
+		if existing.Name == tab.Name then
+			ExtraTabs[index] = {
+				Name = tab.Name,
+				Message = tab.Message,
+				Order = tonumber(tab.Order) or 999
+			}
+			return ExtraTabs[index]
+		end
 	end
 
-	table.insert(ExtraTabs, {
+	local newTab = {
 		Name = tab.Name,
 		Message = tab.Message,
 		Order = tonumber(tab.Order) or 999
-	})
+	}
+
+	table.insert(ExtraTabs, newTab)
+	return newTab
 end
 
 local function RegisterTabs(tabs)
@@ -926,6 +972,173 @@ do
 end
 
 --==================================================
+-- CONFIG SANITIZING
+--==================================================
+
+local function ApplyFeatureDefaults(values)
+	for _, feature in ipairs(FeatureList) do
+		if feature.ApplyDefaults then
+			pcall(function()
+				feature:ApplyDefaults(values)
+			end)
+		end
+	end
+end
+
+local function resolveOptionItems(option)
+	local items = option and option.Items
+
+	if type(items) == "function" then
+		local ok, resolved = pcall(items)
+		if ok and type(resolved) == "table" then
+			return resolved
+		end
+
+		warn("[Shared] Failed to resolve items for option '" .. tostring(option and option.Id) .. "': " .. tostring(resolved))
+		return nil
+	end
+
+	if type(items) == "table" then
+		return items
+	end
+
+	return nil
+end
+
+local function sanitizeLoadedNumber(value, option)
+	local numericValue = tonumber(value)
+	if numericValue == nil then
+		return nil
+	end
+
+	if option.Min ~= nil and numericValue < option.Min then
+		numericValue = option.Min
+	end
+	if option.Max ~= nil and numericValue > option.Max then
+		numericValue = option.Max
+	end
+
+	return roundTo2(numericValue)
+end
+
+local function sanitizeLoadedToggle(value)
+	if type(value) == "boolean" then
+		return value
+	end
+	if type(value) == "number" then
+		return value ~= 0
+	end
+	if type(value) == "string" then
+		local lowered = string.lower(value)
+		if lowered == "true" then
+			return true
+		end
+		if lowered == "false" then
+			return false
+		end
+	end
+
+	return nil
+end
+
+local function sanitizeLoadedSelect(value, option)
+	if value == nil then
+		return nil
+	end
+
+	local stringValue = tostring(value)
+	local items = resolveOptionItems(option)
+	if not items or type(option.Items) == "function" then
+		return stringValue
+	end
+
+	for _, item in ipairs(items) do
+		if tostring(item) == stringValue then
+			return item
+		end
+	end
+
+	return nil
+end
+
+local function sanitizeLoadedMultiSelect(value, option)
+	if type(value) ~= "table" then
+		return nil
+	end
+
+	local items = resolveOptionItems(option)
+	local allowedItemsByKey = nil
+	if items and type(option.Items) ~= "function" then
+		allowedItemsByKey = {}
+		for _, item in ipairs(items) do
+			allowedItemsByKey[tostring(item)] = item
+		end
+	end
+
+	local result = {}
+	local seen = {}
+
+	for _, entry in ipairs(value) do
+		local key = tostring(entry)
+		if not seen[key] then
+			if allowedItemsByKey then
+				local allowedItem = allowedItemsByKey[key]
+				if allowedItem ~= nil then
+					result[#result + 1] = allowedItem
+					seen[key] = true
+				end
+			else
+				result[#result + 1] = key
+				seen[key] = true
+			end
+		end
+	end
+
+	return result
+end
+
+local function BuildOptionDefinitions(panelConfig)
+	local definitions = {}
+
+	for _, tab in ipairs(panelConfig.Tabs or {}) do
+		for _, option in ipairs(tab.Options or {}) do
+			if type(option) == "table" and type(option.Id) == "string" and option.Id ~= "" then
+				definitions[option.Id] = option
+			end
+		end
+	end
+
+	return definitions
+end
+
+local function SanitizePanelValues(panelConfig, fallbackValues)
+	local optionDefinitions = BuildOptionDefinitions(panelConfig)
+
+	for optionId, option in pairs(optionDefinitions) do
+		local currentValue = panelConfig.Values[optionId]
+		if currentValue ~= nil then
+			local sanitizedValue = currentValue
+
+			if option.Type == "number" then
+				sanitizedValue = sanitizeLoadedNumber(currentValue, option)
+			elseif option.Type == "toggle" then
+				sanitizedValue = sanitizeLoadedToggle(currentValue)
+			elseif option.Type == "select" then
+				sanitizedValue = sanitizeLoadedSelect(currentValue, option)
+			elseif option.Type == "multiselect" then
+				sanitizedValue = sanitizeLoadedMultiSelect(currentValue, option)
+			end
+
+			if sanitizedValue == nil and option.Type ~= "button" and option.Type ~= "section" then
+				panelConfig.Values[optionId] = copySimpleValue(fallbackValues and fallbackValues[optionId])
+			elseif sanitizedValue ~= nil then
+				panelConfig.Values[optionId] = sanitizedValue
+			end
+		end
+	end
+end
+
+--==================================================
 -- BASE CONFIG + CONFIG COMPILER
 --==================================================
 
@@ -1044,17 +1257,12 @@ end
 
 function Features.BuildPanelConfig()
 	local panelConfig = CompilePanelConfig(BASE_CONFIG)
+	ApplyFeatureDefaults(panelConfig.Values)
+	local defaultValues = copySimpleValue(panelConfig.Values)
 
 	if HasSavedSettings() then
 		panelConfig.Values = LoadSettings(panelConfig.Values)
-	else
-		for _, feature in ipairs(FeatureList) do
-			if feature.ApplyDefaults then
-				pcall(function()
-					feature:ApplyDefaults(panelConfig.Values)
-				end)
-			end
-		end
+		SanitizePanelValues(panelConfig, defaultValues)
 	end
 
 	return panelConfig

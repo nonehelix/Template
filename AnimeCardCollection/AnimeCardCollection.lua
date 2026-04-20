@@ -351,13 +351,13 @@ return {
 				Key = "AutoGrade",
 				Tab = "Card",
 				Order = 15,
-
+		
 				Defaults = {
 					AutoGradeEnabled = false,
 					AutoGradeCards = {},
 					AutoGradeTarget = {},
 				},
-
+		
 				State = {
 					Running = false,
 					PanelRef = nil,
@@ -367,7 +367,7 @@ return {
 					TargetMinRank = nil,
 					ReplicatedData = nil,
 				},
-
+		
 				Options = {
 					{
 						Id = "AutoGradeEnabled",
@@ -393,71 +393,71 @@ return {
 					},
 				}
 			})
-
+		
 			local GradeRankMap = {}
 			if GradesConfig and GradesConfig.List then
 				for index, gradeName in ipairs(GradesConfig.List) do
 					GradeRankMap[tostring(gradeName)] = index
 				end
 			end
-
+		
 			function Feature:GetValues()
 				local panel = self.State.PanelRef
 				return panel and panel.Config and panel.Config.Values or nil
 			end
-
+		
 			function Feature:GetReplicatedData()
 				if self.State.ReplicatedData then
 					return self.State.ReplicatedData
 				end
-
+		
 				local module = ReplicatedFirst:FindFirstChild("ReplicatedData")
 				if not module then
 					return nil
 				end
-
+		
 				local ok, result = pcall(require, module)
 				if ok and type(result) == "table" and type(result.GetData) == "function" then
 					self.State.ReplicatedData = result
 					return result
 				end
-
+		
 				return nil
 			end
-
+		
 			function Feature:GetOwnedCardsTable()
 				local replicatedData = self:GetReplicatedData()
 				if not replicatedData then
 					return {}
 				end
-
+		
 				local ok, cards = pcall(function()
 					return replicatedData.GetData("Cards")
 				end)
-
+		
 				return (ok and type(cards) == "table") and cards or {}
 			end
-
+		
 			function Feature:GetServerAutoGrades()
 				local replicatedData = self:GetReplicatedData()
 				if not replicatedData then
 					return {}
 				end
-
+		
 				local ok, autoGrades = pcall(function()
 					return replicatedData.GetData("AutoGrades")
 				end)
-
+		
 				return (ok and type(autoGrades) == "table") and autoGrades or {}
 			end
-
+		
 			function Feature:GetGradeRank(gradeName)
 				if not gradeName then
 					return 0
 				end
 				return GradeRankMap[tostring(gradeName)] or 0
 			end
-
+		
 			function Feature:GetCardCurrentGrade(ownedCards, cardId)
 				local cardData = ownedCards[cardId]
 				if type(cardData) ~= "table" then
@@ -465,25 +465,25 @@ return {
 				end
 				return cardData.Grade
 			end
-
+		
 			function Feature:GetTargetMinRank(selectedGrades)
 				local minRank = nil
-
+		
 				for _, gradeName in ipairs(selectedGrades or {}) do
 					local rank = self:GetGradeRank(gradeName)
 					if rank > 0 and (minRank == nil or rank < minRank) then
 						minRank = rank
 					end
 				end
-
+		
 				return minRank
 			end
-
+		
 			function Feature:CardMeetsOrBeatsTarget(ownedCards, cardId, targetMinRank)
 				local currentRank = self:GetGradeRank(self:GetCardCurrentGrade(ownedCards, cardId))
 				return currentRank >= (targetMinRank or math.huge)
 			end
-
+		
 			function Feature:CurrentCardNeedsConfirm(ownedCards, cardId)
 				local currentGrade = self:GetCardCurrentGrade(ownedCards, cardId)
 				if not currentGrade then
@@ -491,10 +491,10 @@ return {
 				end
 				return arrayContains(self:GetServerAutoGrades(), tostring(currentGrade))
 			end
-
+		
 			function Feature:BuildQueue(selectedCards, ownedCards)
 				local queue = {}
-
+		
 				if arrayContains(selectedCards, "All") then
 					for cardId in pairs(ownedCards) do
 						queue[#queue + 1] = tostring(cardId)
@@ -510,15 +510,15 @@ return {
 						end
 					end
 				end
-
+		
 				return queue
 			end
-
+		
 			function Feature:MarkFinishedCards(ownedCards)
 				if not self.State.TargetMinRank then
 					return
 				end
-
+		
 				for _, cardId in ipairs(self.State.Queue) do
 					local cardData = ownedCards[cardId]
 					if not cardData then
@@ -528,11 +528,11 @@ return {
 					end
 				end
 			end
-
+		
 			function Feature:IsCardDone(cardId)
 				return self.State.TargetDone[cardId] == true
 			end
-
+		
 			function Feature:AllCardsDone()
 				for _, cardId in ipairs(self.State.Queue) do
 					if not self:IsCardDone(cardId) then
@@ -541,28 +541,28 @@ return {
 				end
 				return true
 			end
-
+		
 			function Feature:GetNextCardToRoll(ownedCards)
 				local count = #self.State.Queue
 				if count == 0 then
 					return nil
 				end
-
+		
 				for _ = 1, count do
 					self.State.QueueIndex += 1
 					if self.State.QueueIndex > count then
 						self.State.QueueIndex = 1
 					end
-
+		
 					local cardId = self.State.Queue[self.State.QueueIndex]
 					if cardId and not self:IsCardDone(cardId) and ownedCards[cardId] ~= nil then
 						return cardId
 					end
 				end
-
+		
 				return nil
 			end
-
+		
 			function Feature:SendGradeRoll(ownedCards, cardId)
 				if self:CurrentCardNeedsConfirm(ownedCards, cardId) then
 					GradeRemote:FireServer("Roll", cardId, nil, true)
@@ -570,91 +570,91 @@ return {
 					GradeRemote:FireServer("Roll", cardId)
 				end
 			end
-
+		
 			function Feature:Loop()
 				while self.State.Running do
 					local values = self:GetValues()
 					if not values or not values.AutoGradeEnabled then
 						break
 					end
-
+		
 					local ownedCards = self:GetOwnedCardsTable()
 					if type(ownedCards) ~= "table" then
 						break
 					end
-
+		
 					self:MarkFinishedCards(ownedCards)
-
+		
 					if self:AllCardsDone() then
 						break
 					end
-
+		
 					local nextCard = self:GetNextCardToRoll(ownedCards)
 					if not nextCard then
 						break
 					end
-
+		
 					if self:CardMeetsOrBeatsTarget(ownedCards, nextCard, self.State.TargetMinRank) then
 						self.State.TargetDone[nextCard] = true
 					else
 						self:SendGradeRoll(ownedCards, nextCard)
 					end
-
+		
 					task.wait(0.2)
 				end
-
+		
 				self:Stop()
 			end
-
+		
 			function Feature:Start(panelRef)
 				self:Stop()
 				self.State.PanelRef = panelRef
-
+		
 				local values = self:GetValues()
 				if not values then
 					return
 				end
-
+		
 				local selectedCards = normalizeSelectionArray(values.AutoGradeCards)
 				local selectedGrades = normalizeSelectionArray(values.AutoGradeTarget)
-
+		
 				if #selectedCards == 0 or #selectedGrades == 0 then
 					return
 				end
-
+		
 				local ownedCards = self:GetOwnedCardsTable()
 				if type(ownedCards) ~= "table" then
 					return
 				end
-
+		
 				local targetMinRank = self:GetTargetMinRank(selectedGrades)
 				if not targetMinRank then
 					return
 				end
-
+		
 				local queue = self:BuildQueue(selectedCards, ownedCards)
 				if #queue == 0 then
 					return
 				end
-
+		
 				self.State.Running = true
 				self.State.Queue = queue
 				self.State.QueueIndex = 0
 				self.State.TargetDone = {}
 				self.State.TargetMinRank = targetMinRank
-
+		
 				self:MarkFinishedCards(ownedCards)
-
+		
 				if self:AllCardsDone() then
 					self:Stop()
 					return
 				end
-
+		
 				task.spawn(function()
 					self:Loop()
 				end)
 			end
-
+		
 			function Feature:Stop()
 				self.State.Running = false
 				self.State.Queue = {}
@@ -662,7 +662,7 @@ return {
 				self.State.TargetDone = {}
 				self.State.TargetMinRank = nil
 			end
-
+		
 			function Feature:GetHandlers()
 				return {
 					AutoGradeEnabled = function(value, _, panelRef)
@@ -684,7 +684,7 @@ return {
 					end,
 				}
 			end
-
+		
 			function Feature:Cleanup()
 				self:Stop()
 				self.State.PanelRef = nil

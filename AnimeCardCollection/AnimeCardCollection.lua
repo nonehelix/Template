@@ -349,7 +349,7 @@ return {
 		end
 
 		--==================================================
-		-- FEATURE: AUTO GRADE (DEBUG MEASUREMENT)
+		-- FEATURE: AUTO GRADE (FINAL CLEAN VERSION)
 		--==================================================
 		do
 			local Feature = RegisterFeature({
@@ -370,15 +370,6 @@ return {
 					TargetDone = {},
 					TargetMinRank = nil,
 					ReplicatedData = nil,
-		
-					Debug = {
-						LastFire = 0,
-						LastResponse = 0,
-						FireCount = 0,
-						ResponseCount = 0,
-					},
-		
-					ResponseConnection = nil,
 				},
 		
 				Options = {
@@ -388,9 +379,6 @@ return {
 				}
 			})
 		
-			--==================================================
-			-- REPLICATED DATA (ReplicatedFirst)
-			--==================================================
 			function Feature:GetReplicatedData()
 				if self.State.ReplicatedData then
 					return self.State.ReplicatedData
@@ -430,9 +418,6 @@ return {
 				return (ok and type(result) == "table") and result or {}
 			end
 		
-			--==================================================
-			-- GRADE LOGIC
-			--==================================================
 			local GradeRankMap = {}
 			if GradesConfig and GradesConfig.List then
 				for i, g in ipairs(GradesConfig.List) do
@@ -445,8 +430,8 @@ return {
 			end
 		
 			function Feature:GetCardGrade(id)
-				local c = self:GetOwnedCards()[id]
-				return c and c.Grade
+				local card = self:GetOwnedCards()[id]
+				return card and card.Grade
 			end
 		
 			function Feature:IsDone(id)
@@ -470,9 +455,6 @@ return {
 				return min
 			end
 		
-			--==================================================
-			-- QUEUE
-			--==================================================
 			function Feature:BuildQueue(selected)
 				local owned = self:GetOwnedCards()
 				local q = {}
@@ -513,23 +495,7 @@ return {
 				end
 			end
 		
-			--==================================================
-			-- DEBUG SEND
-			--==================================================
-			function Feature:SendRoll(cardId)
-				local now = tick()
-		
-				self.State.Debug.FireCount += 1
-				local delta = now - (self.State.Debug.LastFire or now)
-				self.State.Debug.LastFire = now
-		
-				print(string.format(
-					"[AutoGrade][CLIENT] Roll -> %s | Δt=%.3f | total=%d",
-					tostring(cardId),
-					delta,
-					self.State.Debug.FireCount
-				))
-		
+			function Feature:Roll(cardId)
 				if self:NeedsConfirm(cardId) then
 					GradeRemote:FireServer("Roll", cardId, nil, true)
 				else
@@ -537,9 +503,6 @@ return {
 				end
 			end
 		
-			--==================================================
-			-- LOOP (0.1s spam for measurement)
-			--==================================================
 			function Feature:Loop()
 				while self.State.Running do
 					local values = self.State.PanelRef.Config.Values
@@ -551,18 +514,15 @@ return {
 					if self:IsDone(nextCard) then
 						self.State.TargetDone[nextCard] = true
 					else
-						self:SendRoll(nextCard)
+						self:Roll(nextCard)
 					end
 		
-					task.wait(0.1) -- 🔥 FORCE FAST LOOP FOR TESTING
+					task.wait(0.2) 
 				end
 		
 				self:Stop()
 			end
 		
-			--==================================================
-			-- START / STOP
-			--==================================================
 			function Feature:Start(panelRef)
 				self:Stop()
 		
@@ -585,25 +545,6 @@ return {
 				self.State.QueueIndex = 0
 				self.State.TargetDone = {}
 				self.State.TargetMinRank = minRank
-		
-				-- 🔥 SERVER RESPONSE DEBUG
-				if not self.State.ResponseConnection then
-					self.State.ResponseConnection = GradeRemote.OnClientEvent:Connect(function(action, grade)
-						local now = tick()
-		
-						self.State.Debug.ResponseCount += 1
-						local delta = now - (self.State.Debug.LastResponse or now)
-						self.State.Debug.LastResponse = now
-		
-						print(string.format(
-							"[AutoGrade][SERVER] action=%s grade=%s | Δt=%.3f | total=%d",
-							tostring(action),
-							tostring(grade),
-							delta,
-							self.State.Debug.ResponseCount
-						))
-					end)
-				end
 		
 				task.spawn(function()
 					self:Loop()
@@ -641,12 +582,6 @@ return {
 		
 			function Feature:Cleanup()
 				self:Stop()
-		
-				if self.State.ResponseConnection then
-					self.State.ResponseConnection:Disconnect()
-					self.State.ResponseConnection = nil
-				end
-		
 				self.State.ReplicatedData = nil
 			end
 		end

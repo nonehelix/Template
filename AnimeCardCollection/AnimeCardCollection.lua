@@ -349,7 +349,7 @@ return {
 		end
 
 		--==================================================
-		-- FEATURE: AUTO GRADE (EVENT-DRIVEN - FINAL)
+		-- FEATURE: AUTO GRADE (DEBUG MEASUREMENT)
 		--==================================================
 		do
 			local Feature = RegisterFeature({
@@ -370,8 +370,15 @@ return {
 					TargetDone = {},
 					TargetMinRank = nil,
 					ReplicatedData = nil,
-					Connection = nil,
-					Busy = false, -- 🔥 prevents multi-fire
+		
+					Debug = {
+						LastFire = 0,
+						LastResponse = 0,
+						FireCount = 0,
+						ResponseCount = 0,
+					},
+		
+					ResponseConnection = nil,
 				},
 		
 				Options = {
@@ -380,10 +387,9 @@ return {
 					{Id = "AutoGradeTarget", Type = "multiselect", Label = "Grades", Items = getGradeItems()},
 				}
 			})
-			print("Hello world!")
-
+		
 			--==================================================
-			-- REPLICATED DATA
+			-- REPLICATED DATA (ReplicatedFirst)
 			--==================================================
 			function Feature:GetReplicatedData()
 				if self.State.ReplicatedData then
@@ -394,17 +400,12 @@ return {
 				if not module then return nil end
 		
 				local ok, result = pcall(require, module)
-				if ok and type(result.GetData) == "function" and type(result.GetReplica) == "function" then
+				if ok and type(result.GetData) == "function" then
 					self.State.ReplicatedData = result
 					return result
 				end
 		
 				return nil
-			end
-		
-			function Feature:GetReplica()
-				local data = self:GetReplicatedData()
-				return data and data.GetReplica and data.GetReplica()
 			end
 		
 			function Feature:GetOwnedCards()
@@ -513,57 +514,54 @@ return {
 			end
 		
 			--==================================================
-			-- CORE STEP (EVENT DRIVEN)
+			-- DEBUG SEND
 			--==================================================
-			function Feature:ProcessNext()
-				if self.State.Busy then return end
-				if not self.State.Running then return end
+			function Feature:SendRoll(cardId)
+				local now = tick()
 		
-				local nextCard = self:GetNext()
-				if not nextCard then
-					self:Stop()
-					return
-				end
+				self.State.Debug.FireCount += 1
+				local delta = now - (self.State.Debug.LastFire or now)
+				self.State.Debug.LastFire = now
 		
-				if self:IsDone(nextCard) then
-					self.State.TargetDone[nextCard] = true
-					self:ProcessNext()
-					return
-				end
+				print(string.format(
+					"[AutoGrade][CLIENT] Roll -> %s | Δt=%.3f | total=%d",
+					tostring(cardId),
+					delta,
+					self.State.Debug.FireCount
+				))
 		
-				self.State.Busy = true
-		
-				if self:NeedsConfirm(nextCard) then
-					GradeRemote:FireServer("Roll", nextCard, nil, true)
+				if self:NeedsConfirm(cardId) then
+					GradeRemote:FireServer("Roll", cardId, nil, true)
 				else
-					GradeRemote:FireServer("Roll", nextCard)
+					GradeRemote:FireServer("Roll", cardId)
 				end
 			end
 		
 			--==================================================
-			-- REPLICA LISTENER (THIS IS THE MAGIC)
+			-- LOOP (0.1s spam for measurement)
 			--==================================================
-			function Feature:BindReplica()
-				local replica = self:GetReplica()
-				if not replica then return end
+			function Feature:Loop()
+				while self.State.Running do
+					local values = self.State.PanelRef.Config.Values
+					if not values or not values.AutoGradeEnabled then break end
 		
-				if self.State.Connection then
-					self.State.Connection:Disconnect()
-				end
+					local nextCard = self:GetNext()
+					if not nextCard then break end
 		
-				self.State.Connection = replica:OnChange(function(action, path)
-					-- listen ONLY for card grade updates
-					if action == "Set" and path[1] == "Cards" then
-						self.State.Busy = false
-						task.defer(function()
-							self:ProcessNext()
-						end)
+					if self:IsDone(nextCard) then
+						self.State.TargetDone[nextCard] = true
+					else
+						self:SendRoll(nextCard)
 					end
-				end)
+		
+					task.wait(0.1) -- 🔥 FORCE FAST LOOP FOR TESTING
+				end
+		
+				self:Stop()
 			end
 		
 			--==================================================
-			-- CONTROL
+			-- START / STOP
 			--==================================================
 			function Feature:Start(panelRef)
 				self:Stop()
@@ -588,8 +586,28 @@ return {
 				self.State.TargetDone = {}
 				self.State.TargetMinRank = minRank
 		
-				self:BindReplica()
-				self:ProcessNext() -- 🔥 start chain
+				-- 🔥 SERVER RESPONSE DEBUG
+				if not self.State.ResponseConnection then
+					self.State.ResponseConnection = GradeRemote.OnClientEvent:Connect(function(action, grade)
+						local now = tick()
+		
+						self.State.Debug.ResponseCount += 1
+						local delta = now - (self.State.Debug.LastResponse or now)
+						self.State.Debug.LastResponse = now
+		
+						print(string.format(
+							"[AutoGrade][SERVER] action=%s grade=%s | Δt=%.3f | total=%d",
+							tostring(action),
+							tostring(grade),
+							delta,
+							self.State.Debug.ResponseCount
+						))
+					end)
+				end
+		
+				task.spawn(function()
+					self:Loop()
+				end)
 			end
 		
 			function Feature:Stop()
@@ -597,12 +615,6 @@ return {
 				self.State.Queue = {}
 				self.State.TargetDone = {}
 				self.State.QueueIndex = 0
-				self.State.Busy = false
-		
-				if self.State.Connection then
-					self.State.Connection:Disconnect()
-					self.State.Connection = nil
-				end
 			end
 		
 			function Feature:GetHandlers()
@@ -629,10 +641,15 @@ return {
 		
 			function Feature:Cleanup()
 				self:Stop()
+		
+				if self.State.ResponseConnection then
+					self.State.ResponseConnection:Disconnect()
+					self.State.ResponseConnection = nil
+				end
+		
 				self.State.ReplicatedData = nil
 			end
 		end
-
 		--==================================================
 		-- FEATURE: AUTO BUY MARKET
 		--==================================================

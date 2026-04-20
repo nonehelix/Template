@@ -370,10 +370,8 @@ return {
 					CurrentIndex = 1,
 					TargetMinRank = nil,
 					ReplicatedData = nil,
-					-- Timing configuration
-					RequestTimeout = 1.5, -- Max time to wait for server response
-					PollInterval = 0.05, -- How often to check for grade changes
-					DelayBetweenCards = 0.1, -- Small delay after success before next card
+					-- Fixed delay between requests (adjust based on server performance)
+					RequestDelay = 0.5,
 				},
 
 				Options = {
@@ -600,27 +598,6 @@ return {
 				return nil
 			end
 
-			-- Wait for a card's grade to change (indicates server processed request)
-			function Feature:WaitForGradeChange(cardId, previousGrade, timeout)
-				local startTime = tick()
-				timeout = timeout or self.State.RequestTimeout
-
-				while tick() - startTime < timeout do
-					if not self.State.Grading then
-						return false, "cancelled"
-					end
-
-					local currentGrade = self:GetCardCurrentGrade(cardId)
-					if currentGrade ~= previousGrade then
-						return true, currentGrade
-					end
-
-					task.wait(self.State.PollInterval)
-				end
-
-				return false, "timeout"
-			end
-
 			function Feature:SendGradeRoll(cardId)
 				if self:CurrentCardNeedsConfirm(cardId) then
 					GradeRemote:FireServer("Roll", cardId, nil, true)
@@ -640,27 +617,16 @@ return {
 					-- Get next card to roll
 					local cardId = self:GetNextCardToRoll()
 					if not cardId then
-						-- No more cards need grading
-						self:Stop()
-						break
+						-- No more cards need grading, wait and check again
+						task.wait(self.State.RequestDelay)
+						continue
 					end
-
-					-- Get current grade before rolling
-					local previousGrade = self:GetCardCurrentGrade(cardId)
 
 					-- Send the roll request
 					self:SendGradeRoll(cardId)
 
-					-- Wait for server to process (grade will change)
-					local success, result = self:WaitForGradeChange(cardId, previousGrade)
-
-					if success then
-						-- Grade changed successfully, small delay before next card
-						task.wait(self.State.DelayBetweenCards)
-					else
-						-- Timeout or cancelled - continue to next card
-						task.wait(0.1)
-					end
+					-- Fixed delay between requests
+					task.wait(self.State.RequestDelay)
 				end
 			end
 

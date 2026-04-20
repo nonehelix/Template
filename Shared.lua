@@ -150,11 +150,7 @@ local function sanitizeFileName(text)
 end
 
 local function getSettingsFileName()
-	local gameKey = (Shared and Shared.CurrentGameKey) 
-	            or Features.CurrentGameKey 
-	            or tostring(game.PlaceId) 
-	            or "UnknownGame"
-	
+	local gameKey = Features.CurrentGameKey or tostring(game.PlaceId) or "UnknownGame"
 	return "AdminPanel/" .. sanitizeFileName(gameKey) .. ".json"
 end
 

@@ -187,26 +187,6 @@ local function CleanupBag(bag)
 	table.clear(bag.Items)
 end
 
-local function resolveOptionItems(option)
-	local items = option and option.Items
-
-	if type(items) == "function" then
-		local ok, resolved = pcall(items)
-		if ok and type(resolved) == "table" then
-			return resolved
-		end
-
-		warn("[Panel] Failed to resolve items for option '" .. tostring(option and option.Id) .. "': " .. tostring(resolved))
-		return {}
-	end
-
-	if type(items) == "table" then
-		return items
-	end
-
-	return {}
-end
-
 function Panel.new(config)
 	assert(type(config) == "table", "Panel.new requires config")
 	assert(type(config.Shared) == "table", "Panel.new requires config.Shared")
@@ -257,9 +237,6 @@ function Panel.new(config)
 		TabButtons = {},
 		Pages = {},
 		Controls = {},
-		Dragging = false,
-		DragStart = nil,
-		StartPos = nil,
 		OpenDropdown = nil,
 		OpenDropdownAnchor = nil,
 		OpenDropdownBag = nil,
@@ -295,6 +272,107 @@ end
 
 function Panel:RegisterControl(optionId, controlData)
 	self.State.Controls[optionId] = controlData
+end
+
+function Panel:GetOptionItems(option)
+	local resolver = self.Shared and self.Shared.ResolveOptionItems
+	if type(resolver) == "function" then
+		return resolver(option) or {}
+	end
+
+	return {}
+end
+
+function Panel:BindDrag(handle, getPosition, setPosition, onMove)
+	local dragging = false
+	local dragStart
+	local startPosition
+
+	AddCleanupItem(self.Runtime, handle.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			dragging = true
+			dragStart = input.Position
+			startPosition = getPosition()
+		end
+	end))
+
+	AddCleanupItem(self.Runtime, handle.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			dragging = false
+		end
+	end))
+
+	AddCleanupItem(self.Runtime, self.UserInputService.InputChanged:Connect(function(input)
+		if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+			local delta = input.Position - dragStart
+			setPosition(UDim2.new(
+				startPosition.X.Scale,
+				startPosition.X.Offset + delta.X,
+				startPosition.Y.Scale,
+				startPosition.Y.Offset + delta.Y
+			))
+
+			if onMove then
+				onMove()
+			end
+		end
+	end))
+end
+
+function Panel:CreateDropdownTrigger(row, initialText)
+	local Theme = self:GetTheme()
+
+	local button = Instance.new("TextButton")
+	button.Size = UDim2.new(0, 140, 0, 34)
+	button.Position = UDim2.new(1, -154, 0.5, -17)
+	button.BackgroundColor3 = Theme.Input
+	button.BorderSizePixel = 0
+	button.Text = ""
+	button.AutoButtonColor = false
+	button.ZIndex = 3
+	button.Parent = row
+	createCorner(button, 8)
+	table.insert(self.State.AccentObjects.DropdownButtons, button)
+	table.insert(self.State.AccentObjects.DropdownStrokes, createStroke(button, Theme.Stroke, 1, 0.45))
+
+	local valueLabel = Instance.new("TextLabel")
+	valueLabel.Size = UDim2.new(1, -26, 1, 0)
+	valueLabel.Position = UDim2.new(0, 10, 0, 0)
+	valueLabel.BackgroundTransparency = 1
+	valueLabel.Text = initialText
+	valueLabel.TextColor3 = Theme.Text
+	valueLabel.TextSize = 13
+	valueLabel.Font = Enum.Font.Gotham
+	valueLabel.TextXAlignment = Enum.TextXAlignment.Left
+	valueLabel.ZIndex = 4
+	valueLabel.Parent = button
+
+	local arrow = Instance.new("TextLabel")
+	arrow.Size = UDim2.new(0, 16, 1, 0)
+	arrow.Position = UDim2.new(1, -20, 0, 0)
+	arrow.BackgroundTransparency = 1
+	arrow.Text = "v"
+	arrow.TextColor3 = Theme.SubText
+	arrow.TextSize = 11
+	arrow.Font = Enum.Font.GothamBold
+	arrow.ZIndex = 4
+	arrow.Parent = button
+
+	return button, valueLabel
+end
+
+function Panel:BindDropdownToggle(button, openDropdown)
+	button.MouseButton1Click:Connect(function()
+		if self.State.OpenDropdown then
+			if self.State.OpenDropdownAnchor == button then
+				self:CloseDropdown()
+				return
+			end
+			self:CloseDropdown()
+		end
+
+		openDropdown()
+	end)
 end
 
 function Panel:ClaimSingleton()
@@ -573,35 +651,15 @@ function Panel:CreateGui()
 		self:Restore()
 	end)
 
-	local openDragging = false
-	local openDragStart
-	local openStartPos
-
-	AddCleanupItem(self.Runtime, openButton.InputBegan:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 then
-			openDragging = true
-			openDragStart = input.Position
-			openStartPos = openButton.Position
+	self:BindDrag(
+		openButton,
+		function()
+			return openButton.Position
+		end,
+		function(position)
+			openButton.Position = position
 		end
-	end))
-
-	AddCleanupItem(self.Runtime, openButton.InputEnded:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 then
-			openDragging = false
-		end
-	end))
-
-	AddCleanupItem(self.Runtime, self.UserInputService.InputChanged:Connect(function(input)
-		if openDragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-			local delta = input.Position - openDragStart
-			openButton.Position = UDim2.new(
-				openStartPos.X.Scale,
-				openStartPos.X.Offset + delta.X,
-				openStartPos.Y.Scale,
-				openStartPos.Y.Offset + delta.Y
-			)
-		end
-	end))
+	)
 
 	self.OpenButton = openButton
 
@@ -1098,47 +1156,12 @@ end
 
 function Panel:CreateSelect(row, option)
 	local Theme = self:GetTheme()
-
-	local button = Instance.new("TextButton")
-	button.Size = UDim2.new(0, 140, 0, 34)
-	button.Position = UDim2.new(1, -154, 0.5, -17)
-	button.BackgroundColor3 = Theme.Input
-	button.BorderSizePixel = 0
-	button.Text = ""
-	button.AutoButtonColor = false
-	button.ZIndex = 3
-	button.Parent = row
-	createCorner(button, 8)
-	table.insert(self.State.AccentObjects.DropdownButtons, button)
-	table.insert(self.State.AccentObjects.DropdownStrokes, createStroke(button, Theme.Stroke, 1, 0.45))
-
-	local valueLabel = Instance.new("TextLabel")
-	valueLabel.Size = UDim2.new(1, -26, 1, 0)
-	valueLabel.Position = UDim2.new(0, 10, 0, 0)
-	valueLabel.BackgroundTransparency = 1
-	valueLabel.Text = tostring(self:GetValue(option.Id) or "")
-	valueLabel.TextColor3 = Theme.Text
-	valueLabel.TextSize = 13
-	valueLabel.Font = Enum.Font.Gotham
-	valueLabel.TextXAlignment = Enum.TextXAlignment.Left
-	valueLabel.ZIndex = 4
-	valueLabel.Parent = button
-
-	local arrow = Instance.new("TextLabel")
-	arrow.Size = UDim2.new(0, 16, 1, 0)
-	arrow.Position = UDim2.new(1, -20, 0, 0)
-	arrow.BackgroundTransparency = 1
-	arrow.Text = "v"
-	arrow.TextColor3 = Theme.SubText
-	arrow.TextSize = 11
-	arrow.Font = Enum.Font.GothamBold
-	arrow.ZIndex = 4
-	arrow.Parent = button
+	local button, valueLabel = self:CreateDropdownTrigger(row, tostring(self:GetValue(option.Id) or ""))
 
 	local function openDropdown()
 		self:CloseDropdown()
 
-		local items = resolveOptionItems(option)
+		local items = self:GetOptionItems(option)
 
 		local _, parentForItems = self:CreateDropdownBase(button, #items)
 
@@ -1162,16 +1185,7 @@ function Panel:CreateSelect(row, option)
 		end
 	end
 
-	button.MouseButton1Click:Connect(function()
-		if self.State.OpenDropdown then
-			if self.State.OpenDropdownAnchor == button then
-				self:CloseDropdown()
-				return
-			end
-			self:CloseDropdown()
-		end
-		openDropdown()
-	end)
+	self:BindDropdownToggle(button, openDropdown)
 
 	self:RegisterControl(option.Id, {
 		Update = function(value)
@@ -1188,46 +1202,13 @@ function Panel:CreateMultiSelect(row, option)
 		self.Config.Values[option.Id] = {}
 	end
 
-	local button = Instance.new("TextButton")
-	button.Size = UDim2.new(0, 140, 0, 34)
-	button.Position = UDim2.new(1, -154, 0.5, -17)
-	button.BackgroundColor3 = Theme.Input
-	button.BorderSizePixel = 0
-	button.Text = ""
-	button.AutoButtonColor = false
-	button.ZIndex = 3
-	button.Parent = row
-	createCorner(button, 8)
-	table.insert(self.State.AccentObjects.DropdownButtons, button)
-	table.insert(self.State.AccentObjects.DropdownStrokes, createStroke(button, Theme.Stroke, 1, 0.45))
-
-	local valueLabel = Instance.new("TextLabel")
-	valueLabel.Size = UDim2.new(1, -26, 1, 0)
-	valueLabel.Position = UDim2.new(0, 10, 0, 0)
-	valueLabel.BackgroundTransparency = 1
-	valueLabel.Text = formatMultiSelectLabel(self:GetValue(option.Id), emptyText)
+	local button, valueLabel = self:CreateDropdownTrigger(row, formatMultiSelectLabel(self:GetValue(option.Id), emptyText))
 	valueLabel.TextColor3 = (#self:GetValue(option.Id) == 0) and Theme.SubText or Theme.Text
-	valueLabel.TextSize = 13
-	valueLabel.Font = Enum.Font.Gotham
-	valueLabel.TextXAlignment = Enum.TextXAlignment.Left
-	valueLabel.ZIndex = 4
-	valueLabel.Parent = button
-
-	local arrow = Instance.new("TextLabel")
-	arrow.Size = UDim2.new(0, 16, 1, 0)
-	arrow.Position = UDim2.new(1, -20, 0, 0)
-	arrow.BackgroundTransparency = 1
-	arrow.Text = "v"
-	arrow.TextColor3 = Theme.SubText
-	arrow.TextSize = 11
-	arrow.Font = Enum.Font.GothamBold
-	arrow.ZIndex = 4
-	arrow.Parent = button
 
 	local function openDropdown()
 		self:CloseDropdown()
 
-		local items = resolveOptionItems(option)
+		local items = self:GetOptionItems(option)
 
 		local totalItems = #items + 1
 		local _, parentForItems = self:CreateDropdownBase(button, totalItems)
@@ -1316,16 +1297,7 @@ function Panel:CreateMultiSelect(row, option)
 		refreshAllButtons()
 	end
 
-	button.MouseButton1Click:Connect(function()
-		if self.State.OpenDropdown then
-			if self.State.OpenDropdownAnchor == button then
-				self:CloseDropdown()
-				return
-			end
-			self:CloseDropdown()
-		end
-		openDropdown()
-	end)
+	self:BindDropdownToggle(button, openDropdown)
 
 	self:RegisterControl(option.Id, {
 		Update = function(values)
@@ -1444,32 +1416,18 @@ function Panel:BuildTabs()
 end
 
 function Panel:SetupDragging()
-	AddCleanupItem(self.Runtime, self.Header.InputBegan:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 then
-			self.State.Dragging = true
-			self.State.DragStart = input.Position
-			self.State.StartPos = self.MainFrame.Position
-		end
-	end))
-
-	AddCleanupItem(self.Runtime, self.Header.InputEnded:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 then
-			self.State.Dragging = false
-		end
-	end))
-
-	AddCleanupItem(self.Runtime, self.UserInputService.InputChanged:Connect(function(input)
-		if self.State.Dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-			local delta = input.Position - self.State.DragStart
-			self.MainFrame.Position = UDim2.new(
-				self.State.StartPos.X.Scale,
-				self.State.StartPos.X.Offset + delta.X,
-				self.State.StartPos.Y.Scale,
-				self.State.StartPos.Y.Offset + delta.Y
-			)
+	self:BindDrag(
+		self.Header,
+		function()
+			return self.MainFrame.Position
+		end,
+		function(position)
+			self.MainFrame.Position = position
+		end,
+		function()
 			self:CloseDropdown()
 		end
-	end))
+	)
 end
 
 function Panel:SetupRespawnApply()

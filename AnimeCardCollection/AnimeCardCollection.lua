@@ -177,7 +177,7 @@ return {
 			local Feature = RegisterFeature({
 				Key = "AutoBuy",
 				Tab = "Card",
-				Section = "Buying"
+				Section = "Buying",
 				Order = 10,
 
 				Defaults = {
@@ -356,7 +356,7 @@ return {
 			local Feature = RegisterFeature({
 				Key = "AutoGrade",
 				Tab = "Card",
-				Section = "Grading"
+				Section = "Grading",
 				Order = 15,
 
 				Defaults = {

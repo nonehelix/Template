@@ -370,12 +370,10 @@ return {
 					CurrentIndex = 1,
 					TargetMinRank = nil,
 					ReplicatedData = nil,
-					-- Server sync: track pending requests
-					PendingRequests = {},
-					-- Configurable timing (slower = more reliable)
-					RequestDelay = 0.3,
-					MaxPending = 3,
-					RetryDelay = 0.5,
+					-- Timing configuration
+					RequestTimeout = 1.5, -- Max time to wait for server response
+					PollInterval = 0.05, -- How often to check for grade changes
+					DelayBetweenCards = 0.1, -- Small delay after success before next card
 				},
 
 				Options = {
@@ -568,30 +566,7 @@ return {
 				return queue
 			end
 
-			-- Clean up old pending requests (server has likely processed them)
-			function Feature:PrunePendingRequests()
-				local now = tick()
-				local toRemove = {}
-				for cardId, timestamp in pairs(self.State.PendingRequests) do
-					-- If pending for more than 2 seconds, assume server processed it
-					if now - timestamp > 2 then
-						toRemove[#toRemove + 1] = cardId
-					end
-				end
-				for _, cardId in ipairs(toRemove) do
-					self.State.PendingRequests[cardId] = nil
-				end
-			end
-
-			function Feature:GetPendingCount()
-				local count = 0
-				for _ in pairs(self.State.PendingRequests) do
-					count = count + 1
-				end
-				return count
-			end
-
-			-- Simple round robin: get next card that needs grading
+			-- Get next card that needs grading (simple round robin)
 			function Feature:GetNextCardToRoll()
 				local queue = self.State.Queue
 				local count = #queue
@@ -617,11 +592,6 @@ return {
 						continue
 					end
 
-					-- Skip if request is pending
-					if self.State.PendingRequests[cardId] then
-						continue
-					end
-
 					-- Found a valid card - update index for next call
 					self.State.CurrentIndex = (idx % count) + 1
 					return cardId
@@ -630,10 +600,28 @@ return {
 				return nil
 			end
 
-			function Feature:SendGradeRoll(cardId)
-				-- Mark as pending BEFORE firing to server
-				self.State.PendingRequests[cardId] = tick()
+			-- Wait for a card's grade to change (indicates server processed request)
+			function Feature:WaitForGradeChange(cardId, previousGrade, timeout)
+				local startTime = tick()
+				timeout = timeout or self.State.RequestTimeout
 
+				while tick() - startTime < timeout do
+					if not self.State.Grading then
+						return false, "cancelled"
+					end
+
+					local currentGrade = self:GetCardCurrentGrade(cardId)
+					if currentGrade ~= previousGrade then
+						return true, currentGrade
+					end
+
+					task.wait(self.State.PollInterval)
+				end
+
+				return false, "timeout"
+			end
+
+			function Feature:SendGradeRoll(cardId)
 				if self:CurrentCardNeedsConfirm(cardId) then
 					GradeRemote:FireServer("Roll", cardId, nil, true)
 				else
@@ -649,25 +637,30 @@ return {
 						break
 					end
 
-					-- Clean up old pending requests
-					self:PrunePendingRequests()
-
-					-- Check if we have too many pending requests
-					local pendingCount = self:GetPendingCount()
-					if pendingCount >= self.State.MaxPending then
-						-- Wait for server to catch up
-						task.wait(self.State.RetryDelay)
-						continue
-					end
-
 					-- Get next card to roll
-					local nextCard = self:GetNextCardToRoll()
-					if nextCard then
-						self:SendGradeRoll(nextCard)
+					local cardId = self:GetNextCardToRoll()
+					if not cardId then
+						-- No more cards need grading
+						self:Stop()
+						break
 					end
 
-					-- Always wait between iterations
-					task.wait(self.State.RequestDelay)
+					-- Get current grade before rolling
+					local previousGrade = self:GetCardCurrentGrade(cardId)
+
+					-- Send the roll request
+					self:SendGradeRoll(cardId)
+
+					-- Wait for server to process (grade will change)
+					local success, result = self:WaitForGradeChange(cardId, previousGrade)
+
+					if success then
+						-- Grade changed successfully, small delay before next card
+						task.wait(self.State.DelayBetweenCards)
+					else
+						-- Timeout or cancelled - continue to next card
+						task.wait(0.1)
+					end
 				end
 			end
 
@@ -715,7 +708,6 @@ return {
 				self.State.Queue = queue
 				self.State.CurrentIndex = 1
 				self.State.TargetMinRank = targetMinRank
-				self.State.PendingRequests = {}
 
 				task.spawn(function()
 					self:Loop()
@@ -727,7 +719,6 @@ return {
 				self.State.Queue = {}
 				self.State.CurrentIndex = 1
 				self.State.TargetMinRank = nil
-				self.State.PendingRequests = {}
 			end
 
 			function Feature:GetHandlers()

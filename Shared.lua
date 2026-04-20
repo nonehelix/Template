@@ -50,6 +50,16 @@ local function copySimpleValue(value)
 	return copy
 end
 
+local function arrayContains(arr, target)
+	for _, value in ipairs(arr or {}) do
+		if tostring(value) == tostring(target) then
+			return true
+		end
+	end
+
+	return false
+end
+
 local function extractPlaceIdFromLink(link)
 	if type(link) ~= "string" then return nil end
 	local id = string.match(link, "/games/(%d+)")
@@ -306,6 +316,16 @@ local function BuildFeatureDefaults()
 		end
 	end
 	return values
+end
+
+local function ApplyFeatureDefaults(values)
+	for _, feature in ipairs(FeatureList) do
+		if feature.ApplyDefaults then
+			pcall(function()
+				feature:ApplyDefaults(values)
+			end)
+		end
+	end
 end
 
 local FeatureContext = {}
@@ -722,10 +742,6 @@ do
 		}
 	})
 
-	function Feature:Init(context)
-		self.Context = context
-	end
-
 	function Feature:GetHandlers()
 		return {
 			ResetCharacter = function()
@@ -739,7 +755,6 @@ do
 		}
 	end
 
-	function Feature:Cleanup() end
 end
 
 --==================================================
@@ -764,10 +779,6 @@ do
 		}
 	})
 
-	function Feature:Init(context)
-		self.Context = context
-	end
-
 	function Feature:GetHandlers()
 		return {
 			UIAccent = function(value, _, panelRef)
@@ -786,7 +797,6 @@ do
 		}
 	end
 
-	function Feature:Cleanup() end
 end
 
 --==================================================
@@ -820,7 +830,6 @@ do
 	})
 
 	function Feature:Init(context)
-		self.Context = context
 		self.State.virtualUser = game:GetService("VirtualUser")
 		print("[AntiAFK] Feature initialized")
 	end
@@ -936,24 +945,11 @@ do
 		}
 	})
 
-	function Feature:Init(context)
-		self.Context = context
-	end
-
 	function Feature:GetHandlers()
 		return {
-			Minimized = function() end,
-
 			ResetDefaults = function(_, values, panelRef)
 				local resetValues = BuildFeatureDefaults()
-
-				for _, feature in ipairs(FeatureList) do
-					if feature.ApplyDefaults then
-						pcall(function()
-							feature:ApplyDefaults(resetValues)
-						end)
-					end
-				end
+				ApplyFeatureDefaults(resetValues)
 
 				for optionId, value in pairs(resetValues) do
 					panelRef:SetValue(optionId, copySimpleValue(value), true)
@@ -968,22 +964,11 @@ do
 		}
 	end
 
-	function Feature:Cleanup() end
 end
 
 --==================================================
 -- CONFIG SANITIZING
 --==================================================
-
-local function ApplyFeatureDefaults(values)
-	for _, feature in ipairs(FeatureList) do
-		if feature.ApplyDefaults then
-			pcall(function()
-				feature:ApplyDefaults(values)
-			end)
-		end
-	end
-end
 
 local function resolveOptionItems(option)
 	local items = option and option.Items
@@ -1212,6 +1197,7 @@ local function CompilePanelConfig(baseConfig)
 
 	for _, feature in ipairs(FeatureList) do
 		table.insert(config.Features, feature)
+		feature.Context = FeatureContext
 
 		if feature.Init then
 			feature:Init(FeatureContext)
@@ -1287,6 +1273,8 @@ Features.FeatureList = FeatureList
 
 Features.copySimpleValue = copySimpleValue
 Features.roundTo2 = roundTo2
+Features.arrayContains = arrayContains
 Features.ExtractPlaceIdFromLink = extractPlaceIdFromLink
+Features.ResolveOptionItems = resolveOptionItems
 
 return Features

@@ -6,6 +6,7 @@ return {
 
 		local ReplicatedStorage = game:GetService("ReplicatedStorage")
 		local ReplicatedFirst = game:GetService("ReplicatedFirst")
+
 		local Players = game:GetService("Players")
 
 		local player = Players.LocalPlayer
@@ -41,9 +42,75 @@ return {
 		)
 
 		--==================================================
+		-- LOCAL REPLICATED DATA RESOLVER
+		--==================================================
+		local CachedReplicatedData = nil
+
+		local function tryGetField(container, key)
+			if type(container) == "table" then
+				return container[key]
+			end
+			return nil
+		end
+
+		local function resolveReplicatedData()
+			if CachedReplicatedData and type(CachedReplicatedData.GetData) == "function" then
+				return CachedReplicatedData
+			end
+
+			local candidates = {
+				tryGetField(Shared, "ReplicatedData"),
+				tryGetField(tryGetField(Shared, "Game"), "ReplicatedData"),
+				tryGetField(tryGetField(Shared, "Framework"), "ReplicatedData"),
+				tryGetField(tryGetField(Shared, "Client"), "ReplicatedData"),
+				rawget(_G, "ReplicatedData"),
+			}
+
+			local globalEnv = getgenv and getgenv()
+			if type(globalEnv) == "table" then
+				table.insert(candidates, globalEnv.ReplicatedData)
+			end
+
+			for _, candidate in ipairs(candidates) do
+				if type(candidate) == "table" and type(candidate.GetData) == "function" then
+					CachedReplicatedData = candidate
+					print("[AutoGrade] ReplicatedData resolved:", tostring(candidate))
+					return candidate
+				end
+			end
+
+			warn("[AutoGrade] ReplicatedData resolver could not find a valid object")
+			return nil
+		end
+
+		--==================================================
 		-- HELPERS
 		--==================================================
-		local function arrayContains(arr, target)
+		local function normalizePackName(name)
+			name = tostring(name or "")
+			name = name:gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
+			name = name:gsub("%s+[Pp]ack$", "")
+			return name
+		end
+
+		local function buildRemotePackId(packName, mutation)
+			local base = normalizePackName(packName)
+			if base == "" then
+				return nil
+			end
+
+			if mutation == "Regular" or not mutation or mutation == "" then
+				return base
+			end
+
+			return base .. "-" .. tostring(mutation)
+		end
+
+		local function parseStockAmount(text)
+			return tonumber(string.match(tostring(text or ""), "%d+")) or 0
+		end
+
+		local arrayContains = Shared.arrayContains or function(arr, target)
 			for _, v in ipairs(arr or {}) do
 				if tostring(v) == tostring(target) then
 					return true
@@ -59,34 +126,10 @@ return {
 			end
 
 			for _, v in ipairs(values) do
-				result[#result + 1] = tostring(v)
+				table.insert(result, tostring(v))
 			end
 
 			return result
-		end
-
-		local function normalizePackName(name)
-			name = tostring(name or "")
-			name = name:gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
-			name = name:gsub("%s+[Pp]ack$", "")
-			return name
-		end
-
-		local function buildRemotePackId(packName, mutation)
-			local base = normalizePackName(packName)
-			if base == "" then
-				return nil
-			end
-
-			if mutation == "Regular" or mutation == nil or mutation == "" then
-				return base
-			end
-
-			return base .. "-" .. tostring(mutation)
-		end
-
-		local function parseStockAmount(text)
-			return tonumber(string.match(tostring(text or ""), "%d+")) or 0
 		end
 
 		local function getPackItems()
@@ -94,7 +137,7 @@ return {
 
 			if CardConfig and CardConfig.List and CardConfig.List.Packs then
 				for _, packName in pairs(CardConfig.List.Packs) do
-					items[#items + 1] = tostring(packName)
+					table.insert(items, tostring(packName))
 				end
 			end
 
@@ -106,7 +149,7 @@ return {
 
 			if CardConfig and CardConfig.List and CardConfig.List.Mutations then
 				for _, mut in pairs(CardConfig.List.Mutations) do
-					items[#items + 1] = tostring(mut)
+					table.insert(items, tostring(mut))
 				end
 			end
 
@@ -118,7 +161,7 @@ return {
 
 			if GradesConfig and GradesConfig.List then
 				for _, grade in ipairs(GradesConfig.List) do
-					items[#items + 1] = tostring(grade)
+					table.insert(items, grade)
 				end
 			else
 				items = {"F", "E", "D", "C", "B", "A", "S", "S+", "SS", "SR", "UR"}
@@ -138,7 +181,7 @@ return {
 							cardName = tostring(cardName)
 							if not seen[cardName] then
 								seen[cardName] = true
-								cardNames[#cardNames + 1] = cardName
+								table.insert(cardNames, cardName)
 							end
 						end
 					end
@@ -149,7 +192,7 @@ return {
 
 			local items = {"All"}
 			for _, cardName in ipairs(cardNames) do
-				items[#items + 1] = cardName
+				table.insert(items, cardName)
 			end
 
 			return items
@@ -348,7 +391,7 @@ return {
 			end
 		end
 
-		--==================================================
+				--==================================================
 		-- FEATURE: AUTO GRADE
 		--==================================================
 		do
@@ -356,13 +399,13 @@ return {
 				Key = "AutoGrade",
 				Tab = "Card",
 				Order = 15,
-		
+
 				Defaults = {
 					AutoGradeEnabled = false,
 					AutoGradeCards = {},
 					AutoGradeTarget = {},
 				},
-		
+
 				State = {
 					Grading = false,
 					PanelRef = nil,
@@ -370,9 +413,10 @@ return {
 					QueueIndex = 0,
 					TargetDone = {},
 					TargetMinRank = nil,
+					RequestDelay = 0.01,
 					ReplicatedData = nil,
 				},
-		
+
 				Options = {
 					{
 						Id = "AutoGradeEnabled",
@@ -398,274 +442,320 @@ return {
 					},
 				}
 			})
-		
-			--========================
-			-- GRADE ORDER
-			--========================
+
 			local gradeOrder = {}
 			if GradesConfig and GradesConfig.List then
 				for i, g in ipairs(GradesConfig.List) do
 					gradeOrder[tostring(g)] = i
 				end
 			end
-		
-			--========================
-			-- REPLICATED DATA
-			--========================
+
 			local function requireReplicatedDataModule()
-				local module = ReplicatedFirst:FindFirstChild("ReplicatedData")
-				if not module then
+				local replicatedDataModule = ReplicatedFirst:FindFirstChild("ReplicatedData")
+				if not replicatedDataModule then
 					warn("[AutoGrade] Missing ReplicatedFirst.ReplicatedData")
 					return nil
 				end
-		
-				local ok, result = pcall(require, module)
+
+				local ok, result = pcall(require, replicatedDataModule)
 				if not ok then
-					warn("[AutoGrade] Failed to require ReplicatedData:", result)
+					warn("[AutoGrade] Failed to require ReplicatedData:", tostring(result))
 					return nil
 				end
-		
+
 				return result
 			end
-		
-			function Feature:GetReplicatedData()
+
+			function Feature:GetReplicatedData(timeout)
 				if self.State.ReplicatedData and type(self.State.ReplicatedData.GetData) == "function" then
 					return self.State.ReplicatedData
 				end
-		
-				local data = requireReplicatedDataModule()
-				if data and type(data.GetData) == "function" then
-					self.State.ReplicatedData = data
-					return data
+
+				timeout = timeout or 10
+
+				local replicatedData = requireReplicatedDataModule()
+				if not replicatedData then
+					return nil
 				end
-		
+
+				local startTime = tick()
+				while tick() - startTime < timeout do
+					if type(replicatedData.GetData) == "function" then
+						self.State.ReplicatedData = replicatedData
+						return replicatedData
+					end
+					task.wait(0.1)
+				end
+
+				warn("[AutoGrade] ReplicatedData loaded but GetData never became available")
 				return nil
 			end
-		
+
 			function Feature:GetOwnedCards()
-				local data = self:GetReplicatedData()
-				if not data then return {} end
-		
+				local replicatedData = self:GetReplicatedData()
+				if not replicatedData then
+					return {}
+				end
+
 				local ok, cards = pcall(function()
-					return data.GetData("Cards")
+					return replicatedData.GetData("Cards")
 				end)
-		
-				return (ok and type(cards) == "table") and cards or {}
+
+				if not ok then
+					warn("[AutoGrade] GetData('Cards') failed:", tostring(cards))
+					return {}
+				end
+
+				if type(cards) ~= "table" then
+					warn("[AutoGrade] Cards data is not a table")
+					return {}
+				end
+
+				return cards
 			end
-		
+
 			function Feature:GetServerAutoGrades()
-				local data = self:GetReplicatedData()
-				if not data then return {} end
-		
-				local ok, result = pcall(function()
-					return data.GetData("AutoGrades")
+				local replicatedData = self:GetReplicatedData()
+				if not replicatedData then
+					return {}
+				end
+
+				local ok, autoGrades = pcall(function()
+					return replicatedData.GetData("AutoGrades")
 				end)
-		
-				return (ok and type(result) == "table") and result or {}
+
+				if not ok or type(autoGrades) ~= "table" then
+					return {}
+				end
+
+				return autoGrades
 			end
-		
-			--========================
-			-- CORE HELPERS
-			--========================
-			function Feature:GetGradeRank(g)
-				return gradeOrder[tostring(g)] or 0
+
+			function Feature:GetGradeRank(gradeName)
+				if not gradeName then
+					return 0
+				end
+				return gradeOrder[tostring(gradeName)] or 0
 			end
-		
+
 			function Feature:GetTargetMinRank(selectedGrades)
-				local minRank
-		
-				for _, g in ipairs(selectedGrades) do
-					local r = self:GetGradeRank(g)
-					if r > 0 and (not minRank or r < minRank) then
-						minRank = r
-					end
-				end
-		
-				return minRank
-			end
-		
-			function Feature:GetCardData(cardId)
-				return self:GetOwnedCards()[tostring(cardId)]
-			end
-		
-			function Feature:GetCardGrade(cardId)
-				local d = self:GetCardData(cardId)
-				return d and d.Grade
-			end
-		
-			function Feature:CardMeetsOrBeatsTarget(cardId, targetMinRank)
-				return self:GetGradeRank(self:GetCardGrade(cardId)) >= (targetMinRank or math.huge)
-			end
-		
-			function Feature:NeedsConfirm(cardId)
-				local grade = self:GetCardGrade(cardId)
-				return grade and arrayContains(self:GetServerAutoGrades(), tostring(grade))
-			end
-		
-			--========================
-			-- ROUND ROBIN (SIMPLE)
-			--========================
-			function Feature:GetNextCardToRoll()
-				local count = #self.State.Queue
-				if count == 0 then return nil end
-		
-				local owned = self:GetOwnedCards()
-		
-				for _ = 1, count do
-					self.State.QueueIndex += 1
-					if self.State.QueueIndex > count then
-						self.State.QueueIndex = 1
-					end
-		
-					local id = self.State.Queue[self.State.QueueIndex]
-		
-					if id and owned[id] and not self.State.TargetDone[id] then
-						return id
-					end
-				end
-		
-				return nil
-			end
-		
-			--========================
-			-- SYNC WITH GAME (KEY FIX)
-			--========================
-			function Feature:GetSnapshot(cardId)
-				local d = self:GetCardData(cardId)
-				return d and tostring(d.Grade or "")
-			end
-		
-			function Feature:WaitForUpdate(cardId, before)
-				local start = tick()
-		
-				while tick() - start < 2 do
-					local now = self:GetSnapshot(cardId)
-					if now ~= before then
-						return true
-					end
-					task.wait(0.05)
-				end
-		
-				return false
-			end
-		
-			function Feature:SendRoll(cardId)
-				local before = self:GetSnapshot(cardId)
-		
-				if self:NeedsConfirm(cardId) then
-					GradeRemote:FireServer("Roll", cardId, nil, true)
-				else
-					GradeRemote:FireServer("Roll", cardId)
-				end
-		
-				self:WaitForUpdate(cardId, before)
-			end
-		
-			--========================
-			-- QUEUE BUILD
-			--========================
-			function Feature:BuildQueue(selected)
-				local owned = self:GetOwnedCards()
-				local q = {}
-		
-				if arrayContains(selected, "All") then
-					for id in pairs(owned) do
-						q[#q+1] = tostring(id)
-					end
-					table.sort(q)
-				else
-					local seen = {}
-					for _, id in ipairs(selected) do
-						id = tostring(id)
-						if owned[id] and not seen[id] then
-							seen[id] = true
-							q[#q+1] = id
+				local minRank = nil
+
+				for _, gradeName in ipairs(selectedGrades or {}) do
+					local rank = self:GetGradeRank(gradeName)
+					if rank > 0 then
+						if minRank == nil or rank < minRank then
+							minRank = rank
 						end
 					end
 				end
-		
-				return q
+
+				return minRank
 			end
-		
-			function Feature:MarkDone()
-				for _, id in ipairs(self.State.Queue) do
-					if self:CardMeetsOrBeatsTarget(id, self.State.TargetMinRank) then
-						self.State.TargetDone[id] = true
+
+			function Feature:GetCardCurrentGrade(cardId)
+				local ownedCards = self:GetOwnedCards()
+				local cardData = ownedCards[tostring(cardId)]
+
+				if type(cardData) ~= "table" then
+					return nil
+				end
+
+				return cardData.Grade
+			end
+
+			function Feature:CardMeetsOrBeatsTarget(cardId, targetMinRank)
+				local currentRank = self:GetGradeRank(self:GetCardCurrentGrade(cardId))
+				return currentRank >= (targetMinRank or math.huge)
+			end
+
+			function Feature:CurrentCardNeedsConfirm(cardId)
+				local currentGrade = self:GetCardCurrentGrade(cardId)
+				if not currentGrade then
+					return false
+				end
+
+				return arrayContains(self:GetServerAutoGrades(), tostring(currentGrade))
+			end
+
+			function Feature:BuildQueue(selectedCards)
+				local ownedCards = self:GetOwnedCards()
+				if type(ownedCards) ~= "table" then
+					return {}
+				end
+
+				local queue = {}
+
+				if arrayContains(selectedCards, "All") then
+					for cardId in pairs(ownedCards) do
+						table.insert(queue, tostring(cardId))
+					end
+
+					table.sort(queue, function(a, b)
+						return tostring(a) < tostring(b)
+					end)
+				else
+					local seen = {}
+
+					for _, cardId in ipairs(selectedCards) do
+						cardId = tostring(cardId)
+						if cardId ~= "All" and ownedCards[cardId] ~= nil and not seen[cardId] then
+							seen[cardId] = true
+							table.insert(queue, cardId)
+						end
+					end
+				end
+
+				return queue
+			end
+
+			function Feature:MarkFinishedCards()
+				if not self.State.TargetMinRank then
+					return
+				end
+
+				local ownedCards = self:GetOwnedCards()
+
+				for _, cardId in ipairs(self.State.Queue) do
+					local cardData = ownedCards[cardId]
+					if not cardData then
+						self.State.TargetDone[cardId] = true
+					elseif self:CardMeetsOrBeatsTarget(cardId, self.State.TargetMinRank) then
+						self.State.TargetDone[cardId] = true
 					end
 				end
 			end
-		
-			function Feature:AllDone()
-				for _, id in ipairs(self.State.Queue) do
-					if not self.State.TargetDone[id] then
+
+			function Feature:IsCardDone(cardId)
+				return self.State.TargetDone[cardId] == true
+			end
+
+			function Feature:AllCardsDone()
+				for _, cardId in ipairs(self.State.Queue) do
+					if not self:IsCardDone(cardId) then
 						return false
 					end
 				end
 				return true
 			end
-		
-			--========================
-			-- LOOP
-			--========================
-			function Feature:Loop()
-				while self.State.Grading do
-					local values = self.State.PanelRef.Config.Values
-					if not values or not values.AutoGradeEnabled then break end
-		
-					self:MarkDone()
-		
-					if self:AllDone() then break end
-		
-					local id = self:GetNextCardToRoll()
-		
-					if id then
-						if not self:CardMeetsOrBeatsTarget(id, self.State.TargetMinRank) then
-							self:SendRoll(id)
-						else
-							self.State.TargetDone[id] = true
-						end
-					else
-						task.wait(0.1)
+
+			function Feature:GetNextCardToRoll()
+				local count = #self.State.Queue
+				if count == 0 then
+					return nil
+				end
+
+				local ownedCards = self:GetOwnedCards()
+
+				for _ = 1, count do
+					self.State.QueueIndex += 1
+					if self.State.QueueIndex > count then
+						self.State.QueueIndex = 1
+					end
+
+					local cardId = self.State.Queue[self.State.QueueIndex]
+					if cardId and not self:IsCardDone(cardId) and ownedCards[cardId] ~= nil then
+						return cardId
 					end
 				end
-		
-				self:Stop()
+
+				return nil
 			end
-		
-			--========================
-			-- START / STOP
-			--========================
+
+			function Feature:SendGradeRoll(cardId)
+				if self:CurrentCardNeedsConfirm(cardId) then
+					GradeRemote:FireServer("Roll", cardId, nil, true)
+				else
+					GradeRemote:FireServer("Roll", cardId)
+				end
+			end
+
+			function Feature:Loop()
+				while self.State.Grading do
+					local values = self.State.PanelRef and self.State.PanelRef.Config and self.State.PanelRef.Config.Values
+					if not values or not values.AutoGradeEnabled then
+						self:Stop()
+						break
+					end
+
+					self:MarkFinishedCards()
+
+					if self:AllCardsDone() then
+						self:Stop()
+						break
+					end
+
+					local nextCard = self:GetNextCardToRoll()
+					if not nextCard then
+						self:Stop()
+						break
+					end
+
+					if self:CardMeetsOrBeatsTarget(nextCard, self.State.TargetMinRank) then
+						self.State.TargetDone[nextCard] = true
+					else
+						self:SendGradeRoll(nextCard)
+					end
+
+					task.wait(self.State.RequestDelay)
+				end
+			end
+
 			function Feature:Start(panelRef)
 				self.State.PanelRef = panelRef
-		
-				local values = panelRef.Config.Values
-				if not values then return self:Stop() end
-		
-				local cards = normalizeSelectionArray(values.AutoGradeCards)
-				local grades = normalizeSelectionArray(values.AutoGradeTarget)
-		
-				if #cards == 0 or #grades == 0 then return self:Stop() end
-				if not self:GetReplicatedData() then return self:Stop() end
-		
-				local minRank = self:GetTargetMinRank(grades)
-				if not minRank then return self:Stop() end
-		
-				local queue = self:BuildQueue(cards)
-				if #queue == 0 then return self:Stop() end
-		
+
+				local values = panelRef and panelRef.Config and panelRef.Config.Values
+				if not values then
+					self:Stop()
+					return
+				end
+
+				local selectedCards = normalizeSelectionArray(values.AutoGradeCards)
+				local selectedGrades = normalizeSelectionArray(values.AutoGradeTarget)
+
+				if #selectedCards == 0 or #selectedGrades == 0 then
+					self:Stop()
+					return
+				end
+
+				local replicatedData = self:GetReplicatedData()
+				if not replicatedData then
+					self:Stop()
+					return
+				end
+
+				local targetMinRank = self:GetTargetMinRank(selectedGrades)
+				if not targetMinRank then
+					self:Stop()
+					return
+				end
+
+				local queue = self:BuildQueue(selectedCards)
+				if #queue == 0 then
+					self:Stop()
+					return
+				end
+
 				self:Stop()
-		
+
 				self.State.Grading = true
 				self.State.Queue = queue
 				self.State.QueueIndex = 0
 				self.State.TargetDone = {}
-				self.State.TargetMinRank = minRank
-		
+				self.State.TargetMinRank = targetMinRank
+
+				self:MarkFinishedCards()
+
+				if self:AllCardsDone() then
+					self:Stop()
+					return
+				end
+
 				task.spawn(function()
 					self:Loop()
 				end)
 			end
-		
+
 			function Feature:Stop()
 				self.State.Grading = false
 				self.State.Queue = {}
@@ -673,24 +763,32 @@ return {
 				self.State.TargetDone = {}
 				self.State.TargetMinRank = nil
 			end
-		
+
 			function Feature:GetHandlers()
 				return {
-					AutoGradeEnabled = function(v, _, panel)
-						self.State.PanelRef = panel
-						if v then self:Start(panel) else self:Stop() end
+					AutoGradeEnabled = function(value, _, panelRef)
+						self.State.PanelRef = panelRef
+						if value then
+							self:Start(panelRef)
+						else
+							self:Stop()
+						end
 					end,
-					AutoGradeCards = function(_, values, panel)
-						self.State.PanelRef = panel
-						if values.AutoGradeEnabled then self:Start(panel) end
+					AutoGradeCards = function(_, values, panelRef)
+						self.State.PanelRef = panelRef
+						if values.AutoGradeEnabled then
+							self:Start(panelRef)
+						end
 					end,
-					AutoGradeTarget = function(_, values, panel)
-						self.State.PanelRef = panel
-						if values.AutoGradeEnabled then self:Start(panel) end
+					AutoGradeTarget = function(_, values, panelRef)
+						self.State.PanelRef = panelRef
+						if values.AutoGradeEnabled then
+							self:Start(panelRef)
+						end
 					end,
 				}
 			end
-		
+
 			function Feature:Cleanup()
 				self:Stop()
 				self.State.PanelRef = nil
@@ -785,14 +883,14 @@ return {
 						end
 
 						if packName ~= "" then
-							stockList[#stockList + 1] = {
+							table.insert(stockList, {
 								PackName = packName,
 								NormalizedPackName = normalizePackName(packName),
 								Mutation = mutation,
 								RemoteId = buildRemotePackId(packName, mutation),
 								Amount = amount,
 								Slot = i
-							}
+							})
 						end
 					end
 				end
@@ -815,7 +913,7 @@ return {
 
 				local selectedNormalizedPacks = {}
 				for _, p in ipairs(selectedPacks) do
-					selectedNormalizedPacks[#selectedNormalizedPacks + 1] = normalizePackName(p)
+					table.insert(selectedNormalizedPacks, normalizePackName(p))
 				end
 
 				local marketStock = self:GetMarketStock()
@@ -831,7 +929,7 @@ return {
 
 					if packOk and mutationOk and item.RemoteId and item.Amount > 0 then
 						for _ = 1, item.Amount do
-							buyQueue[#buyQueue + 1] = item.RemoteId
+							table.insert(buyQueue, item.RemoteId)
 						end
 					end
 				end

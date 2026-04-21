@@ -3,16 +3,12 @@ return {
 		local Workspace = Shared.Workspace
 		local RegisterFeature = Shared.RegisterFeature
 		local RegisterTabs = Shared.RegisterTabs
-		local debugLog = type(Shared.DebugLog) == "function" and function(message, level)
-			Shared.DebugLog("AnimeCardCollection", message, level)
-		end or function() end
 
 		local ReplicatedStorage = game:GetService("ReplicatedStorage")
 		local ReplicatedFirst = game:GetService("ReplicatedFirst")
 		local Players = game:GetService("Players")
 
 		local player = Players.LocalPlayer
-		debugLog("Load start")
 
 		--==================================================
 		-- TABS
@@ -21,7 +17,6 @@ return {
 			{Name = "Card", Order = 20},
 			{Name = "Shop", Order = 25},
 		})
-		debugLog("Registered tabs: Card, Shop")
 
 		--==================================================
 		-- GAME REFERENCES
@@ -44,7 +39,6 @@ return {
 				:WaitForChild("Core")
 				:WaitForChild("Grades")
 		)
-		debugLog("Required CardConfig and Grades")
 
 		--==================================================
 		-- HELPERS
@@ -376,7 +370,6 @@ return {
 				self.State.PackMetadata = setmetatable({}, {__mode = "k"})
 			end
 		end
-		debugLog("Registered feature: AutoBuy")
 
 		--==================================================
 		-- FEATURE: AUTO GRADE
@@ -754,7 +747,6 @@ return {
 				self.State.ReplicatedData = nil
 			end
 		end
-		debugLog("Registered feature: AutoGrade")
 
 		--==================================================
 		-- FEATURE: AUTO BUY MARKET
@@ -954,7 +946,5 @@ return {
 				self.State.PanelRef = nil
 			end
 		end
-		debugLog("Registered feature: AutoBuyMarket")
-		debugLog("Load complete. FeatureList size = " .. tostring(type(Shared.FeatureList) == "table" and #Shared.FeatureList or "unknown"))
 	end
 }

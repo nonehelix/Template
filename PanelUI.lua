@@ -154,19 +154,6 @@ local function isPointInsideGuiObject(guiObject, point)
 		point.Y <= absPos.Y + absSize.Y
 end
 
-local function formatColor3(color)
-	if typeof(color) ~= "Color3" then
-		return tostring(color)
-	end
-
-	return string.format(
-		"(%d,%d,%d)",
-		math.floor(color.R * 255 + 0.5),
-		math.floor(color.G * 255 + 0.5),
-		math.floor(color.B * 255 + 0.5)
-	)
-end
-
 local function NewCleanupBag()
 	return {Items = {}}
 end
@@ -294,23 +281,6 @@ function Panel:GetOptionItems(option)
 	end
 
 	return {}
-end
-
-function Panel:LogToggleVisual(optionId, state, button, fill)
-	if not (self.Shared and self.Shared.DebugToggleColors and type(self.Shared.DebugLog) == "function") then
-		return
-	end
-
-	self.Shared.DebugLog(
-		"PanelUI",
-		string.format(
-			"Toggle %s => %s, track=%s, knob=%s",
-			tostring(optionId),
-			state and "enabled" or "disabled",
-			formatColor3(button and button.BackgroundColor3),
-			formatColor3(fill and fill.BackgroundColor3)
-		)
-	)
 end
 
 function Panel:BindDrag(handle, getPosition, setPosition, onMove)
@@ -1031,8 +1001,6 @@ function Panel:CreateToggle(row, option)
 			stateLabel.Text = "Disabled"
 			stateLabel.TextColor3 = currentTheme.SubText
 		end
-
-		self:LogToggleVisual(option.Id, state, button, fill)
 	end
 
 	updateVisual(self:GetValue(option.Id))
@@ -1507,6 +1475,8 @@ function Panel:Init()
 	else
 		self:Restore(true)
 	end
+
+	print("Panel loaded succesfully")
 end
 
 return Panel

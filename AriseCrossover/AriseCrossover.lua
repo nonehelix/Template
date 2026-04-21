@@ -23,8 +23,10 @@ return {
 
 		local function setAutoAttack(enabled)
 			local settings = getSettings()
-			if not settings then return end
-			settings:SetAttribute("AutoAttack", enabled == true)
+			if settings then settings:SetAttribute("AutoAttack", enabled == true) end
+
+			local passes = getPasses()
+			if passes then passes:SetAttribute("AutoAttack", enabled == true) end
 		end
 
 		local function setAutoClick(enabled)
@@ -36,34 +38,6 @@ return {
 		end
 
 		--==================================================
-		-- FEATURE: AUTO ATTACK
-		--==================================================
-		do
-			local Feature = RegisterFeature({
-				Key = "AutoAttack",
-				Tab = "Combat",
-				Section = "Attack",
-				Order = 10,
-
-				Defaults = {
-					AutoAttack = false,
-				},
-
-				Options = {
-					{ Id = "AutoAttack", Type = "toggle", Label = "Auto Attack", Description = "Auto attacks enemies" },
-				}
-			})
-
-			function Feature:GetHandlers()
-				return {
-					AutoAttack = function(value)
-						setAutoAttack(value)
-					end,
-				}
-			end
-		end
-
-		--==================================================
 		-- FEATURE: AUTO CLICK
 		--==================================================
 		do
@@ -71,7 +45,7 @@ return {
 				Key = "AutoClick",
 				Tab = "Combat",
 				Section = "Click",
-				Order = 20,
+				Order = 10,
 
 				Defaults = {
 					AutoClick = false,
@@ -142,6 +116,34 @@ return {
 
 			function Feature:Cleanup()
 				self:Stop()
+			end
+		end
+
+		--==================================================
+		-- FEATURE: AUTO ATTACK
+		--==================================================
+		do
+			local Feature = RegisterFeature({
+				Key = "AutoAttack",
+				Tab = "Combat",
+				Section = "Attack",
+				Order = 20,
+
+				Defaults = {
+					AutoAttack = false,
+				},
+
+				Options = {
+					{ Id = "AutoAttack", Type = "toggle", Label = "Auto Attack", Description = "Auto attacks enemies" },
+				}
+			})
+
+			function Feature:GetHandlers()
+				return {
+					AutoAttack = function(value)
+						setAutoAttack(value)
+					end,
+				}
 			end
 		end
 	end

@@ -35,16 +35,6 @@ local function extractPlaceIdFromLink(link)
 	return nil
 end
 
-local function getDebugLog(Shared)
-	if type(Shared) == "table" and type(Shared.DebugLog) == "function" then
-		return function(message, level)
-			Shared.DebugLog("GameRegistry", message, level)
-		end
-	end
-
-	return function() end
-end
-
 local function describeChildren(parent)
 	if not parent or not parent.GetChildren then
 		return "(none)"
@@ -61,12 +51,6 @@ local function describeChildren(parent)
 
 	table.sort(names)
 	return table.concat(names, ", ")
-end
-
-local function updateLoadStatus(Shared, status)
-	if type(Shared) == "table" then
-		Shared.LastGameFeatureLoadStatus = status
-	end
 end
 
 local function resolveModule(root, entry)
@@ -125,50 +109,27 @@ function GameRegistry.IsAllowedGame()
 end
 
 function GameRegistry.LoadCurrentGameFeatures(root, Shared)
-	local debugLog = getDebugLog(Shared)
 	local entry = GameRegistry.GetCurrentGameEntry()
 	if not entry then
 		local message = "Current game is not registered for PlaceId " .. tostring(game.PlaceId)
-		debugLog(message, "warn")
-		updateLoadStatus(Shared, {
-			Ok = false,
-			Step = "GetCurrentGameEntry",
-			Reason = message,
-			PlaceId = game.PlaceId,
-		})
+		warn("Game-Specific features failed")
 		return false, "Current game is not registered"
 	end
 
-	debugLog("Matched game '" .. tostring(entry.Name) .. "' for PlaceId " .. tostring(game.PlaceId))
+	print("Detected Game: " .. tostring(entry.Name))
 	Shared.CurrentGameKey = entry.Key
 
 	local moduleScript, resolveError = resolveModule(root, entry)
 	if not moduleScript then
 		local message = "Could not find module for game '" .. tostring(entry.Name) .. "': " .. tostring(resolveError)
-		debugLog(message, "warn")
-		updateLoadStatus(Shared, {
-			Ok = false,
-			Step = "resolveModule",
-			Reason = message,
-			PlaceId = game.PlaceId,
-			GameKey = entry.Key,
-		})
+		warn("Game-Specific features failed")
 		return false, message
 	end
 
-	debugLog("Resolved module script '" .. tostring(moduleScript:GetFullName()) .. "'")
 	local okRequire, gameModuleOrError = pcall(require, moduleScript)
 	if not okRequire then
 		local message = "Failed requiring module for game '" .. tostring(entry.Name) .. "': " .. tostring(gameModuleOrError)
-		debugLog(message, "warn")
-		updateLoadStatus(Shared, {
-			Ok = false,
-			Step = "require",
-			Reason = message,
-			PlaceId = game.PlaceId,
-			GameKey = entry.Key,
-			ModulePath = moduleScript:GetFullName(),
-		})
+		warn("Game-Specific features failed")
 		return false, message
 	end
 
@@ -178,26 +139,11 @@ function GameRegistry.LoadCurrentGameFeatures(root, Shared)
 		end)
 		if not okLoad then
 			local message = "Failed loading game '" .. tostring(entry.Name) .. "': " .. tostring(loadError)
-			debugLog(message, "warn")
-			updateLoadStatus(Shared, {
-				Ok = false,
-				Step = "module.Load",
-				Reason = message,
-				PlaceId = game.PlaceId,
-				GameKey = entry.Key,
-				ModulePath = moduleScript:GetFullName(),
-			})
+			warn("Game-Specific features failed")
 			return false, message
 		end
 
-		debugLog("Game module table loaded successfully for '" .. tostring(entry.Key) .. "'")
-		updateLoadStatus(Shared, {
-			Ok = true,
-			Step = "module.Load",
-			PlaceId = game.PlaceId,
-			GameKey = entry.Key,
-			ModulePath = moduleScript:GetFullName(),
-		})
+		print("Game-Specific features loaded succesfully")
 		return true, entry
 	end
 
@@ -207,39 +153,16 @@ function GameRegistry.LoadCurrentGameFeatures(root, Shared)
 		end)
 		if not okLoad then
 			local message = "Failed loading game '" .. tostring(entry.Name) .. "': " .. tostring(loadError)
-			debugLog(message, "warn")
-			updateLoadStatus(Shared, {
-				Ok = false,
-				Step = "module function",
-				Reason = message,
-				PlaceId = game.PlaceId,
-				GameKey = entry.Key,
-				ModulePath = moduleScript:GetFullName(),
-			})
+			warn("Game-Specific features failed")
 			return false, message
 		end
 
-		debugLog("Game module function loaded successfully for '" .. tostring(entry.Key) .. "'")
-		updateLoadStatus(Shared, {
-			Ok = true,
-			Step = "module function",
-			PlaceId = game.PlaceId,
-			GameKey = entry.Key,
-			ModulePath = moduleScript:GetFullName(),
-		})
+		print("Game-Specific features loaded succesfully")
 		return true, entry
 	end
 
 	local message = "Game module for '" .. tostring(entry.Name) .. "' must return a function or a table with Load"
-	debugLog(message, "warn")
-	updateLoadStatus(Shared, {
-		Ok = false,
-		Step = "module return shape",
-		Reason = message,
-		PlaceId = game.PlaceId,
-		GameKey = entry.Key,
-		ModulePath = moduleScript:GetFullName(),
-	})
+	warn("Game-Specific features failed")
 	return false, message
 end
 

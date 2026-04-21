@@ -27,6 +27,7 @@ return {
 		local CardRemote = Remotes:WaitForChild("Card")
 		local StockRemote = Remotes:WaitForChild("Stock")
 		local GradeRemote = Remotes:WaitForChild("Grade")
+		local PotionRemote = Remotes:WaitForChild("Potion")
 
 		local CardConfig = require(
 			ReplicatedStorage:WaitForChild("Modules")
@@ -385,6 +386,90 @@ return {
 			local items = Workspace:FindFirstChild("Items")
 			local tokens = items and items:FindFirstChild("Tokens")
 			return tokens and tokens:FindFirstChild("Client") or nil
+		end
+
+		local function getCollectablesFolder()
+			local items = Workspace:FindFirstChild("Items")
+			local misc = items and items:FindFirstChild("Misc")
+			return misc and misc:FindFirstChild("Collectables") or nil
+		end
+
+		local function getTravelTimerLabel(tokenName)
+			local collectables = getCollectablesFolder()
+			if not collectables then
+				return nil
+			end
+
+			local timerRoot = collectables:FindFirstChild(tokenName .. "ParkourTimer", true)
+			if timerRoot then
+				if timerRoot:IsA("TextLabel") then
+					return timerRoot
+				end
+
+				local label = timerRoot:FindFirstChild(tokenName, true)
+				if label and label:IsA("TextLabel") then
+					return label
+				end
+			end
+
+			for _, descendant in ipairs(collectables:GetDescendants()) do
+				if descendant.Name == tokenName and descendant:IsA("TextLabel") then
+					return descendant
+				end
+			end
+
+			return nil
+		end
+
+		local function isCollectableVisible(collectable)
+			if not collectable then
+				return false
+			end
+
+			local foundVisual = false
+			local function checkVisual(instance)
+				if instance:IsA("BasePart") then
+					foundVisual = true
+					return instance.Transparency < 1
+				end
+
+				if instance:IsA("ParticleEmitter") or instance:IsA("BillboardGui") then
+					foundVisual = true
+					return instance.Enabled
+				end
+
+				return false
+			end
+
+			if checkVisual(collectable) then
+				return true
+			end
+
+			for _, descendant in ipairs(collectable:GetDescendants()) do
+				if checkVisual(descendant) then
+					return true
+				end
+			end
+
+			return not foundVisual
+		end
+
+		local function isTravelTokenReady(tokenName)
+			local collectables = getCollectablesFolder()
+			local collectable = collectables and collectables:FindFirstChild(tokenName) or nil
+			local isVisible = isCollectableVisible(collectable)
+			local timerLabel = getTravelTimerLabel(tokenName)
+
+			if timerLabel then
+				local timeText = tostring(timerLabel.Text or ""):gsub("%s+", "")
+				if timeText == "20:00" then
+					return isVisible or not collectable
+				end
+
+				return false
+			end
+
+			return isVisible
 		end
 
 		--==================================================
@@ -1156,29 +1241,29 @@ return {
 		--==================================================
 		do
 			local Feature = RegisterFeature({
-				Key = "AutoCollectGradeTokens",
+				Key = "AutoCollectGT",
 				Tab = "Collect",
 				Section = "Grade Tokens",
 				Order = 10,
 
 				Defaults = {
-					AutoCollectGradeTokensEnabled = false,
+					AutoCollectGT = false,
 				},
 
 				State = {
 					PanelRef = nil,
 					Running = false,
-					PollDelay = 0.35,
+					PollDelay = 1,
 					TokenCooldown = 0.75,
 					LastCollectTimes = {},
 				},
 
 				Options = {
 					{
-						Id = "AutoCollectGradeTokensEnabled",
+						Id = "AutoCollectGT",
 						Type = "toggle",
 						Label = "Auto Collect Grade Tokens",
-						Description = "Collects grade tokens found in Workspace.Items.Tokens.Client"
+						Description = "Automatically collects Grade Tokens"
 					},
 				}
 			})
@@ -1210,7 +1295,7 @@ return {
 				task.spawn(function()
 					while self.State.Running do
 						local values = getPanelValues(self.State.PanelRef)
-						if not values or not values.AutoCollectGradeTokensEnabled then
+						if not values or not values.AutoCollectGT then
 							break
 						end
 
@@ -1228,7 +1313,93 @@ return {
 
 			function Feature:GetHandlers()
 				return {
-					AutoCollectGradeTokensEnabled = buildToggleHandler(self, function(panelRef)
+					AutoCollectGT = buildToggleHandler(self, function(panelRef)
+						self:Start(panelRef)
+					end),
+				}
+			end
+
+			function Feature:Cleanup()
+				self:Stop()
+				self.State.PanelRef = nil
+				table.clear(self.State.LastCollectTimes)
+			end
+		end
+
+		--==================================================
+		-- FEATURE: AUTO COLLECT TRAVEL TOKENS
+		--==================================================
+		do
+			local Feature = RegisterFeature({
+				Key = "AutoCollectTT",
+				Tab = "Collect",
+				Section = "Travel Tokens",
+				Order = 20,
+
+				Defaults = {
+					AutoCollectTT = false,
+				},
+
+				State = {
+					PanelRef = nil,
+					Running = false,
+					PollDelay = 1,
+					TokenCooldown = 5,
+					LastCollectTimes = {},
+					TokenNames = {"TravelToken1", "TravelToken2"},
+				},
+
+				Options = {
+					{
+						Id = "AutoCollectTT",
+						Type = "toggle",
+						Label = "Auto Collect Travel Tokens",
+						Description = "Automatically collects Travel Tokens"
+					},
+				}
+			})
+
+			function Feature:CollectReadyTokens()
+				local now = tick()
+
+				for _, tokenName in ipairs(self.State.TokenNames) do
+					if isTravelTokenReady(tokenName) and (now - (self.State.LastCollectTimes[tokenName] or 0)) >= self.State.TokenCooldown then
+						self.State.LastCollectTimes[tokenName] = now
+						PotionRemote:FireServer("Collect", tokenName)
+					end
+				end
+			end
+
+			function Feature:Start(panelRef)
+				setFeaturePanelRef(self, panelRef)
+				if self.State.Running then
+					return
+				end
+
+				self.State.Running = true
+
+				task.spawn(function()
+					while self.State.Running do
+						local values = getPanelValues(self.State.PanelRef)
+						if not values or not values.AutoCollectTT then
+							break
+						end
+
+						self:CollectReadyTokens()
+						task.wait(self.State.PollDelay)
+					end
+
+					self.State.Running = false
+				end)
+			end
+
+			function Feature:Stop()
+				self.State.Running = false
+			end
+
+			function Feature:GetHandlers()
+				return {
+					AutoCollectTT = buildToggleHandler(self, function(panelRef)
 						self:Start(panelRef)
 					end),
 				}

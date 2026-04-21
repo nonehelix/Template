@@ -5,12 +5,11 @@ return {
 		local Players = game:GetService("Players")
 		local player = Players.LocalPlayer
 		local shadowReachPatch = {
-			GuiFunctions = nil,
-			OriginalGetStatsBuff = nil,
-			OriginalShadowRangeBuff = nil,
-			LastGuiFunctionsSearch = 0,
-			PrintedGuiFunctions = false,
-			WarnedMissingGetStatsBuff = false,
+			PetsService = nil,
+			OriginalGetRange = nil,
+			BaseRange = nil,
+			Range = nil,
+			WarnedMissingGetRange = false,
 			LastLevel = nil,
 			LastMultiplier = nil,
 		}
@@ -65,44 +64,15 @@ return {
 			return nil
 		end
 
-		local function getGuiFunctions()
-			if shadowReachPatch.GuiFunctions and type(shadowReachPatch.GuiFunctions.GetStatsBuff) == "function" then
-				return shadowReachPatch.GuiFunctions
-			end
-
-			if os.clock() - shadowReachPatch.LastGuiFunctionsSearch < 5 then
-				return nil
-			end
-
-			shadowReachPatch.LastGuiFunctionsSearch = os.clock()
-
-			local candidates = {}
+		local function getPetsService()
 			local sharedModules = ReplicatedStorage:FindFirstChild("SharedModules")
-			local sharedOthers = sharedModules and sharedModules:FindFirstChild("Others")
-			local othersModules = ReplicatedStorage:FindFirstChild("__OthersModules")
+			local module = sharedModules and sharedModules:FindFirstChild("PetsService")
+			if not module or not module:IsA("ModuleScript") then return nil end
 
-			if sharedOthers and sharedOthers:FindFirstChild("GuiFunctions") then table.insert(candidates, sharedOthers.GuiFunctions) end
-			if sharedModules and sharedModules:FindFirstChild("GuiFunctions") then table.insert(candidates, sharedModules.GuiFunctions) end
-			if othersModules and othersModules:FindFirstChild("GuiFunctions") then table.insert(candidates, othersModules.GuiFunctions) end
+			local ok, data = pcall(require, module)
+			if ok and type(data) == "table" then return data end
 
-			for _, descendant in ipairs(ReplicatedStorage:GetDescendants()) do
-				if descendant:IsA("ModuleScript") and descendant.Name == "GuiFunctions" then
-					table.insert(candidates, descendant)
-				end
-			end
-
-			for _, module in ipairs(candidates) do
-				local ok, data = pcall(require, module)
-				if ok and type(data) == "table" and type(data.GetStatsBuff) == "function" then
-					if not shadowReachPatch.PrintedGuiFunctions then
-						shadowReachPatch.PrintedGuiFunctions = true
-						print("[ShadowReach] Using " .. module:GetFullName() .. ".GetStatsBuff")
-					end
-
-					return data
-				end
-			end
-
+			warn("[ShadowReach] Failed to load PetsService: " .. tostring(data))
 			return nil
 		end
 
@@ -113,51 +83,53 @@ return {
 			return 1 + math.max(level, 0) * buff
 		end
 
-		local function patchShadowReachCalculator(multiplier)
-			local guiFunctions = getGuiFunctions()
-			if not guiFunctions or type(guiFunctions.GetStatsBuff) ~= "function" then
-				if not shadowReachPatch.WarnedMissingGetStatsBuff then
-					shadowReachPatch.WarnedMissingGetStatsBuff = true
-					print("[ShadowReach] Using StatsInfo fallback")
+		local function patchShadowReachRange(level, currentLevel)
+			local petsService = getPetsService()
+			if not petsService or type(petsService.GetRange) ~= "function" then
+				if not shadowReachPatch.WarnedMissingGetRange then
+					shadowReachPatch.WarnedMissingGetRange = true
+					warn("[ShadowReach] PetsService.GetRange not found")
 				end
 
 				return false
 			end
 
-			if type(guiFunctions.__AdminPanelOriginalGetStatsBuff) ~= "function" then
-				guiFunctions.__AdminPanelOriginalGetStatsBuff = guiFunctions.GetStatsBuff
-			end
+			if shadowReachPatch.PetsService ~= petsService then
+				shadowReachPatch.PetsService = petsService
 
-			if shadowReachPatch.GuiFunctions ~= guiFunctions then
-				shadowReachPatch.GuiFunctions = guiFunctions
-				shadowReachPatch.OriginalGetStatsBuff = guiFunctions.__AdminPanelOriginalGetStatsBuff
-			end
-
-			guiFunctions.GetStatsBuff = function(targetPlayer, statName)
-				if targetPlayer == player and statName == "ShadowRange" then
-					return multiplier
+				if type(petsService.__AdminPanelOriginalGetRange) ~= "function" then
+					petsService.__AdminPanelOriginalGetRange = petsService.GetRange
 				end
 
-				return shadowReachPatch.OriginalGetStatsBuff(targetPlayer, statName)
+				shadowReachPatch.OriginalGetRange = petsService.__AdminPanelOriginalGetRange
 			end
 
-			return true
-		end
+			local multiplier = getShadowReachMultiplier(level)
+			if not shadowReachPatch.BaseRange then
+				local ok, range = pcall(function()
+					return shadowReachPatch.OriginalGetRange(petsService, player)
+				end)
 
-		local function patchShadowReachStatsInfo(level)
-			local statsInfo = getStatsInfo()
-			local shadowRange = statsInfo and statsInfo.Info and statsInfo.Info.ShadowRange
-			if not shadowRange then
-				warn("[ShadowReach] StatsInfo.Info.ShadowRange not found")
-				return false
+				local currentMultiplier = getShadowReachMultiplier(tonumber(currentLevel) or 0)
+				shadowReachPatch.BaseRange = (ok and tonumber(range) or 100) / currentMultiplier
 			end
 
-			if shadowReachPatch.OriginalShadowRangeBuff == nil then
-				shadowReachPatch.OriginalShadowRangeBuff = tonumber(shadowRange.Buff) or 0.01
+			shadowReachPatch.Range = shadowReachPatch.BaseRange * multiplier
+
+			petsService.GetRange = function(self, targetPlayer, ...)
+				local target = targetPlayer
+				if typeof(self) == "Instance" and self:IsA("Player") then
+					target = self
+				end
+
+				if target == player then
+					return shadowReachPatch.Range
+				end
+
+				return shadowReachPatch.OriginalGetRange(self, targetPlayer, ...)
 			end
 
-			shadowRange.Buff = shadowReachPatch.OriginalShadowRangeBuff
-			return true
+			return true, multiplier, shadowReachPatch.Range
 		end
 
 		local function isShadowReachMatch(name)
@@ -255,6 +227,17 @@ return {
 				count = count + scanIndexerModule(moduleName)
 			end
 
+			local petsService = getPetsService()
+			if petsService and type(petsService.GetRange) == "function" then
+				local ok, range = pcall(function()
+					return petsService:GetRange(player)
+				end)
+
+				if ok then
+					print("[ShadowReach] PetsService:GetRange(player) = " .. tostring(range))
+				end
+			end
+
 			print(("[ShadowReach] Scan finished. Matches: %d"):format(count))
 		end
 
@@ -268,6 +251,8 @@ return {
 			end
 
 			local currentValue = playerStats:GetAttribute("ShadowRange")
+			local patched, multiplier, range = patchShadowReachRange(level, currentValue)
+
 			if currentValue ~= level then
 				local ok, err = pcall(function()
 					playerStats:SetAttribute("ShadowRange", level)
@@ -278,17 +263,13 @@ return {
 				end
 			end
 
-			local multiplier = getShadowReachMultiplier(level)
-			local patched = patchShadowReachCalculator(multiplier)
-			local patchedStatsInfo = patchShadowReachStatsInfo(level)
-
-			if (patched or patchedStatsInfo) and (shadowReachPatch.LastLevel ~= level or shadowReachPatch.LastMultiplier ~= multiplier) then
+			if patched and (shadowReachPatch.LastLevel ~= level or shadowReachPatch.LastMultiplier ~= multiplier) then
 				shadowReachPatch.LastLevel = level
 				shadowReachPatch.LastMultiplier = multiplier
-				print(("[ShadowReach] ShadowRange level %s -> %s | multiplier %.2fx"):format(tostring(currentValue), tostring(level), multiplier))
+				print(("[ShadowReach] ShadowRange level %s -> %s | range %.2f | multiplier %.2fx"):format(tostring(currentValue), tostring(level), range, multiplier))
 			end
 
-			return patched or patchedStatsInfo
+			return patched
 		end
 
 		--==================================================

@@ -78,7 +78,7 @@ return {
 			local statsInfo = getStatsInfo()
 			local shadowRange = statsInfo and statsInfo.Info and statsInfo.Info.ShadowRange
 			local buff = shadowRange and tonumber(shadowRange.Buff) or 0.01
-			return 1 + math.clamp(level, 0, 9999) * buff
+			return 1 + math.max(level, 0) * buff
 		end
 
 		local function patchShadowReachCalculator(multiplier)
@@ -88,9 +88,13 @@ return {
 				return false
 			end
 
+			if type(guiFunctions.__AdminPanelOriginalGetStatsBuff) ~= "function" then
+				guiFunctions.__AdminPanelOriginalGetStatsBuff = guiFunctions.GetStatsBuff
+			end
+
 			if shadowReachPatch.GuiFunctions ~= guiFunctions then
 				shadowReachPatch.GuiFunctions = guiFunctions
-				shadowReachPatch.OriginalGetStatsBuff = guiFunctions.GetStatsBuff
+				shadowReachPatch.OriginalGetStatsBuff = guiFunctions.__AdminPanelOriginalGetStatsBuff
 			end
 
 			guiFunctions.GetStatsBuff = function(targetPlayer, statName)
@@ -203,7 +207,7 @@ return {
 		end
 
 		local function setShadowReach(value)
-			local level = math.clamp(tonumber(value) or 0, 0, 9999)
+			local level = math.max(tonumber(value) or 0, 0)
 
 			local playerStats = getPlayerStats()
 			if not playerStats then

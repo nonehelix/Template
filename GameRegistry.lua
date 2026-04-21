@@ -15,6 +15,13 @@ local REGISTERED_GAMES = {
 			"https://www.roblox.com/es/games/90462358603255/Anime-Eternal",
 		}
 	},
+	{
+		Key = "AriseCrossover",
+		Name = "Arise Crossover",
+		Links = {
+			"https://www.roblox.com/es/games/87039211657390/ARISE-1-0",
+		}
+	},
 }
 
 local function extractPlaceIdFromLink(link)

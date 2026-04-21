@@ -358,6 +358,8 @@ return {
 			end
 		end
 
+		local COLLECT_POLL_DELAY = 1
+
 		local function bindPollingToggleFeature(feature, optionId, onTick)
 			function feature:Start(panelRef)
 				setFeaturePanelRef(self, panelRef)
@@ -397,8 +399,8 @@ return {
 			function feature:Cleanup()
 				self:Stop()
 				self.State.PanelRef = nil
-				if self.State.LastCollectTimes then
-					table.clear(self.State.LastCollectTimes)
+				if self.State.LastCollectAt then
+					table.clear(self.State.LastCollectAt)
 				end
 			end
 		end
@@ -415,13 +417,13 @@ return {
 			return misc and misc:FindFirstChild("Collectables") or nil
 		end
 
-		local function getTravelToken(tokenName)
+		local function getCollectable(name)
 			local collectables = getCollectablesFolder()
 			if not collectables then
 				return nil
 			end
 
-			return collectables:FindFirstChild(tokenName)
+			return collectables:FindFirstChild(name)
 		end
 
 		local function isCollectableVisible(collectable)
@@ -442,6 +444,37 @@ return {
 			return false
 		end
 
+		local function canCollectVisibleItem(state, itemName)
+			local item = getCollectable(itemName)
+			if not item or not isCollectableVisible(item) then
+				return false
+			end
+
+			local now = Workspace:GetServerTimeNow()
+			local lastCollect = state.LastCollectAt[itemName] or 0
+			return (now - lastCollect) >= state.CooldownSeconds
+		end
+
+		local function tryCollectVisibleItem(state, itemName)
+			if not canCollectVisibleItem(state, itemName) then
+				return
+			end
+
+			local fired = pcall(function()
+				PotionRemote:FireServer("Collect", itemName)
+			end)
+
+			if fired then
+				state.LastCollectAt[itemName] = Workspace:GetServerTimeNow()
+			end
+		end
+
+		local function collectVisibleItems(state)
+			for _, itemName in ipairs(state.ItemNames) do
+				tryCollectVisibleItem(state, itemName)
+			end
+		end
+
 		--==================================================
 		-- FEATURE: AUTO BUY (CONVEYOR)
 		--==================================================
@@ -460,7 +493,7 @@ return {
 
 				State = {
 					LastBuyTimes = {},
-					Polling = false,
+					Running = false,
 					PanelRef = nil,
 					PackMetadata = setmetatable({}, {__mode = "k"}),
 				},
@@ -572,14 +605,14 @@ return {
 
 			function Feature:Start(panelRef)
 				setFeaturePanelRef(self, panelRef)
-				if self.State.Polling then
+				if self.State.Running then
 					return
 				end
 
-				self.State.Polling = true
+				self.State.Running = true
 
 				task.spawn(function()
-					while self.State.Polling do
+					while self.State.Running do
 						local values = getPanelValues(self.State.PanelRef)
 						if values and values.AutoBuyEnabled then
 							self:Tick(values)
@@ -590,7 +623,7 @@ return {
 			end
 
 			function Feature:Stop()
-				self.State.Polling = false
+				self.State.Running = false
 			end
 
 			function Feature:GetHandlers()
@@ -1166,13 +1199,13 @@ return {
 				State = {
 					PanelRef = nil,
 					Running = false,
-					PollDelay = 1,
-					TokenCooldown = 0.75,
-					LastCollectTimes = {},
+					PollDelay = COLLECT_POLL_DELAY,
+					CooldownSeconds = 0.75,
+					LastCollectAt = {},
 				},
 
 				Options = {
-					{ Id = "AutoCollectGT", Type = "toggle", Label = "Auto Collect Grade Tokens", Description = "Auto collects Grade Tokens" },
+					{ Id = "AutoCollectGT", Type = "toggle", Label = "Auto Collect Grade Tokens", Description = "Auto collects grade tokens" },
 				}
 			})
 
@@ -1182,11 +1215,11 @@ return {
 					return
 				end
 
-				local now = tick()
+				local now = Workspace:GetServerTimeNow()
 				for _, token in ipairs(tokenFolder:GetChildren()) do
 					local tokenId = tostring(token.Name or "")
-					if tokenId ~= "" and (now - (self.State.LastCollectTimes[tokenId] or 0)) >= self.State.TokenCooldown then
-						self.State.LastCollectTimes[tokenId] = now
+					if tokenId ~= "" and (now - (self.State.LastCollectAt[tokenId] or 0)) >= self.State.CooldownSeconds then
+						self.State.LastCollectAt[tokenId] = now
 						CardRemote:FireServer("CollectToken", tokenId)
 					end
 				end
@@ -1214,49 +1247,58 @@ return {
 				State = {
 					PanelRef = nil,
 					Running = false,
-					PollDelay = 1,
-					TokenCooldown = 1200,
-					LastCollectTimes = {
+					PollDelay = COLLECT_POLL_DELAY,
+					CooldownSeconds = 1200,
+					LastCollectAt = {
 						TravelToken1 = 0,
 						TravelToken2 = 0,
 					},
-					TokenNames = {"TravelToken1", "TravelToken2"},
+					ItemNames = {"TravelToken1", "TravelToken2"},
 				},
 
 				Options = {
-					{ Id = "AutoCollectTT", Type = "toggle", Label = "Auto Collect Travel Tokens", Description = "Auto collects Travel Tokens" },
+					{ Id = "AutoCollectTT", Type = "toggle", Label = "Auto Collect Travel Tokens", Description = "Auto collects travel tokens" },
 				}
 			})
 
-			function Feature:CanTryCollect(tokenName)
-				local now = Workspace:GetServerTimeNow()
-				local lastCollect = self.State.LastCollectTimes[tokenName] or 0
-				return (now - lastCollect) >= self.State.TokenCooldown
-			end
-
-			function Feature:TryCollectToken(tokenName)
-				local token = getTravelToken(tokenName)
-				if not token or not isCollectableVisible(token) or not self:CanTryCollect(tokenName) then
-					return
-				end
-
-				local fired = pcall(function()
-					PotionRemote:FireServer("Collect", tokenName)
-				end)
-
-				if fired then
-					self.State.LastCollectTimes[tokenName] = Workspace:GetServerTimeNow()
-				end
-			end
-
-			function Feature:CollectReadyTokens()
-				for _, tokenName in ipairs(self.State.TokenNames) do
-					self:TryCollectToken(tokenName)
-				end
-			end
-
 			bindPollingToggleFeature(Feature, "AutoCollectTT", function(self)
-				self:CollectReadyTokens()
+				collectVisibleItems(self.State)
+			end)
+		end
+
+		--==================================================
+		-- FEATURE: AUTO COLLECT POTIONS
+		--==================================================
+		do
+			local Feature = RegisterFeature({
+				Key = "AutoCollectPotions",
+				Tab = "Collect",
+				Section = "Potions",
+				Order = 30,
+
+				Defaults = {
+					AutoCollectPotions = false,
+				},
+
+				State = {
+					PanelRef = nil,
+					Running = false,
+					PollDelay = COLLECT_POLL_DELAY,
+					CooldownSeconds = 600,
+					LastCollectAt = {
+						Luck = 0,
+						HatchTime = 0,
+					},
+					ItemNames = {"Luck", "HatchTime"},
+				},
+
+				Options = {
+					{ Id = "AutoCollectPotions", Type = "toggle", Label = "Auto Collect Potions", Description = "Auto collects potions" },
+				}
+			})
+
+			bindPollingToggleFeature(Feature, "AutoCollectPotions", function(self)
+				collectVisibleItems(self.State)
 			end)
 		end
 

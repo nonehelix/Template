@@ -7,6 +7,7 @@ local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 local HttpService = game:GetService("HttpService")
+local TeleportService = game:GetService("TeleportService")
 
 local player = Players.LocalPlayer
 local Features = {}
@@ -987,6 +988,79 @@ end
 --==================================================
 
 do
+	local function getRequestFunction()
+		if type(request) == "function" then return request end
+		if type(http_request) == "function" then return http_request end
+		if type(syn) == "table" and type(syn.request) == "function" then return syn.request end
+		if type(http) == "table" and type(http.request) == "function" then return http.request end
+		if type(fluxus) == "table" and type(fluxus.request) == "function" then return fluxus.request end
+	end
+
+	local function requestServerPage(cursor)
+		local requester = getRequestFunction()
+		if not requester then return nil, "HTTP request is not available" end
+
+		local url = ("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100&excludeFullGames=true"):format(game.PlaceId)
+		if cursor and cursor ~= "" then
+			url = url .. "&cursor=" .. HttpService:UrlEncode(cursor)
+		end
+
+		local ok, response = pcall(requester, {
+			Url = url,
+			Method = "GET",
+			Headers = {["Accept"] = "application/json"}
+		})
+
+		if not ok then return nil, response end
+
+		local body = response and (response.Body or response.body)
+		if not body then return nil, "Empty response" end
+
+		local decodedOk, decoded = pcall(function()
+			return HttpService:JSONDecode(body)
+		end)
+
+		if not decodedOk then return nil, decoded end
+		return decoded
+	end
+
+	local function findEmptiestServer()
+		local bestServer = nil
+		local cursor = nil
+
+		for _ = 1, 5 do
+			local page, err = requestServerPage(cursor)
+			if not page then return nil, err end
+
+			for _, server in ipairs(page.data or {}) do
+				local playing = tonumber(server.playing) or 0
+				local maxPlayers = tonumber(server.maxPlayers) or math.huge
+				if server.id ~= game.JobId and playing < maxPlayers then
+					if not bestServer or playing < bestServer.playing then
+						bestServer = {id = server.id, playing = playing, maxPlayers = maxPlayers}
+						if playing <= 1 then return bestServer end
+					end
+				end
+			end
+
+			cursor = page.nextPageCursor
+			if not cursor or cursor == "" then break end
+		end
+
+		return bestServer
+	end
+
+	local function hopEmptyServer()
+		local server, err = findEmptiestServer()
+		if server and server.id then
+			TeleportService:TeleportToPlaceInstance(game.PlaceId, server.id, player)
+			return
+		end
+
+		warn("[ServerHop] Could not find low-pop server; using normal teleport. Reason: " .. tostring(err or "none found"))
+		TeleportService:Teleport(game.PlaceId, player)
+	end
+
 	local Feature = RegisterFeature({
 		Key = "SettingsGeneral",
 		Tab = "Settings",
@@ -994,6 +1068,13 @@ do
 		Defaults = { Minimized = false },
 		State = {},
 		Options = {
+			{
+				Id = "HopEmptyServer",
+				Type = "button",
+				Label = "Hop Empty Server",
+				Description = "Join a low population server",
+				ButtonText = "Hop"
+			},
 			{
 				Id = "ResetDefaults",
 				Type = "button",
@@ -1006,6 +1087,9 @@ do
 
 	function Feature:GetHandlers()
 		return {
+			HopEmptyServer = function()
+				task.spawn(hopEmptyServer)
+			end,
 			ResetDefaults = function(_, values, panelRef)
 				local resetValues = BuildFeatureDefaults()
 				ApplyFeatureDefaults(resetValues)

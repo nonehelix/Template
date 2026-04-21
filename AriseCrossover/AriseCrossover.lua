@@ -7,6 +7,10 @@ return {
 		local shadowReachPatch = {
 			GuiFunctions = nil,
 			OriginalGetStatsBuff = nil,
+			OriginalShadowRangeBuff = nil,
+			LastGuiFunctionsSearch = 0,
+			PrintedGuiFunctions = false,
+			WarnedMissingGetStatsBuff = false,
 			LastLevel = nil,
 			LastMultiplier = nil,
 		}
@@ -62,15 +66,43 @@ return {
 		end
 
 		local function getGuiFunctions()
+			if shadowReachPatch.GuiFunctions and type(shadowReachPatch.GuiFunctions.GetStatsBuff) == "function" then
+				return shadowReachPatch.GuiFunctions
+			end
+
+			if os.clock() - shadowReachPatch.LastGuiFunctionsSearch < 5 then
+				return nil
+			end
+
+			shadowReachPatch.LastGuiFunctionsSearch = os.clock()
+
+			local candidates = {}
 			local sharedModules = ReplicatedStorage:FindFirstChild("SharedModules")
-			local others = sharedModules and sharedModules:FindFirstChild("Others")
-			local module = others and others:FindFirstChild("GuiFunctions")
-			if not module or not module:IsA("ModuleScript") then return nil end
+			local sharedOthers = sharedModules and sharedModules:FindFirstChild("Others")
+			local othersModules = ReplicatedStorage:FindFirstChild("__OthersModules")
 
-			local ok, data = pcall(require, module)
-			if ok then return data end
+			if sharedOthers and sharedOthers:FindFirstChild("GuiFunctions") then table.insert(candidates, sharedOthers.GuiFunctions) end
+			if sharedModules and sharedModules:FindFirstChild("GuiFunctions") then table.insert(candidates, sharedModules.GuiFunctions) end
+			if othersModules and othersModules:FindFirstChild("GuiFunctions") then table.insert(candidates, othersModules.GuiFunctions) end
 
-			warn("[ShadowReach] Failed to load GuiFunctions: " .. tostring(data))
+			for _, descendant in ipairs(ReplicatedStorage:GetDescendants()) do
+				if descendant:IsA("ModuleScript") and descendant.Name == "GuiFunctions" then
+					table.insert(candidates, descendant)
+				end
+			end
+
+			for _, module in ipairs(candidates) do
+				local ok, data = pcall(require, module)
+				if ok and type(data) == "table" and type(data.GetStatsBuff) == "function" then
+					if not shadowReachPatch.PrintedGuiFunctions then
+						shadowReachPatch.PrintedGuiFunctions = true
+						print("[ShadowReach] Using " .. module:GetFullName() .. ".GetStatsBuff")
+					end
+
+					return data
+				end
+			end
+
 			return nil
 		end
 
@@ -84,7 +116,11 @@ return {
 		local function patchShadowReachCalculator(multiplier)
 			local guiFunctions = getGuiFunctions()
 			if not guiFunctions or type(guiFunctions.GetStatsBuff) ~= "function" then
-				warn("[ShadowReach] GuiFunctions.GetStatsBuff not found")
+				if not shadowReachPatch.WarnedMissingGetStatsBuff then
+					shadowReachPatch.WarnedMissingGetStatsBuff = true
+					warn("[ShadowReach] GuiFunctions.GetStatsBuff not found; using StatsInfo fallback")
+				end
+
 				return false
 			end
 
@@ -105,6 +141,22 @@ return {
 				return shadowReachPatch.OriginalGetStatsBuff(targetPlayer, statName)
 			end
 
+			return true
+		end
+
+		local function patchShadowReachStatsInfo(level)
+			local statsInfo = getStatsInfo()
+			local shadowRange = statsInfo and statsInfo.Info and statsInfo.Info.ShadowRange
+			if not shadowRange then
+				warn("[ShadowReach] StatsInfo.Info.ShadowRange not found")
+				return false
+			end
+
+			if shadowReachPatch.OriginalShadowRangeBuff == nil then
+				shadowReachPatch.OriginalShadowRangeBuff = tonumber(shadowRange.Buff) or 0.01
+			end
+
+			shadowRange.Buff = shadowReachPatch.OriginalShadowRangeBuff
 			return true
 		end
 
@@ -228,14 +280,15 @@ return {
 
 			local multiplier = getShadowReachMultiplier(level)
 			local patched = patchShadowReachCalculator(multiplier)
+			local patchedStatsInfo = patchShadowReachStatsInfo(level)
 
-			if patched and (shadowReachPatch.LastLevel ~= level or shadowReachPatch.LastMultiplier ~= multiplier) then
+			if (patched or patchedStatsInfo) and (shadowReachPatch.LastLevel ~= level or shadowReachPatch.LastMultiplier ~= multiplier) then
 				shadowReachPatch.LastLevel = level
 				shadowReachPatch.LastMultiplier = multiplier
 				print(("[ShadowReach] ShadowRange level %s -> %s | multiplier %.2fx"):format(tostring(currentValue), tostring(level), multiplier))
 			end
 
-			return patched
+			return patched or patchedStatsInfo
 		end
 
 		--==================================================

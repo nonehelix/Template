@@ -47,6 +47,13 @@ return {
 		-- HELPERS
 		--==================================================
 		local arrayContains = assert(Shared.arrayContains, "Shared.arrayContains is required")
+		local AUTO_BUY_POLL_DELAY = 0.15
+		local AUTO_GRADE_REQUEST_DELAY = 0.01
+		local REPLICATED_DATA_WAIT_DELAY = 0.1
+		local MARKET_BUY_COOLDOWN = 0.08
+		local MARKET_CHECK_INTERVAL = 60
+		local MARKET_POLL_DELAY = 1
+		local COLLECT_POLL_DELAY = 1
 
 		local function normalizeSelectionArray(values)
 			local result = {}
@@ -352,13 +359,11 @@ return {
 		local function buildRestartHandler(feature, enabledKey)
 			return function(_, values, panelRef)
 				setFeaturePanelRef(feature, panelRef)
-				if values[enabledKey] then
+				if values and values[enabledKey] then
 					feature:Start(panelRef)
 				end
 			end
 		end
-
-		local COLLECT_POLL_DELAY = 1
 
 		local function bindPollingToggleFeature(feature, optionId, onTick)
 			function feature:Start(panelRef)
@@ -617,7 +622,7 @@ return {
 						if values and values.AutoBuyEnabled then
 							self:Tick(values)
 						end
-						task.wait(0.15)
+						task.wait(AUTO_BUY_POLL_DELAY)
 					end
 				end)
 			end
@@ -667,7 +672,7 @@ return {
 					QueueIndex = 0,
 					TargetDone = {},
 					TargetMinRank = nil,
-					RequestDelay = 0.01,
+					RequestDelay = AUTO_GRADE_REQUEST_DELAY,
 					ReplicatedData = nil,
 				},
 
@@ -718,7 +723,7 @@ return {
 						self.State.ReplicatedData = replicatedData
 						return replicatedData
 					end
-					task.wait(0.1)
+					task.wait(REPLICATED_DATA_WAIT_DELAY)
 				end
 
 				warn("[AutoGrade] ReplicatedData loaded but GetData never became available")
@@ -938,8 +943,7 @@ return {
 					return
 				end
 
-				local replicatedData = self:GetReplicatedData()
-				if not replicatedData then
+				if not self:GetReplicatedData() then
 					self:Stop()
 					return
 				end
@@ -1021,7 +1025,7 @@ return {
 					LastCheckTime = 0,
 					PanelRef = nil,
 					Running = false,
-					BuyCooldown = 0.08,
+					BuyCooldown = MARKET_BUY_COOLDOWN,
 				},
 
 				Options = {
@@ -1149,12 +1153,12 @@ return {
 							break
 						end
 
-						if tick() - self.State.LastCheckTime >= 60 then
+						if tick() - self.State.LastCheckTime >= MARKET_CHECK_INTERVAL then
 							self.State.LastCheckTime = tick()
 							self:RunStockCheck()
 						end
 
-						task.wait(1)
+						task.wait(MARKET_POLL_DELAY)
 					end
 
 					self.State.Running = false

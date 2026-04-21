@@ -82,7 +82,7 @@ return {
 			return tonumber(string.match(tostring(text or ""), "%d+")) or 0
 		end
 
-		local function parseExchangeAmount(value)
+		local function parseCardActionAmount(value)
 			local amount = tonumber(string.match(tostring(value or ""), "%d+")) or 1
 			if amount == 10 or amount == 100 then
 				return amount
@@ -113,7 +113,7 @@ return {
 			return items
 		end
 
-		local function getExchangePackItems()
+		local function getCardActionPackItems()
 			local items = {}
 			local seen = {}
 
@@ -137,21 +137,43 @@ return {
 			return items
 		end
 
-		local function getExchangeMutationItems()
+		local function getFilteredMutationItems(excluded)
 			local items = {}
 			local seen = {}
+			excluded = excluded or {}
 
-			addUniqueItem(items, seen, "Regular")
-			addUniqueItem(items, seen, "Gold")
-			addUniqueItem(items, seen, "Emerald")
+			local function addMutation(value)
+				value = tostring(value or "")
+				if excluded[value] then
+					return
+				end
+
+				addUniqueItem(items, seen, value)
+			end
+
+			addMutation("Regular")
+			addMutation("Gold")
+			addMutation("Emerald")
 			for _, mutation in ipairs(getMutationItems()) do
-				addUniqueItem(items, seen, mutation)
+				addMutation(mutation)
 			end
 
 			return items
 		end
 
-		local function getExchangeAmountItems()
+		local function getUpgradeFromMutationItems()
+			return getFilteredMutationItems({Rainbow = true})
+		end
+
+		local function getUpgradeToMutationItems()
+			return getFilteredMutationItems({Regular = true})
+		end
+
+		local function getDowngradeMutationItems()
+			return getFilteredMutationItems({Regular = true})
+		end
+
+		local function getCardActionAmountItems()
 			return {"x1", "x10", "x100"}
 		end
 
@@ -997,57 +1019,57 @@ return {
 		end
 
 		--==================================================
-		-- FEATURE: EXCHANGE
+		-- FEATURE: UPGRADE
 		--==================================================
 		do
 			local Feature = RegisterFeature({
-				Key = "Exchange",
+				Key = "Upgrade",
 				Tab = "Shop",
-				Section = "Exchange",
+				Section = "Upgrade",
 				Order = 30,
 
 				Defaults = {
-					ExchangePack = "Pirate",
-					ExchangeFromMutation = "Gold",
-					ExchangeToMutation = "Emerald",
-					ExchangeAmount = "x1",
+					UpgradePack = "Pirate",
+					UpgradeFromMutation = "Gold",
+					UpgradeToMutation = "Emerald",
+					UpgradeAmount = "x1",
 				},
 
 				Options = {
 					{
-						Id = "ExchangePack",
+						Id = "UpgradePack",
 						Type = "select",
 						Label = "Pack",
-						Description = "Pack to exchange",
-						Items = getExchangePackItems
+						Description = "Pack to upgrade",
+						Items = getCardActionPackItems
 					},
 					{
-						Id = "ExchangeFromMutation",
+						Id = "UpgradeFromMutation",
 						Type = "select",
 						Label = "From Mutation",
-						Description = "Mutation to exchange from",
-						Items = getExchangeMutationItems
+						Description = "Mutation to upgrade from",
+						Items = getUpgradeFromMutationItems
 					},
 					{
-						Id = "ExchangeToMutation",
+						Id = "UpgradeToMutation",
 						Type = "select",
 						Label = "To Mutation",
-						Description = "Mutation to exchange into",
-						Items = getExchangeMutationItems
+						Description = "Mutation to upgrade into",
+						Items = getUpgradeToMutationItems
 					},
 					{
-						Id = "ExchangeAmount",
+						Id = "UpgradeAmount",
 						Type = "select",
 						Label = "Amount",
-						Description = "How many exchanges to run",
-						Items = getExchangeAmountItems
+						Description = "How many upgrades to run",
+						Items = getCardActionAmountItems
 					},
 					{
-						Id = "ExchangeRun",
+						Id = "UpgradeRun",
 						Type = "button",
-						Label = "Exchange",
-						Description = "Run the selected exchange",
-						ButtonText = "Exchange"
+						Label = "Upgrade",
+						Description = "Run the selected upgrade",
+						ButtonText = "Upgrade"
 					},
 				}
 			})
@@ -1055,25 +1077,100 @@ return {
 			function Feature:Run(values)
 				values = values or {}
 
-				local pack = normalizePackName(values.ExchangePack)
-				local fromMutation = tostring(values.ExchangeFromMutation or "")
-				local toMutation = tostring(values.ExchangeToMutation or "")
-				local amount = tostring(parseExchangeAmount(values.ExchangeAmount))
+				local pack = normalizePackName(values.UpgradePack)
+				local fromMutation = tostring(values.UpgradeFromMutation or "")
+				local toMutation = tostring(values.UpgradeToMutation or "")
+				local amount = tostring(parseCardActionAmount(values.UpgradeAmount))
 
 				if pack == "" or fromMutation == "" or toMutation == "" then
 					return
 				end
 
 				if amount == "1" then
-					CardRemote:FireServer("Exchange", pack, fromMutation, toMutation)
+					CardRemote:FireServer("Upgrade", pack, fromMutation, toMutation)
 				else
-					CardRemote:FireServer("Exchange", pack, fromMutation, toMutation, amount)
+					CardRemote:FireServer("Upgrade", pack, fromMutation, toMutation, amount)
 				end
 			end
 
 			function Feature:GetHandlers()
 				return {
-					ExchangeRun = function(_, values)
+					UpgradeRun = function(_, values)
+						self:Run(values)
+					end
+				}
+			end
+		end
+
+		--==================================================
+		-- FEATURE: DOWNGRADE
+		--==================================================
+		do
+			local Feature = RegisterFeature({
+				Key = "Downgrade",
+				Tab = "Shop",
+				Section = "Downgrade",
+				Order = 31,
+
+				Defaults = {
+					DowngradePack = "Pirate",
+					DowngradeMutation = "Gold",
+					DowngradeAmount = "x1",
+				},
+
+				Options = {
+					{
+						Id = "DowngradePack",
+						Type = "select",
+						Label = "Pack",
+						Description = "Pack to downgrade",
+						Items = getCardActionPackItems
+					},
+					{
+						Id = "DowngradeMutation",
+						Type = "select",
+						Label = "Mutation",
+						Description = "Mutation to downgrade",
+						Items = getDowngradeMutationItems
+					},
+					{
+						Id = "DowngradeAmount",
+						Type = "select",
+						Label = "Amount",
+						Description = "How many downgrades to run",
+						Items = getCardActionAmountItems
+					},
+					{
+						Id = "DowngradeRun",
+						Type = "button",
+						Label = "Downgrade",
+						Description = "Run the selected downgrade",
+						ButtonText = "Downgrade"
+					},
+				}
+			})
+
+			function Feature:Run(values)
+				values = values or {}
+
+				local pack = normalizePackName(values.DowngradePack)
+				local mutation = tostring(values.DowngradeMutation or "")
+				local amount = tostring(parseCardActionAmount(values.DowngradeAmount))
+
+				if pack == "" or mutation == "" then
+					return
+				end
+
+				if amount == "1" then
+					CardRemote:FireServer("Downgrade", pack, mutation)
+				else
+					CardRemote:FireServer("Downgrade", pack, mutation, amount)
+				end
+			end
+
+			function Feature:GetHandlers()
+				return {
+					DowngradeRun = function(_, values)
 						self:Run(values)
 					end
 				}

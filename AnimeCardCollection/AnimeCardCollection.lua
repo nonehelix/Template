@@ -103,6 +103,17 @@ return {
 			CardRemote:FireServer(unpackArgs(args))
 		end
 
+		local function runPackMutationCardAction(actionName, amountValue, packValue, mutationValue)
+			local pack = normalizePackName(packValue)
+			local mutation = tostring(mutationValue or "")
+
+			if pack == "" or mutation == "" then
+				return
+			end
+
+			fireCardAction(actionName, amountValue, pack, mutation)
+		end
+
 		local function addUniqueItem(items, seen, value)
 			value = tostring(value or "")
 			if value == "" or value == "All" or seen[value] then
@@ -141,8 +152,18 @@ return {
 			local items = {"All", "Regular"}
 
 			if CardConfig and CardConfig.List and CardConfig.List.Mutations then
-				for _, mut in pairs(CardConfig.List.Mutations) do
+				local mutationList = CardConfig.List.Mutations
+				local addedArrayItems = false
+
+				for _, mut in ipairs(mutationList) do
 					items[#items + 1] = tostring(mut)
+					addedArrayItems = true
+				end
+
+				if not addedArrayItems then
+					for _, mut in pairs(mutationList) do
+						items[#items + 1] = tostring(mut)
+					end
 				end
 			end
 
@@ -174,7 +195,7 @@ return {
 		end
 
 		local function getUpgradeMutationOrder()
-			return getFilteredMutationItems({})
+			return getFilteredMutationItems({Rainbow = true})
 		end
 
 		local function getNextUpgradeMutation(fromMutation)
@@ -195,7 +216,7 @@ return {
 			local mutations = getUpgradeMutationOrder()
 
 			for index, mutation in ipairs(mutations) do
-				if index < #mutations and tostring(mutation) ~= "Rainbow" then
+				if index < #mutations then
 					items[#items + 1] = mutation
 				end
 			end
@@ -207,8 +228,79 @@ return {
 			return getFilteredMutationItems({Regular = true})
 		end
 
+		local function getBundleMutationItems()
+			return getFilteredMutationItems({})
+		end
+
 		local function getCardActionAmountItems()
 			return {"x1", "x10", "x100"}
+		end
+
+		local function registerPackMutationActionFeature(config)
+			local key = config.Key
+			local packId = key .. "Pack"
+			local mutationId = key .. "Mutation"
+			local amountId = key .. "Amount"
+			local runId = key .. "Run"
+
+			local Feature = RegisterFeature({
+				Key = key,
+				Tab = "Shop",
+				Section = config.Section or key,
+				Order = config.Order,
+
+				Defaults = {
+					[packId] = config.DefaultPack or "Pirate",
+					[mutationId] = config.DefaultMutation or "Regular",
+					[amountId] = config.DefaultAmount or "x1",
+				},
+
+				Options = {
+					{
+						Id = packId,
+						Type = "select",
+						Label = "Pack",
+						Description = config.PackDescription,
+						Items = getCardActionPackItems
+					},
+					{
+						Id = mutationId,
+						Type = "select",
+						Label = "Mutation",
+						Description = config.MutationDescription,
+						Items = config.MutationItems
+					},
+					{
+						Id = amountId,
+						Type = "select",
+						Label = "Amount",
+						Description = config.AmountDescription,
+						Items = getCardActionAmountItems
+					},
+					{
+						Id = runId,
+						Type = "button",
+						Label = config.ButtonLabel or key,
+						Description = config.ButtonDescription,
+						ButtonText = config.ButtonText or key
+					},
+				}
+			})
+
+			function Feature:Run(values)
+				values = values or {}
+				runPackMutationCardAction(config.ActionName or key, values[amountId], values[packId], values[mutationId])
+			end
+
+			function Feature:GetHandlers()
+				return {
+					[runId] = function(_, values)
+						self:Run(values)
+					end
+				}
+			end
+
+			return Feature
 		end
 
 		local function getGradeItems()
@@ -1126,71 +1218,33 @@ return {
 		--==================================================
 		-- FEATURE: DOWNGRADE
 		--==================================================
-		do
-			local Feature = RegisterFeature({
-				Key = "Downgrade",
-				Tab = "Shop",
-				Section = "Downgrade",
-				Order = 31,
+		registerPackMutationActionFeature({
+			Key = "Downgrade",
+			Section = "Downgrade",
+			Order = 31,
+			ActionName = "Downgrade",
+			DefaultMutation = "Gold",
+			MutationItems = getDowngradeMutationItems,
+			PackDescription = "Pack to downgrade",
+			MutationDescription = "Mutation to downgrade",
+			AmountDescription = "How many downgrades to run",
+			ButtonDescription = "Run the selected downgrade",
+		})
 
-				Defaults = {
-					DowngradePack = "Pirate",
-					DowngradeMutation = "Gold",
-					DowngradeAmount = "x1",
-				},
-
-				Options = {
-					{
-						Id = "DowngradePack",
-						Type = "select",
-						Label = "Pack",
-						Description = "Pack to downgrade",
-						Items = getCardActionPackItems
-					},
-					{
-						Id = "DowngradeMutation",
-						Type = "select",
-						Label = "Mutation",
-						Description = "Mutation to downgrade",
-						Items = getDowngradeMutationItems
-					},
-					{
-						Id = "DowngradeAmount",
-						Type = "select",
-						Label = "Amount",
-						Description = "How many downgrades to run",
-						Items = getCardActionAmountItems
-					},
-					{
-						Id = "DowngradeRun",
-						Type = "button",
-						Label = "Downgrade",
-						Description = "Run the selected downgrade",
-						ButtonText = "Downgrade"
-					},
-				}
-			})
-
-			function Feature:Run(values)
-				values = values or {}
-
-				local pack = normalizePackName(values.DowngradePack)
-				local mutation = tostring(values.DowngradeMutation or "")
-
-				if pack == "" or mutation == "" then
-					return
-				end
-
-				fireCardAction("Downgrade", values.DowngradeAmount, pack, mutation)
-			end
-
-			function Feature:GetHandlers()
-				return {
-					DowngradeRun = function(_, values)
-						self:Run(values)
-					end
-				}
-			end
-		end
+		--==================================================
+		-- FEATURE: BUNDLE
+		--==================================================
+		registerPackMutationActionFeature({
+			Key = "Bundle",
+			Section = "Bundle",
+			Order = 32,
+			ActionName = "Bundle",
+			DefaultMutation = "Regular",
+			MutationItems = getBundleMutationItems,
+			PackDescription = "Pack to bundle",
+			MutationDescription = "Mutation to bundle",
+			AmountDescription = "How many bundles to create",
+			ButtonDescription = "Convert 100 selected cards into one bundle",
+		})
 	end
 }

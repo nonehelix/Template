@@ -417,11 +417,9 @@ return {
 
 		local function getTravelTimerLabel(tokenName)
 			local collectables = getCollectablesFolder()
-			if not collectables then
-				return nil
-			end
+			local timerRoot = collectables and collectables:FindFirstChild(tokenName .. "ParkourTimer", true) or nil
+			timerRoot = timerRoot or Workspace:FindFirstChild(tokenName .. "ParkourTimer", true)
 
-			local timerRoot = collectables:FindFirstChild(tokenName .. "ParkourTimer", true)
 			if timerRoot then
 				if timerRoot:IsA("TextLabel") then
 					return timerRoot
@@ -433,7 +431,8 @@ return {
 				end
 			end
 
-			for _, descendant in ipairs(collectables:GetDescendants()) do
+			local searchRoot = collectables or Workspace
+			for _, descendant in ipairs(searchRoot:GetDescendants()) do
 				if descendant.Name == tokenName and descendant:IsA("TextLabel") then
 					return descendant
 				end
@@ -479,18 +478,18 @@ return {
 			local collectables = getCollectablesFolder()
 			local collectable = collectables and collectables:FindFirstChild(tokenName) or nil
 			local isVisible = isCollectableVisible(collectable)
-			local timerLabel = getTravelTimerLabel(tokenName)
 
-			if timerLabel then
-				local timeText = tostring(timerLabel.Text or ""):gsub("%s+", "")
-				if timeText == "20:00" then
-					return isVisible or not collectable
-				end
-
-				return false
+			if isVisible then
+				return true
 			end
 
-			return isVisible
+			local timerLabel = getTravelTimerLabel(tokenName)
+			if timerLabel then
+				local timeText = tostring(timerLabel.Text or ""):gsub("%s+", "")
+				return timeText == "20:00" or timeText == "00:00"
+			end
+
+			return false
 		end
 
 		--==================================================
@@ -1207,6 +1206,7 @@ return {
 			local Feature = RegisterFeature({
 				Key = "AutoCollectGT",
 				Tab = "Collect",
+				Section = "Grade Tokens",
 				Order = 10,
 
 				Defaults = {
@@ -1254,6 +1254,7 @@ return {
 			local Feature = RegisterFeature({
 				Key = "AutoCollectTT",
 				Tab = "Collect",
+				Section = "Travel Tokens",
 				Order = 20,
 
 				Defaults = {
@@ -1276,12 +1277,17 @@ return {
 
 			function Feature:CollectReadyTokens()
 				local now = tick()
+				local readyTokens = {}
 
 				for _, tokenName in ipairs(self.State.TokenNames) do
 					if isTravelTokenReady(tokenName) and (now - (self.State.LastCollectTimes[tokenName] or 0)) >= self.State.TokenCooldown then
-						self.State.LastCollectTimes[tokenName] = now
-						PotionRemote:FireServer("Collect", tokenName)
+						readyTokens[#readyTokens + 1] = tokenName
 					end
+				end
+
+				for _, tokenName in ipairs(readyTokens) do
+					self.State.LastCollectTimes[tokenName] = now
+					PotionRemote:FireServer("Collect", tokenName)
 				end
 			end
 

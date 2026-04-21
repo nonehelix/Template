@@ -386,6 +386,10 @@ do
 			panelRef = nil,
 			defaultWalkSpeed = nil,
 			defaultJumpPower = nil,
+			desiredWalkSpeed = nil,
+			walkSpeedConnection = nil,
+			walkSpeedHumanoid = nil,
+			applyingWalkSpeed = false,
 		},
 
 		Options = {
@@ -420,6 +424,49 @@ do
 
 		self.State.defaultWalkSpeed = storedWalkSpeed
 		self.State.defaultJumpPower = storedJumpPower
+	end
+
+	function Feature:DisconnectWalkSpeedLock()
+		if self.State.walkSpeedConnection then
+			self.State.walkSpeedConnection:Disconnect()
+			self.State.walkSpeedConnection = nil
+		end
+		self.State.walkSpeedHumanoid = nil
+		self.State.applyingWalkSpeed = false
+	end
+
+	function Feature:ApplyDesiredWalkSpeed(humanoid)
+		local desiredWalkSpeed = self.State.desiredWalkSpeed
+		if not humanoid or typeof(desiredWalkSpeed) ~= "number" or humanoid.WalkSpeed == desiredWalkSpeed then return end
+
+		self.State.applyingWalkSpeed = true
+		humanoid.WalkSpeed = desiredWalkSpeed
+		self.State.applyingWalkSpeed = false
+	end
+
+	function Feature:TrackWalkSpeed(humanoid)
+		if not humanoid then return end
+
+		if self.State.walkSpeedHumanoid ~= humanoid then
+			self:DisconnectWalkSpeedLock()
+			self.State.walkSpeedHumanoid = humanoid
+			self.State.walkSpeedConnection = humanoid:GetPropertyChangedSignal("WalkSpeed"):Connect(function()
+				if self.State.applyingWalkSpeed then return end
+				self:ApplyDesiredWalkSpeed(humanoid)
+			end)
+		end
+
+		self:ApplyDesiredWalkSpeed(humanoid)
+	end
+
+	function Feature:ApplyWalkSpeedLock(character)
+		if typeof(self.State.desiredWalkSpeed) ~= "number" then return end
+
+		character = character or player.Character
+		if not character then return end
+
+		local humanoid = character:FindFirstChildOfClass("Humanoid") or character:WaitForChild("Humanoid", 8)
+		if humanoid then self:TrackWalkSpeed(humanoid) end
 	end
 
 	function Feature:DisconnectCharacterTracking()
@@ -520,6 +567,9 @@ do
 			AddCleanupItem(self.State.globalBag, player.CharacterAdded:Connect(function(character)
 				self:CacheCharacterParts(character)
 				resetFlyPressed()
+				task.defer(function()
+					self:ApplyWalkSpeedLock(character)
+				end)
 			end))
 
 			AddCleanupItem(self.State.globalBag, UserInputService.InputBegan:Connect(function(input, gameProcessed)
@@ -688,8 +738,21 @@ do
 	function Feature:GetHandlers()
 		return {
 			WalkSpeed = function(value)
+				if typeof(value) ~= "number" then return end
+
 				local humanoid = self.Context:GetHumanoid(8)
-				if humanoid and typeof(value) == "number" then humanoid.WalkSpeed = value end
+				if not humanoid then return end
+				if humanoid.Parent then self:CaptureCharacterDefaults(humanoid.Parent) end
+
+				if self.State.defaultWalkSpeed ~= nil and value == self.State.defaultWalkSpeed then
+					self.State.desiredWalkSpeed = nil
+					self:DisconnectWalkSpeedLock()
+					humanoid.WalkSpeed = value
+					return
+				end
+
+				self.State.desiredWalkSpeed = value
+				self:TrackWalkSpeed(humanoid)
 			end,
 			JumpPower = function(value)
 				local humanoid = self.Context:GetHumanoid(8)
@@ -712,6 +775,7 @@ do
 	function Feature:Cleanup()
 		self:StopFly()
 		self:StopNoclip()
+		self:DisconnectWalkSpeedLock()
 		self:DisconnectCharacterTracking()
 		resetFlyPressed()
 
@@ -723,6 +787,7 @@ do
 		self.State.trackedParts = {}
 		self.State.trackedCharacter = nil
 		self.State.panelRef = nil
+		self.State.desiredWalkSpeed = nil
 	end
 end
 

@@ -21,20 +21,23 @@ return {
 			return leaderstats and leaderstats:WaitForChild("Passes", 10) or nil
 		end
 
+		local function setPass(passName, enabled)
+			local passes = getPasses()
+			if passes then passes:SetAttribute(passName, enabled == true) end
+		end
+
 		local function setAutoAttack(enabled)
 			local settings = getSettings()
 			if settings then settings:SetAttribute("AutoAttack", enabled == true) end
 
-			local passes = getPasses()
-			if passes then passes:SetAttribute("AutoAttack", enabled == true) end
+			setPass("AutoAttack", enabled)
 		end
 
 		local function setAutoClick(enabled)
 			local settings = getSettings()
 			if settings then settings:SetAttribute("AutoClick", enabled == true) end
 
-			local passes = getPasses()
-			if passes then passes:SetAttribute("AutoClicker", enabled == true) end
+			setPass("AutoClicker", enabled)
 		end
 
 		--==================================================
@@ -142,6 +145,62 @@ return {
 				return {
 					AutoAttack = function(value)
 						setAutoAttack(value)
+					end,
+				}
+			end
+		end
+
+		--==================================================
+		-- FEATURE: INSTANT ARISE
+		--==================================================
+		do
+			local Feature = RegisterFeature({
+				Key = "InstaArise",
+				Tab = "Combat",
+				Section = "Passes",
+				Order = 30,
+
+				Defaults = {
+					InstaArise = false,
+				},
+
+				Options = {
+					{ Id = "InstaArise", Type = "toggle", Label = "Instant Arise", Description = "Instantly arises shadows" },
+				}
+			})
+
+			function Feature:GetHandlers()
+				return {
+					InstaArise = function(value)
+						setPass("InstaArise", value)
+					end,
+				}
+			end
+		end
+
+		--==================================================
+		-- FEATURE: INSTANT DESTROY
+		--==================================================
+		do
+			local Feature = RegisterFeature({
+				Key = "InstaDestroy",
+				Tab = "Combat",
+				Section = "Passes",
+				Order = 40,
+
+				Defaults = {
+					InstaDestroy = false,
+				},
+
+				Options = {
+					{ Id = "InstaDestroy", Type = "toggle", Label = "Instant Destroy", Description = "Instantly destroys shadows" },
+				}
+			})
+
+			function Feature:GetHandlers()
+				return {
+					InstaDestroy = function(value)
+						setPass("InstaDestroy", value)
 					end,
 				}
 			end

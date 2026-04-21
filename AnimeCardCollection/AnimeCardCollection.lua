@@ -1087,9 +1087,9 @@ return {
 				end
 
 				if amount == "1" then
-					CardRemote:FireServer("Upgrade", pack, fromMutation, toMutation)
+					CardRemote:FireServer("Exchange", pack, fromMutation, toMutation)
 				else
-					CardRemote:FireServer("Upgrade", pack, fromMutation, toMutation, amount)
+					CardRemote:FireServer("Exchange", pack, fromMutation, toMutation, amount)
 				end
 			end
 

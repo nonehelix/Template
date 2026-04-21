@@ -17,6 +17,7 @@ return {
 		RegisterTabs({
 			{Name = "Card", Order = 20},
 			{Name = "Shop", Order = 25},
+			{Name = "Collect", Order = 30},
 		})
 
 		--==================================================
@@ -378,6 +379,12 @@ return {
 					feature:Start(panelRef)
 				end
 			end
+		end
+
+		local function getClientTokenFolder()
+			local items = Workspace:FindFirstChild("Items")
+			local tokens = items and items:FindFirstChild("Tokens")
+			return tokens and tokens:FindFirstChild("Client") or nil
 		end
 
 		--==================================================
@@ -1141,6 +1148,96 @@ return {
 			function Feature:Cleanup()
 				self:Stop()
 				self.State.PanelRef = nil
+			end
+		end
+
+		--==================================================
+		-- FEATURE: AUTO COLLECT GRADE TOKENS
+		--==================================================
+		do
+			local Feature = RegisterFeature({
+				Key = "AutoCollectGradeTokens",
+				Tab = "Collect",
+				Section = "Grade Tokens",
+				Order = 10,
+
+				Defaults = {
+					AutoCollectGradeTokensEnabled = false,
+				},
+
+				State = {
+					PanelRef = nil,
+					Running = false,
+					PollDelay = 0.35,
+					TokenCooldown = 0.75,
+					LastCollectTimes = {},
+				},
+
+				Options = {
+					{
+						Id = "AutoCollectGradeTokensEnabled",
+						Type = "toggle",
+						Label = "Auto Collect Grade Tokens",
+						Description = "Collects grade tokens found in Workspace.Items.Tokens.Client"
+					},
+				}
+			})
+
+			function Feature:CollectVisibleTokens()
+				local tokenFolder = getClientTokenFolder()
+				if not tokenFolder then
+					return
+				end
+
+				local now = tick()
+				for _, token in ipairs(tokenFolder:GetChildren()) do
+					local tokenId = tostring(token.Name or "")
+					if tokenId ~= "" and (now - (self.State.LastCollectTimes[tokenId] or 0)) >= self.State.TokenCooldown then
+						self.State.LastCollectTimes[tokenId] = now
+						CardRemote:FireServer("CollectToken", tokenId)
+					end
+				end
+			end
+
+			function Feature:Start(panelRef)
+				setFeaturePanelRef(self, panelRef)
+				if self.State.Running then
+					return
+				end
+
+				self.State.Running = true
+
+				task.spawn(function()
+					while self.State.Running do
+						local values = getPanelValues(self.State.PanelRef)
+						if not values or not values.AutoCollectGradeTokensEnabled then
+							break
+						end
+
+						self:CollectVisibleTokens()
+						task.wait(self.State.PollDelay)
+					end
+
+					self.State.Running = false
+				end)
+			end
+
+			function Feature:Stop()
+				self.State.Running = false
+			end
+
+			function Feature:GetHandlers()
+				return {
+					AutoCollectGradeTokensEnabled = buildToggleHandler(self, function(panelRef)
+						self:Start(panelRef)
+					end),
+				}
+			end
+
+			function Feature:Cleanup()
+				self:Stop()
+				self.State.PanelRef = nil
+				table.clear(self.State.LastCollectTimes)
 			end
 		end
 

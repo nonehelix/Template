@@ -4,6 +4,12 @@ return {
 		local ReplicatedStorage = game:GetService("ReplicatedStorage")
 		local Players = game:GetService("Players")
 		local player = Players.LocalPlayer
+		local shadowReachPatch = {
+			GuiFunctions = nil,
+			OriginalGetStatsBuff = nil,
+			LastLevel = nil,
+			LastMultiplier = nil,
+		}
 
 		--==================================================
 		-- TABS
@@ -22,6 +28,11 @@ return {
 			return leaderstats and leaderstats:WaitForChild("Passes", 10) or nil
 		end
 
+		local function getPlayerStats()
+			local leaderstats = player:WaitForChild("leaderstats", 10)
+			return leaderstats and leaderstats:WaitForChild("PlayerStats", 10) or nil
+		end
+
 		local function setAutoAttack(enabled)
 			local settings = getSettings()
 			if settings then settings:SetAttribute("AutoAttack", enabled == true) end
@@ -38,19 +49,65 @@ return {
 			if passes then passes:SetAttribute("AutoClicker", enabled == true) end
 		end
 
+		local function getStatsInfo()
+			local indexer = ReplicatedStorage:FindFirstChild("Indexer")
+			local module = indexer and indexer:FindFirstChild("StatsInfo")
+			if not module or not module:IsA("ModuleScript") then return nil end
+
+			local ok, data = pcall(require, module)
+			if ok then return data end
+
+			warn("[ShadowReach] Failed to load StatsInfo: " .. tostring(data))
+			return nil
+		end
+
+		local function getGuiFunctions()
+			local sharedModules = ReplicatedStorage:FindFirstChild("SharedModules")
+			local others = sharedModules and sharedModules:FindFirstChild("Others")
+			local module = others and others:FindFirstChild("GuiFunctions")
+			if not module or not module:IsA("ModuleScript") then return nil end
+
+			local ok, data = pcall(require, module)
+			if ok then return data end
+
+			warn("[ShadowReach] Failed to load GuiFunctions: " .. tostring(data))
+			return nil
+		end
+
+		local function getShadowReachMultiplier(level)
+			local statsInfo = getStatsInfo()
+			local shadowRange = statsInfo and statsInfo.Info and statsInfo.Info.ShadowRange
+			local buff = shadowRange and tonumber(shadowRange.Buff) or 0.01
+			return 1 + math.clamp(level, 0, 9999) * buff
+		end
+
+		local function patchShadowReachCalculator(multiplier)
+			local guiFunctions = getGuiFunctions()
+			if not guiFunctions or type(guiFunctions.GetStatsBuff) ~= "function" then
+				warn("[ShadowReach] GuiFunctions.GetStatsBuff not found")
+				return false
+			end
+
+			if shadowReachPatch.GuiFunctions ~= guiFunctions then
+				shadowReachPatch.GuiFunctions = guiFunctions
+				shadowReachPatch.OriginalGetStatsBuff = guiFunctions.GetStatsBuff
+			end
+
+			guiFunctions.GetStatsBuff = function(targetPlayer, statName)
+				if targetPlayer == player and statName == "ShadowRange" then
+					return multiplier
+				end
+
+				return shadowReachPatch.OriginalGetStatsBuff(targetPlayer, statName)
+			end
+
+			return true
+		end
+
 		local function isShadowReachMatch(name)
 			local lowerName = string.lower(tostring(name or ""))
 			return string.find(lowerName, "reach", 1, true) ~= nil
 				or string.find(lowerName, "shadow", 1, true) ~= nil
-		end
-
-		local function isShadowReachSetCandidate(name)
-			local lowerName = string.lower(tostring(name or ""))
-			return string.find(lowerName, "reach", 1, true) ~= nil
-				or (string.find(lowerName, "shadow", 1, true) ~= nil and (
-					string.find(lowerName, "range", 1, true) ~= nil
-					or string.find(lowerName, "distance", 1, true) ~= nil
-				))
 		end
 
 		local function getInstanceAttributes(instance)
@@ -146,33 +203,35 @@ return {
 		end
 
 		local function setShadowReach(value)
-			value = tonumber(value)
-			if not value then return end
+			local level = math.clamp(tonumber(value) or 0, 0, 9999)
 
-			local count = 0
-			visitPlayerData(function(label, instance)
-				local attributes = getInstanceAttributes(instance)
-				if not attributes then return end
-
-				for name, currentValue in pairs(attributes) do
-					if isShadowReachSetCandidate(name) and type(currentValue) == "number" then
-						local ok, err = pcall(function()
-							instance:SetAttribute(name, value)
-						end)
-
-						if ok then
-							count = count + 1
-							print(("[ShadowReach] Set %s.%s: %s -> %s"):format(label, tostring(name), tostring(currentValue), tostring(value)))
-						else
-							warn(("[ShadowReach] Failed to set %s.%s: %s"):format(label, tostring(name), tostring(err)))
-						end
-					end
-				end
-			end)
-
-			if count == 0 then
-				warn("[ShadowReach] No numeric reach/range attribute found. Run Scan Shadow Reach and send the output.")
+			local playerStats = getPlayerStats()
+			if not playerStats then
+				warn("[ShadowReach] PlayerStats not found")
+				return
 			end
+
+			local currentValue = playerStats:GetAttribute("ShadowRange")
+			if currentValue ~= level then
+				local ok, err = pcall(function()
+					playerStats:SetAttribute("ShadowRange", level)
+				end)
+
+				if not ok then
+					warn("[ShadowReach] Failed to set ShadowRange: " .. tostring(err))
+				end
+			end
+
+			local multiplier = getShadowReachMultiplier(level)
+			local patched = patchShadowReachCalculator(multiplier)
+
+			if patched and (shadowReachPatch.LastLevel ~= level or shadowReachPatch.LastMultiplier ~= multiplier) then
+				shadowReachPatch.LastLevel = level
+				shadowReachPatch.LastMultiplier = multiplier
+				print(("[ShadowReach] ShadowRange level %s -> %s | multiplier %.2fx"):format(tostring(currentValue), tostring(level), multiplier))
+			end
+
+			return patched
 		end
 
 		--==================================================
@@ -297,24 +356,63 @@ return {
 
 				Defaults = {
 					ShadowReach = 100,
+					ForceShadowReach = false,
+				},
+
+				State = {
+					Running = false,
+					LoopId = 0,
+					PollDelay = 0.5,
 				},
 
 				Options = {
 					{ Id = "ShadowReach", Type = "number", Label = "Shadow Reach", Description = "Set Shadow Reach", Min = 0, Max = 100000 },
+					{ Id = "ForceShadowReach", Type = "toggle", Label = "Force Shadow Reach", Description = "Keeps Shadow Reach applied" },
 					{ Id = "ApplyShadowReach", Type = "button", Label = "Apply Shadow Reach", Description = "Apply Shadow Reach", ButtonText = "Apply" },
 					{ Id = "ScanShadowReach", Type = "button", Label = "Scan Shadow Reach", Description = "Print Shadow Reach keys", ButtonText = "Scan" },
 				}
 			})
 
+			function Feature:Start(values)
+				self:Stop()
+
+				self.State.Running = true
+				self.State.LoopId = self.State.LoopId + 1
+				local id = self.State.LoopId
+
+				task.spawn(function()
+					while self.State.Running and self.State.LoopId == id do
+						if not values or not values.ForceShadowReach then break end
+						setShadowReach(values.ShadowReach)
+						task.wait(self.State.PollDelay)
+					end
+				end)
+			end
+
+			function Feature:Stop()
+				self.State.Running = false
+				self.State.LoopId = self.State.LoopId + 1
+			end
+
 			function Feature:GetHandlers()
 				return {
+					ShadowReach = function(value, values)
+						if values and values.ForceShadowReach then setShadowReach(value) end
+					end,
+					ForceShadowReach = function(value, values)
+						if value then self:Start(values) else self:Stop() end
+					end,
 					ApplyShadowReach = function(_, values)
-						setShadowReach(values.ShadowReach)
+						setShadowReach(values and values.ShadowReach)
 					end,
 					ScanShadowReach = function()
 						scanShadowReach()
 					end,
 				}
+			end
+
+			function Feature:Cleanup()
+				self:Stop()
 			end
 		end
 	end

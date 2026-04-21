@@ -415,30 +415,13 @@ return {
 			return misc and misc:FindFirstChild("Collectables") or nil
 		end
 
-		local function getTravelTimerLabel(tokenName)
+		local function getTravelToken(tokenName)
 			local collectables = getCollectablesFolder()
-			local timerRoot = collectables and collectables:FindFirstChild(tokenName .. "ParkourTimer", true) or nil
-			timerRoot = timerRoot or Workspace:FindFirstChild(tokenName .. "ParkourTimer", true)
-
-			if timerRoot then
-				if timerRoot:IsA("TextLabel") then
-					return timerRoot
-				end
-
-				local label = timerRoot:FindFirstChild(tokenName, true)
-				if label and label:IsA("TextLabel") then
-					return label
-				end
+			if not collectables then
+				return nil
 			end
 
-			local searchRoot = collectables or Workspace
-			for _, descendant in ipairs(searchRoot:GetDescendants()) do
-				if descendant.Name == tokenName and descendant:IsA("TextLabel") then
-					return descendant
-				end
-			end
-
-			return nil
+			return collectables:FindFirstChild(tokenName)
 		end
 
 		local function isCollectableVisible(collectable)
@@ -446,47 +429,14 @@ return {
 				return false
 			end
 
-			local foundVisual = false
-			local function checkVisual(instance)
-				if instance:IsA("BasePart") then
-					foundVisual = true
-					return instance.Transparency < 1
-				end
-
-				if instance:IsA("ParticleEmitter") or instance:IsA("BillboardGui") then
-					foundVisual = true
-					return instance.Enabled
-				end
-
-				return false
-			end
-
-			if checkVisual(collectable) then
-				return true
+			if collectable:IsA("BasePart") then
+				return collectable.Transparency < 1
 			end
 
 			for _, descendant in ipairs(collectable:GetDescendants()) do
-				if checkVisual(descendant) then
+				if descendant:IsA("BasePart") and descendant.Transparency < 1 then
 					return true
 				end
-			end
-
-			return not foundVisual
-		end
-
-		local function isTravelTokenReady(tokenName)
-			local collectables = getCollectablesFolder()
-			local collectable = collectables and collectables:FindFirstChild(tokenName) or nil
-			local isVisible = isCollectableVisible(collectable)
-
-			if isVisible then
-				return true
-			end
-
-			local timerLabel = getTravelTimerLabel(tokenName)
-			if timerLabel then
-				local timeText = tostring(timerLabel.Text or ""):gsub("%s+", "")
-				return timeText == "20:00" or timeText == "00:00"
 			end
 
 			return false
@@ -1265,8 +1215,11 @@ return {
 					PanelRef = nil,
 					Running = false,
 					PollDelay = 1,
-					TokenCooldown = 5,
-					LastCollectTimes = {},
+					TokenCooldown = 1200,
+					LastCollectTimes = {
+						TravelToken1 = 0,
+						TravelToken2 = 0,
+					},
 					TokenNames = {"TravelToken1", "TravelToken2"},
 				},
 
@@ -1275,19 +1228,30 @@ return {
 				}
 			})
 
-			function Feature:CollectReadyTokens()
-				local now = tick()
-				local readyTokens = {}
+			function Feature:CanTryCollect(tokenName)
+				local now = Workspace:GetServerTimeNow()
+				local lastCollect = self.State.LastCollectTimes[tokenName] or 0
+				return (now - lastCollect) >= self.State.TokenCooldown
+			end
 
-				for _, tokenName in ipairs(self.State.TokenNames) do
-					if isTravelTokenReady(tokenName) and (now - (self.State.LastCollectTimes[tokenName] or 0)) >= self.State.TokenCooldown then
-						readyTokens[#readyTokens + 1] = tokenName
-					end
+			function Feature:TryCollectToken(tokenName)
+				local token = getTravelToken(tokenName)
+				if not token or not isCollectableVisible(token) or not self:CanTryCollect(tokenName) then
+					return
 				end
 
-				for _, tokenName in ipairs(readyTokens) do
-					self.State.LastCollectTimes[tokenName] = now
+				local fired = pcall(function()
 					PotionRemote:FireServer("Collect", tokenName)
+				end)
+
+				if fired then
+					self.State.LastCollectTimes[tokenName] = Workspace:GetServerTimeNow()
+				end
+			end
+
+			function Feature:CollectReadyTokens()
+				for _, tokenName in ipairs(self.State.TokenNames) do
+					self:TryCollectToken(tokenName)
 				end
 			end
 

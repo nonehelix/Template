@@ -1,12 +1,8 @@
 return {
 	Load = function(Shared)
-		local Workspace = Shared.Workspace
-		local RegisterFeature = Shared.RegisterFeature
-		local RegisterTabs = Shared.RegisterTabs
+		local Workspace, RegisterFeature, RegisterTabs = Shared.Workspace, Shared.RegisterFeature, Shared.RegisterTabs
 
-		local ReplicatedStorage = game:GetService("ReplicatedStorage")
-		local ReplicatedFirst = game:GetService("ReplicatedFirst")
-		local Players = game:GetService("Players")
+		local ReplicatedStorage, ReplicatedFirst, Players = game:GetService("ReplicatedStorage"), game:GetService("ReplicatedFirst"), game:GetService("Players")
 
 		local player = Players.LocalPlayer
 		local unpackArgs = table.unpack or unpack
@@ -14,20 +10,14 @@ return {
 		--==================================================
 		-- TABS
 		--==================================================
-		RegisterTabs({
-			{Name = "Card", Order = 20},
-			{Name = "Shop", Order = 25},
-			{Name = "Collect", Order = 30},
-		})
+		RegisterTabs({{Name = "Card", Order = 20}, {Name = "Shop", Order = 25}, {Name = "Collect", Order = 30}})
 
 		--==================================================
 		-- GAME REFERENCES
 		--==================================================
 		local Remotes = ReplicatedStorage:WaitForChild("Remotes")
-		local CardRemote = Remotes:WaitForChild("Card")
-		local StockRemote = Remotes:WaitForChild("Stock")
-		local GradeRemote = Remotes:WaitForChild("Grade")
-		local PotionRemote = Remotes:WaitForChild("Potion")
+		local CardRemote, StockRemote = Remotes:WaitForChild("Card"), Remotes:WaitForChild("Stock")
+		local GradeRemote, PotionRemote = Remotes:WaitForChild("Grade"), Remotes:WaitForChild("Potion")
 
 		local CardConfig = require(
 			ReplicatedStorage:WaitForChild("Modules")
@@ -47,13 +37,8 @@ return {
 		-- HELPERS
 		--==================================================
 		local arrayContains = assert(Shared.arrayContains, "Shared.arrayContains is required")
-		local AUTO_BUY_POLL_DELAY = 0.15
-		local AUTO_GRADE_REQUEST_DELAY = 0.01
-		local REPLICATED_DATA_WAIT_DELAY = 0.1
-		local MARKET_BUY_COOLDOWN = 0.08
-		local MARKET_CHECK_INTERVAL = 60
-		local MARKET_POLL_DELAY = 1
-		local COLLECT_POLL_DELAY = 1
+		local AUTO_BUY_POLL_DELAY, AUTO_GRADE_REQUEST_DELAY, REPLICATED_DATA_WAIT_DELAY = 0.15, 0.01, 0.1
+		local MARKET_BUY_COOLDOWN, MARKET_CHECK_INTERVAL, MARKET_POLL_DELAY, COLLECT_POLL_DELAY = 0.08, 60, 1, 1
 
 		local function normalizeSelectionArray(values)
 			local result = {}
@@ -77,27 +62,16 @@ return {
 
 		local function buildRemotePackId(packName, mutation)
 			local base = normalizePackName(packName)
-			if base == "" then
-				return nil
-			end
-
-			if mutation == "Regular" or mutation == nil or mutation == "" then
-				return base
-			end
-
+			if base == "" then return nil end
+			if mutation == "Regular" or mutation == nil or mutation == "" then return base end
 			return base .. "-" .. tostring(mutation)
 		end
 
-		local function parseStockAmount(text)
-			return tonumber(string.match(tostring(text or ""), "%d+")) or 0
-		end
+		local function parseStockAmount(text) return tonumber(string.match(tostring(text or ""), "%d+")) or 0 end
 
 		local function parseCardActionAmount(value)
 			local amount = tonumber(string.match(tostring(value or ""), "%d+")) or 1
-			if amount == 10 or amount == 100 then
-				return amount
-			end
-
+			if amount == 10 or amount == 100 then return amount end
 			return 1
 		end
 
@@ -105,10 +79,7 @@ return {
 			local args = {actionName, ...}
 			local amount = tostring(parseCardActionAmount(amountValue))
 
-			if amount ~= "1" then
-				args[#args + 1] = amount
-			end
-
+			if amount ~= "1" then args[#args + 1] = amount end
 			CardRemote:FireServer(unpackArgs(args))
 		end
 
@@ -116,50 +87,39 @@ return {
 			local pack = normalizePackName(packValue)
 			local mutation = tostring(mutationValue or "")
 
-			if pack == "" or mutation == "" then
-				return
-			end
-
+			if pack == "" or mutation == "" then return end
 			fireCardAction(actionName, amountValue, pack, mutation)
 		end
 
 		local function addUniqueItem(items, seen, value)
 			value = tostring(value or "")
-			if value == "" or value == "All" or seen[value] then
-				return
-			end
-
+			if value == "" or value == "All" or seen[value] then return end
 			seen[value] = true
 			items[#items + 1] = value
 		end
 
 		local function getPackItems()
 			local items = {"All"}
-
 			if CardConfig and CardConfig.List and CardConfig.List.Packs then
 				for _, packName in pairs(CardConfig.List.Packs) do
 					items[#items + 1] = tostring(packName)
 				end
 			end
-
 			return items
 		end
 
 		local function getCardActionPackItems()
 			local items = {}
 			local seen = {}
-
 			addUniqueItem(items, seen, "Pirate")
 			for _, packName in ipairs(getPackItems()) do
 				addUniqueItem(items, seen, packName)
 			end
-
 			return items
 		end
 
 		local function getMutationItems()
 			local items = {"All", "Regular"}
-
 			if CardConfig and CardConfig.List and CardConfig.List.Mutations then
 				local mutationList = CardConfig.List.Mutations
 				local addedArrayItems = false
@@ -175,7 +135,6 @@ return {
 					end
 				end
 			end
-
 			return items
 		end
 
@@ -186,10 +145,7 @@ return {
 
 			local function addMutation(value)
 				value = tostring(value or "")
-				if excluded[value] then
-					return
-				end
-
+				if excluded[value] then return end
 				addUniqueItem(items, seen, value)
 			end
 
@@ -199,24 +155,18 @@ return {
 			for _, mutation in ipairs(getMutationItems()) do
 				addMutation(mutation)
 			end
-
 			return items
 		end
 
-		local function getUpgradeMutationOrder()
-			return getFilteredMutationItems({Rainbow = true})
-		end
+		local function getUpgradeMutationOrder() return getFilteredMutationItems({Rainbow = true}) end
 
 		local function getNextUpgradeMutation(fromMutation)
 			fromMutation = tostring(fromMutation or "")
 			local mutations = getUpgradeMutationOrder()
 
 			for index, mutation in ipairs(mutations) do
-				if tostring(mutation) == fromMutation then
-					return mutations[index + 1]
-				end
+				if tostring(mutation) == fromMutation then return mutations[index + 1] end
 			end
-
 			return nil
 		end
 
@@ -225,25 +175,14 @@ return {
 			local mutations = getUpgradeMutationOrder()
 
 			for index, mutation in ipairs(mutations) do
-				if index < #mutations then
-					items[#items + 1] = mutation
-				end
+				if index < #mutations then items[#items + 1] = mutation end
 			end
-
 			return items
 		end
 
-		local function getDowngradeMutationItems()
-			return getFilteredMutationItems({Regular = true})
-		end
-
-		local function getBundleMutationItems()
-			return getFilteredMutationItems({})
-		end
-
-		local function getCardActionAmountItems()
-			return {"x1", "x10", "x100"}
-		end
+		local function getDowngradeMutationItems() return getFilteredMutationItems({Regular = true}) end
+		local function getBundleMutationItems() return getFilteredMutationItems({}) end
+		local function getCardActionAmountItems() return {"x1", "x10", "x100"} end
 
 		local function registerPackMutationActionFeature(config)
 			local key = config.Key
@@ -253,17 +192,8 @@ return {
 			local runId = key .. "Run"
 
 			local Feature = RegisterFeature({
-				Key = key,
-				Tab = "Shop",
-				Section = config.Section or key,
-				Order = config.Order,
-
-				Defaults = {
-					[packId] = config.DefaultPack or "Pirate",
-					[mutationId] = config.DefaultMutation or "Regular",
-					[amountId] = config.DefaultAmount or "x1",
-				},
-
+				Key = key, Tab = "Shop", Section = config.Section or key, Order = config.Order,
+				Defaults = {[packId] = config.DefaultPack or "Pirate", [mutationId] = config.DefaultMutation or "Regular", [amountId] = config.DefaultAmount or "x1"},
 				Options = {
 					{ Id = packId, Type = "select", Label = "Pack", Description = config.PackDescription, Items = getCardActionPackItems },
 					{ Id = mutationId, Type = "select", Label = "Mutation", Description = config.MutationDescription, Items = config.MutationItems },
@@ -278,11 +208,7 @@ return {
 			end
 
 			function Feature:GetHandlers()
-				return {
-					[runId] = function(_, values)
-						self:Run(values)
-					end
-				}
+				return {[runId] = function(_, values) self:Run(values) end}
 			end
 
 			return Feature
@@ -290,7 +216,6 @@ return {
 
 		local function getGradeItems()
 			local items = {}
-
 			if GradesConfig and GradesConfig.List then
 				for _, grade in ipairs(GradesConfig.List) do
 					items[#items + 1] = tostring(grade)
@@ -298,14 +223,12 @@ return {
 			else
 				items = {"F", "E", "D", "C", "B", "A", "S", "S+", "SS", "SR", "UR"}
 			end
-
 			return items
 		end
 
 		local function getAllCardNames()
 			local seen = {}
 			local cardNames = {}
-
 			if CardConfig and CardConfig.Packs then
 				for _, packData in pairs(CardConfig.Packs) do
 					if packData.List then
@@ -321,18 +244,14 @@ return {
 			end
 
 			table.sort(cardNames)
-
 			local items = {"All"}
 			for _, cardName in ipairs(cardNames) do
 				items[#items + 1] = cardName
 			end
-
 			return items
 		end
 
-		local function getPanelValues(panelRef)
-			return panelRef and panelRef.Config and panelRef.Config.Values or nil
-		end
+		local function getPanelValues(panelRef) return panelRef and panelRef.Config and panelRef.Config.Values or nil end
 
 		local function setFeaturePanelRef(feature, panelRef)
 			feature.State.PanelRef = panelRef
@@ -351,9 +270,7 @@ return {
 		end
 
 		local function buildPanelRefHandler(feature)
-			return function(_, _, panelRef)
-				setFeaturePanelRef(feature, panelRef)
-			end
+			return function(_, _, panelRef) setFeaturePanelRef(feature, panelRef) end
 		end
 
 		local function buildRestartHandler(feature, enabledKey)
@@ -368,18 +285,14 @@ return {
 		local function bindPollingToggleFeature(feature, optionId, onTick)
 			function feature:Start(panelRef)
 				setFeaturePanelRef(self, panelRef)
-				if self.State.Running then
-					return
-				end
+				if self.State.Running then return end
 
 				self.State.Running = true
 
 				task.spawn(function()
 					while self.State.Running do
 						local values = getPanelValues(self.State.PanelRef)
-						if not values or not values[optionId] then
-							break
-						end
+						if not values or not values[optionId] then break end
 
 						onTick(self)
 						task.wait(self.State.PollDelay)
@@ -389,24 +302,16 @@ return {
 				end)
 			end
 
-			function feature:Stop()
-				self.State.Running = false
-			end
+			function feature:Stop() self.State.Running = false end
 
 			function feature:GetHandlers()
-				return {
-					[optionId] = buildToggleHandler(self, function(panelRef)
-						self:Start(panelRef)
-					end),
-				}
+				return {[optionId] = buildToggleHandler(self, function(panelRef) self:Start(panelRef) end)}
 			end
 
 			function feature:Cleanup()
 				self:Stop()
 				self.State.PanelRef = nil
-				if self.State.LastCollectAt then
-					table.clear(self.State.LastCollectAt)
-				end
+				if self.State.LastCollectAt then table.clear(self.State.LastCollectAt) end
 			end
 		end
 
@@ -424,21 +329,13 @@ return {
 
 		local function getCollectable(name)
 			local collectables = getCollectablesFolder()
-			if not collectables then
-				return nil
-			end
-
+			if not collectables then return nil end
 			return collectables:FindFirstChild(name)
 		end
 
 		local function isCollectableVisible(collectable)
-			if not collectable then
-				return false
-			end
-
-			if collectable:IsA("BasePart") then
-				return collectable.Transparency < 1
-			end
+			if not collectable then return false end
+			if collectable:IsA("BasePart") then return collectable.Transparency < 1 end
 
 			for _, descendant in ipairs(collectable:GetDescendants()) do
 				if descendant:IsA("BasePart") and descendant.Transparency < 1 then
@@ -451,9 +348,7 @@ return {
 
 		local function canCollectVisibleItem(state, itemName)
 			local item = getCollectable(itemName)
-			if not item or not isCollectableVisible(item) then
-				return false
-			end
+			if not item or not isCollectableVisible(item) then return false end
 
 			local now = Workspace:GetServerTimeNow()
 			local lastCollect = state.LastCollectAt[itemName] or 0
@@ -461,23 +356,14 @@ return {
 		end
 
 		local function tryCollectVisibleItem(state, itemName)
-			if not canCollectVisibleItem(state, itemName) then
-				return
-			end
+			if not canCollectVisibleItem(state, itemName) then return end
 
-			local fired = pcall(function()
-				PotionRemote:FireServer("Collect", itemName)
-			end)
-
-			if fired then
-				state.LastCollectAt[itemName] = Workspace:GetServerTimeNow()
-			end
+			local fired = pcall(function() PotionRemote:FireServer("Collect", itemName) end)
+			if fired then state.LastCollectAt[itemName] = Workspace:GetServerTimeNow() end
 		end
 
 		local function collectVisibleItems(state)
-			for _, itemName in ipairs(state.ItemNames) do
-				tryCollectVisibleItem(state, itemName)
-			end
+			for _, itemName in ipairs(state.ItemNames) do tryCollectVisibleItem(state, itemName) end
 		end
 
 		--==================================================
@@ -485,24 +371,9 @@ return {
 		--==================================================
 		do
 			local Feature = RegisterFeature({
-				Key = "AutoBuy",
-				Tab = "Card",
-				Section = "Buying",
-				Order = 10,
-
-				Defaults = {
-					AutoBuyEnabled = false,
-					AutoBuyPack = {},
-					AutoBuyMutation = {},
-				},
-
-				State = {
-					LastBuyTimes = {},
-					Running = false,
-					PanelRef = nil,
-					PackMetadata = setmetatable({}, {__mode = "k"}),
-				},
-
+				Key = "AutoBuy", Tab = "Card", Section = "Buying", Order = 10,
+				Defaults = {AutoBuyEnabled = false, AutoBuyPack = {}, AutoBuyMutation = {}},
+				State = {LastBuyTimes = {}, Running = false, PanelRef = nil, PackMetadata = setmetatable({}, {__mode = "k"})},
 				Options = {
 					{ Id = "AutoBuyEnabled", Type = "toggle", Label = "Enable Auto Buy", Description = "Auto buys conveyor packs" },
 					{ Id = "AutoBuyPack", Type = "multiselect", Label = "Pack", Description = "Select packs", Items = getPackItems, EmptyText = "Nothing selected" },
@@ -511,9 +382,7 @@ return {
 			})
 
 			function Feature:GetPackMetadata(packModel)
-				if not packModel then
-					return nil
-				end
+				if not packModel then return nil end
 
 				local cached = self.State.PackMetadata[packModel]
 				if not cached then
@@ -556,38 +425,25 @@ return {
 			end
 
 			function Feature:Matches(packType, mutation, selectedPacks, selectedMutations)
-				if not packType or packType == "" then
-					return false
-				end
-				if type(selectedPacks) ~= "table" or #selectedPacks == 0 then
-					return false
-				end
-				if type(selectedMutations) ~= "table" or #selectedMutations == 0 then
-					return false
-				end
+				if not packType or packType == "" then return false end
+				if type(selectedPacks) ~= "table" or #selectedPacks == 0 then return false end
+				if type(selectedMutations) ~= "table" or #selectedMutations == 0 then return false end
 
 				local packOk = arrayContains(selectedPacks, "All") or arrayContains(selectedPacks, packType)
 				local mutOk = arrayContains(selectedMutations, "All") or arrayContains(selectedMutations, mutation)
-
 				return packOk and mutOk
 			end
 
 			function Feature:Tick(values)
-				if not values.AutoBuyEnabled then
-					return
-				end
+				if not values.AutoBuyEnabled then return end
 
 				local selectedPacks = normalizeSelectionArray(values.AutoBuyPack)
 				local selectedMutations = normalizeSelectionArray(values.AutoBuyMutation)
 
-				if #selectedPacks == 0 or #selectedMutations == 0 then
-					return
-				end
+				if #selectedPacks == 0 or #selectedMutations == 0 then return end
 
 				local packsFolder = Workspace:FindFirstChild("Client") and Workspace.Client:FindFirstChild("Packs")
-				if not packsFolder then
-					return
-				end
+				if not packsFolder then return end
 
 				local now = tick()
 
@@ -610,9 +466,7 @@ return {
 
 			function Feature:Start(panelRef)
 				setFeaturePanelRef(self, panelRef)
-				if self.State.Running then
-					return
-				end
+				if self.State.Running then return end
 
 				self.State.Running = true
 
@@ -627,15 +481,11 @@ return {
 				end)
 			end
 
-			function Feature:Stop()
-				self.State.Running = false
-			end
+			function Feature:Stop() self.State.Running = false end
 
 			function Feature:GetHandlers()
 				return {
-					AutoBuyEnabled = buildToggleHandler(self, function(panelRef)
-						self:Start(panelRef)
-					end),
+					AutoBuyEnabled = buildToggleHandler(self, function(panelRef) self:Start(panelRef) end),
 					AutoBuyPack = buildPanelRefHandler(self),
 					AutoBuyMutation = buildPanelRefHandler(self),
 				}
@@ -654,28 +504,9 @@ return {
 		--==================================================
 		do
 			local Feature = RegisterFeature({
-				Key = "AutoGrade",
-				Tab = "Card",
-				Section = "Grading",
-				Order = 15,
-
-				Defaults = {
-					AutoGradeEnabled = false,
-					AutoGradeCards = {},
-					AutoGradeTarget = {},
-				},
-
-				State = {
-					Grading = false,
-					PanelRef = nil,
-					Queue = {},
-					QueueIndex = 0,
-					TargetDone = {},
-					TargetMinRank = nil,
-					RequestDelay = AUTO_GRADE_REQUEST_DELAY,
-					ReplicatedData = nil,
-				},
-
+				Key = "AutoGrade", Tab = "Card", Section = "Grading", Order = 15,
+				Defaults = {AutoGradeEnabled = false, AutoGradeCards = {}, AutoGradeTarget = {}},
+				State = {Grading = false, PanelRef = nil, Queue = {}, QueueIndex = 0, TargetDone = {}, TargetMinRank = nil, RequestDelay = AUTO_GRADE_REQUEST_DELAY, ReplicatedData = nil},
 				Options = {
 					{ Id = "AutoGradeEnabled", Type = "toggle", Label = "Enable Auto Grade", Description = "Auto grades selected cards" },
 					{ Id = "AutoGradeCards", Type = "multiselect", Label = "Select Cards", Description = "Select cards to grade", Items = getAllCardNames, EmptyText = "Nothing selected" },
@@ -692,16 +523,10 @@ return {
 
 			local function requireReplicatedDataModule()
 				local replicatedDataModule = ReplicatedFirst:FindFirstChild("ReplicatedData")
-				if not replicatedDataModule then
-					warn("[AutoGrade] Missing ReplicatedFirst.ReplicatedData")
-					return nil
-				end
+				if not replicatedDataModule then warn("[AutoGrade] Missing ReplicatedFirst.ReplicatedData"); return nil end
 
 				local ok, result = pcall(require, replicatedDataModule)
-				if not ok then
-					warn("[AutoGrade] Failed to require ReplicatedData:", tostring(result))
-					return nil
-				end
+				if not ok then warn("[AutoGrade] Failed to require ReplicatedData:", tostring(result)); return nil end
 
 				return result
 			end
@@ -713,9 +538,7 @@ return {
 
 				timeout = timeout or 10
 				local replicatedData = requireReplicatedDataModule()
-				if not replicatedData then
-					return nil
-				end
+				if not replicatedData then return nil end
 
 				local startTime = tick()
 				while tick() - startTime < timeout do
@@ -732,40 +555,25 @@ return {
 
 			function Feature:GetReplicatedTable(key)
 				local replicatedData = self:GetReplicatedData()
-				if not replicatedData then
-					return {}
-				end
+				if not replicatedData then return {} end
 
 				local ok, data = pcall(function()
 					return replicatedData.GetData(key)
 				end)
 
-				if not ok or type(data) ~= "table" then
-					return {}
-				end
-
+				if not ok or type(data) ~= "table" then return {} end
 				return data
 			end
 
-			function Feature:GetOwnedCards()
-				return self:GetReplicatedTable("Cards")
-			end
-
-			function Feature:GetServerAutoGrades()
-				return self:GetReplicatedTable("AutoGrades")
-			end
+			function Feature:GetOwnedCards() return self:GetReplicatedTable("Cards") end
+			function Feature:GetServerAutoGrades() return self:GetReplicatedTable("AutoGrades") end
 
 			function Feature:GetLoopDataSnapshot()
-				return {
-					OwnedCards = self:GetOwnedCards(),
-					AutoGrades = self:GetServerAutoGrades(),
-				}
+				return {OwnedCards = self:GetOwnedCards(), AutoGrades = self:GetServerAutoGrades()}
 			end
 
 			function Feature:GetGradeRank(gradeName)
-				if not gradeName then
-					return 0
-				end
+				if not gradeName then return 0 end
 				return gradeOrder[tostring(gradeName)] or 0
 			end
 
@@ -794,18 +602,13 @@ return {
 
 			function Feature:CurrentCardNeedsConfirm(cardId, ownedCards, serverAutoGrades)
 				local currentGrade = self:GetCardCurrentGrade(cardId, ownedCards)
-				if not currentGrade then
-					return false
-				end
-
+				if not currentGrade then return false end
 				return arrayContains(serverAutoGrades or self:GetServerAutoGrades(), tostring(currentGrade))
 			end
 
 			function Feature:BuildQueue(selectedCards, ownedCards)
 				ownedCards = ownedCards or self:GetOwnedCards()
-				if type(ownedCards) ~= "table" then
-					return {}
-				end
+				if type(ownedCards) ~= "table" then return {} end
 
 				local queue = {}
 
@@ -831,9 +634,7 @@ return {
 			end
 
 			function Feature:MarkFinishedCards(ownedCards)
-				if not self.State.TargetMinRank then
-					return
-				end
+				if not self.State.TargetMinRank then return end
 
 				ownedCards = ownedCards or self:GetOwnedCards()
 
@@ -853,26 +654,20 @@ return {
 
 			function Feature:AllCardsDone()
 				for _, cardId in ipairs(self.State.Queue) do
-					if not self:IsCardDone(cardId) then
-						return false
-					end
+					if not self:IsCardDone(cardId) then return false end
 				end
 				return true
 			end
 
 			function Feature:GetNextCardToRoll(ownedCards)
 				local count = #self.State.Queue
-				if count == 0 then
-					return nil
-				end
+				if count == 0 then return nil end
 
 				ownedCards = ownedCards or self:GetOwnedCards()
 
 				for _ = 1, count do
 					self.State.QueueIndex += 1
-					if self.State.QueueIndex > count then
-						self.State.QueueIndex = 1
-					end
+					if self.State.QueueIndex > count then self.State.QueueIndex = 1 end
 
 					local cardId = self.State.Queue[self.State.QueueIndex]
 					if cardId and not self:IsCardDone(cardId) and ownedCards[cardId] ~= nil then
@@ -930,36 +725,21 @@ return {
 				setFeaturePanelRef(self, panelRef)
 
 				local values = getPanelValues(panelRef)
-				if not values then
-					self:Stop()
-					return
-				end
+				if not values then self:Stop(); return end
 
 				local selectedCards = normalizeSelectionArray(values.AutoGradeCards)
 				local selectedGrades = normalizeSelectionArray(values.AutoGradeTarget)
 
-				if #selectedCards == 0 or #selectedGrades == 0 then
-					self:Stop()
-					return
-				end
+				if #selectedCards == 0 or #selectedGrades == 0 then self:Stop(); return end
 
-				if not self:GetReplicatedData() then
-					self:Stop()
-					return
-				end
+				if not self:GetReplicatedData() then self:Stop(); return end
 
 				local targetMinRank = self:GetTargetMinRank(selectedGrades)
-				if not targetMinRank then
-					self:Stop()
-					return
-				end
+				if not targetMinRank then self:Stop(); return end
 
 				local ownedCards = self:GetOwnedCards()
 				local queue = self:BuildQueue(selectedCards, ownedCards)
-				if #queue == 0 then
-					self:Stop()
-					return
-				end
+				if #queue == 0 then self:Stop(); return end
 
 				self:Stop()
 
@@ -971,14 +751,9 @@ return {
 
 				self:MarkFinishedCards(ownedCards)
 
-				if self:AllCardsDone() then
-					self:Stop()
-					return
-				end
+				if self:AllCardsDone() then self:Stop(); return end
 
-				task.spawn(function()
-					self:Loop()
-				end)
+				task.spawn(function() self:Loop() end)
 			end
 
 			function Feature:Stop()
@@ -991,9 +766,7 @@ return {
 
 			function Feature:GetHandlers()
 				return {
-					AutoGradeEnabled = buildToggleHandler(self, function(panelRef)
-						self:Start(panelRef)
-					end),
+					AutoGradeEnabled = buildToggleHandler(self, function(panelRef) self:Start(panelRef) end),
 					AutoGradeCards = buildRestartHandler(self, "AutoGradeEnabled"),
 					AutoGradeTarget = buildRestartHandler(self, "AutoGradeEnabled"),
 				}
@@ -1011,23 +784,9 @@ return {
 		--==================================================
 		do
 			local Feature = RegisterFeature({
-				Key = "AutoBuyMarket",
-				Tab = "Shop",
-				Order = 20,
-
-				Defaults = {
-					AutoBuyMarketEnabled = false,
-					AutoBuyMarketPack = {},
-					AutoBuyMarketMutation = {},
-				},
-
-				State = {
-					LastCheckTime = 0,
-					PanelRef = nil,
-					Running = false,
-					BuyCooldown = MARKET_BUY_COOLDOWN,
-				},
-
+				Key = "AutoBuyMarket", Tab = "Shop", Order = 20,
+				Defaults = {AutoBuyMarketEnabled = false, AutoBuyMarketPack = {}, AutoBuyMarketMutation = {}},
+				State = {LastCheckTime = 0, PanelRef = nil, Running = false, BuyCooldown = MARKET_BUY_COOLDOWN},
 				Options = {
 					{ Id = "AutoBuyMarketEnabled", Type = "toggle", Label = "Enable Auto Buy Market", Description = "Auto buys market packs" },
 					{ Id = "AutoBuyMarketPack", Type = "multiselect", Label = "Pack", Description = "Select packs", Items = getPackItems, EmptyText = "Nothing selected" },
@@ -1037,24 +796,16 @@ return {
 
 			function Feature:GetMarketStock()
 				local playerGui = player:FindFirstChild("PlayerGui")
-				if not playerGui then
-					return {}
-				end
+				if not playerGui then return {} end
 
 				local stockGui = playerGui:FindFirstChild("Stock")
-				if not stockGui then
-					return {}
-				end
+				if not stockGui then return {} end
 
 				local frame = stockGui:FindFirstChild("Frame")
-				if not frame then
-					return {}
-				end
+				if not frame then return {} end
 
 				local scrolling = frame:FindFirstChild("ScrollingFrame")
-				if not scrolling then
-					return {}
-				end
+				if not scrolling then return {} end
 
 				local stockList = {}
 
@@ -1074,14 +825,7 @@ return {
 						end
 
 						if packName ~= "" then
-							stockList[#stockList + 1] = {
-								PackName = packName,
-								NormalizedPackName = normalizePackName(packName),
-								Mutation = mutation,
-								RemoteId = buildRemotePackId(packName, mutation),
-								Amount = amount,
-								Slot = i
-							}
+							stockList[#stockList + 1] = {PackName = packName, NormalizedPackName = normalizePackName(packName), Mutation = mutation, RemoteId = buildRemotePackId(packName, mutation), Amount = amount, Slot = i}
 						end
 					end
 				end
@@ -1091,16 +835,12 @@ return {
 
 			function Feature:RunStockCheck()
 				local values = getPanelValues(self.State.PanelRef)
-				if not values or not values.AutoBuyMarketEnabled then
-					return
-				end
+				if not values or not values.AutoBuyMarketEnabled then return end
 
 				local selectedPacks = normalizeSelectionArray(values.AutoBuyMarketPack)
 				local selectedMutations = normalizeSelectionArray(values.AutoBuyMarketMutation)
 
-				if #selectedPacks == 0 or #selectedMutations == 0 then
-					return
-				end
+				if #selectedPacks == 0 or #selectedMutations == 0 then return end
 
 				local selectedNormalizedPacks = {}
 				for _, p in ipairs(selectedPacks) do
@@ -1108,9 +848,7 @@ return {
 				end
 
 				local marketStock = self:GetMarketStock()
-				if #marketStock == 0 then
-					return
-				end
+				if #marketStock == 0 then return end
 
 				local buyQueue = {}
 
@@ -1125,9 +863,7 @@ return {
 					end
 				end
 
-				if #buyQueue == 0 then
-					return
-				end
+				if #buyQueue == 0 then return end
 
 				for i, remoteId in ipairs(buyQueue) do
 					StockRemote:FireServer("Buy", remoteId)
@@ -1140,9 +876,7 @@ return {
 			function Feature:Start(panelRef)
 				setFeaturePanelRef(self, panelRef)
 				self.State.LastCheckTime = 0
-				if self.State.Running then
-					return
-				end
+				if self.State.Running then return end
 
 				self.State.Running = true
 
@@ -1165,9 +899,7 @@ return {
 				end)
 			end
 
-			function Feature:Stop()
-				self.State.Running = false
-			end
+			function Feature:Stop() self.State.Running = false end
 
 			function Feature:GetHandlers()
 				return {
@@ -1191,23 +923,9 @@ return {
 		--==================================================
 		do
 			local Feature = RegisterFeature({
-				Key = "AutoCollectGT",
-				Tab = "Collect",
-				Section = "Grade Tokens",
-				Order = 10,
-
-				Defaults = {
-					AutoCollectGT = false,
-				},
-
-				State = {
-					PanelRef = nil,
-					Running = false,
-					PollDelay = COLLECT_POLL_DELAY,
-					CooldownSeconds = 0.75,
-					LastCollectAt = {},
-				},
-
+				Key = "AutoCollectGT", Tab = "Collect", Section = "Grade Tokens", Order = 10,
+				Defaults = {AutoCollectGT = false},
+				State = {PanelRef = nil, Running = false, PollDelay = COLLECT_POLL_DELAY, CooldownSeconds = 0.75, LastCollectAt = {}},
 				Options = {
 					{ Id = "AutoCollectGT", Type = "toggle", Label = "Auto Collect Grade Tokens", Description = "Auto collects grade tokens" },
 				}
@@ -1215,9 +933,7 @@ return {
 
 			function Feature:CollectVisibleTokens()
 				local tokenFolder = getClientTokenFolder()
-				if not tokenFolder then
-					return
-				end
+				if not tokenFolder then return end
 
 				local now = Workspace:GetServerTimeNow()
 				for _, token in ipairs(tokenFolder:GetChildren()) do
@@ -1229,9 +945,7 @@ return {
 				end
 			end
 
-			bindPollingToggleFeature(Feature, "AutoCollectGT", function(self)
-				self:CollectVisibleTokens()
-			end)
+			bindPollingToggleFeature(Feature, "AutoCollectGT", function(self) self:CollectVisibleTokens() end)
 		end
 
 		--==================================================
@@ -1239,35 +953,15 @@ return {
 		--==================================================
 		do
 			local Feature = RegisterFeature({
-				Key = "AutoCollectTT",
-				Tab = "Collect",
-				Section = "Travel Tokens",
-				Order = 20,
-
-				Defaults = {
-					AutoCollectTT = false,
-				},
-
-				State = {
-					PanelRef = nil,
-					Running = false,
-					PollDelay = COLLECT_POLL_DELAY,
-					CooldownSeconds = 1200,
-					LastCollectAt = {
-						TravelToken1 = 0,
-						TravelToken2 = 0,
-					},
-					ItemNames = {"TravelToken1", "TravelToken2"},
-				},
-
+				Key = "AutoCollectTT", Tab = "Collect", Section = "Travel Tokens", Order = 20,
+				Defaults = {AutoCollectTT = false},
+				State = {PanelRef = nil, Running = false, PollDelay = COLLECT_POLL_DELAY, CooldownSeconds = 1200, LastCollectAt = {TravelToken1 = 0, TravelToken2 = 0}, ItemNames = {"TravelToken1", "TravelToken2"}},
 				Options = {
 					{ Id = "AutoCollectTT", Type = "toggle", Label = "Auto Collect Travel Tokens", Description = "Auto collects travel tokens" },
 				}
 			})
 
-			bindPollingToggleFeature(Feature, "AutoCollectTT", function(self)
-				collectVisibleItems(self.State)
-			end)
+			bindPollingToggleFeature(Feature, "AutoCollectTT", function(self) collectVisibleItems(self.State) end)
 		end
 
 		--==================================================
@@ -1275,35 +969,15 @@ return {
 		--==================================================
 		do
 			local Feature = RegisterFeature({
-				Key = "AutoCollectPotions",
-				Tab = "Collect",
-				Section = "Potions",
-				Order = 30,
-
-				Defaults = {
-					AutoCollectPotions = false,
-				},
-
-				State = {
-					PanelRef = nil,
-					Running = false,
-					PollDelay = COLLECT_POLL_DELAY,
-					CooldownSeconds = 600,
-					LastCollectAt = {
-						Luck = 0,
-						HatchTime = 0,
-					},
-					ItemNames = {"Luck", "HatchTime"},
-				},
-
+				Key = "AutoCollectPotions", Tab = "Collect", Section = "Potions", Order = 30,
+				Defaults = {AutoCollectPotions = false},
+				State = {PanelRef = nil, Running = false, PollDelay = COLLECT_POLL_DELAY, CooldownSeconds = 600, LastCollectAt = {Luck = 0, HatchTime = 0}, ItemNames = {"Luck", "HatchTime"}},
 				Options = {
 					{ Id = "AutoCollectPotions", Type = "toggle", Label = "Auto Collect Potions", Description = "Auto collects potions" },
 				}
 			})
 
-			bindPollingToggleFeature(Feature, "AutoCollectPotions", function(self)
-				collectVisibleItems(self.State)
-			end)
+			bindPollingToggleFeature(Feature, "AutoCollectPotions", function(self) collectVisibleItems(self.State) end)
 		end
 
 		--==================================================
@@ -1311,17 +985,8 @@ return {
 		--==================================================
 		do
 			local Feature = RegisterFeature({
-				Key = "Upgrade",
-				Tab = "Shop",
-				Section = "Upgrade",
-				Order = 30,
-
-				Defaults = {
-					UpgradePack = "Pirate",
-					UpgradeFromMutation = "Regular",
-					UpgradeAmount = "x1",
-				},
-
+				Key = "Upgrade", Tab = "Shop", Section = "Upgrade", Order = 30,
+				Defaults = {UpgradePack = "Pirate", UpgradeFromMutation = "Regular", UpgradeAmount = "x1"},
 				Options = {
 					{ Id = "UpgradePack", Type = "select", Label = "Pack", Description = "Select pack", Items = getCardActionPackItems },
 					{ Id = "UpgradeFromMutation", Type = "select", Label = "From Mutation", Description = "Select mutation", Items = getUpgradeFromMutationItems },
@@ -1337,52 +1002,24 @@ return {
 				local fromMutation = tostring(values.UpgradeFromMutation or "")
 				local toMutation = getNextUpgradeMutation(fromMutation)
 
-				if pack == "" or fromMutation == "" or not toMutation or toMutation == "" then
-					return
-				end
+				if pack == "" or fromMutation == "" or not toMutation or toMutation == "" then return end
 
 				fireCardAction("Exchange", values.UpgradeAmount, pack, fromMutation, toMutation)
 			end
 
 			function Feature:GetHandlers()
-				return {
-					UpgradeRun = function(_, values)
-						self:Run(values)
-					end
-				}
+				return {UpgradeRun = function(_, values) self:Run(values) end}
 			end
 		end
 
 		--==================================================
 		-- FEATURE: DOWNGRADE
 		--==================================================
-		registerPackMutationActionFeature({
-			Key = "Downgrade",
-			Section = "Downgrade",
-			Order = 31,
-			ActionName = "Downgrade",
-			DefaultMutation = "Gold",
-			MutationItems = getDowngradeMutationItems,
-			PackDescription = "Select pack",
-			MutationDescription = "Select mutation",
-			AmountDescription = "Select amount",
-			ButtonDescription = "Downgrade selected cards",
-		})
+		registerPackMutationActionFeature({Key = "Downgrade", Section = "Downgrade", Order = 31, ActionName = "Downgrade", DefaultMutation = "Gold", MutationItems = getDowngradeMutationItems, PackDescription = "Select pack", MutationDescription = "Select mutation", AmountDescription = "Select amount", ButtonDescription = "Downgrade selected cards"})
 
 		--==================================================
 		-- FEATURE: BUNDLE
 		--==================================================
-		registerPackMutationActionFeature({
-			Key = "Bundle",
-			Section = "Bundle",
-			Order = 32,
-			ActionName = "Bundle",
-			DefaultMutation = "Regular",
-			MutationItems = getBundleMutationItems,
-			PackDescription = "Select pack",
-			MutationDescription = "Select mutation",
-			AmountDescription = "Select amount",
-			ButtonDescription = "Create selected bundles",
-		})
+		registerPackMutationActionFeature({Key = "Bundle", Section = "Bundle", Order = 32, ActionName = "Bundle", DefaultMutation = "Regular", MutationItems = getBundleMutationItems, PackDescription = "Select pack", MutationDescription = "Select mutation", AmountDescription = "Select amount", ButtonDescription = "Create selected bundles"})
 	end
 }

@@ -1,6 +1,7 @@
 return {
 	Load = function(Shared)
 		local RegisterFeature, RegisterTabs = Shared.RegisterFeature, Shared.RegisterTabs
+		local ReplicatedStorage = game:GetService("ReplicatedStorage")
 		local Players = game:GetService("Players")
 		local player = Players.LocalPlayer
 
@@ -21,6 +22,11 @@ return {
 			return leaderstats and leaderstats:WaitForChild("Passes", 10) or nil
 		end
 
+		local function getPlayerStats()
+			local leaderstats = player:WaitForChild("leaderstats", 10)
+			return leaderstats and leaderstats:WaitForChild("PlayerStats", 10) or nil
+		end
+
 		local function setPass(passName, enabled)
 			local passes = getPasses()
 			if passes then passes:SetAttribute(passName, enabled == true) end
@@ -38,6 +44,31 @@ return {
 			if settings then settings:SetAttribute("AutoClick", enabled == true) end
 
 			setPass("AutoClicker", enabled)
+		end
+
+		local function getShadowSpeedBuff()
+			local indexer = ReplicatedStorage:FindFirstChild("Indexer")
+			local module = indexer and indexer:FindFirstChild("StatsInfo")
+			if not module or not module:IsA("ModuleScript") then return 0.02 end
+
+			local ok, statsInfo = pcall(require, module)
+			local shadowSpeed = ok and type(statsInfo) == "table" and statsInfo.Info and statsInfo.Info.ShadowSpeed
+			local buff = shadowSpeed and tonumber(shadowSpeed.Buff) or 0.02
+			return buff > 0 and buff or 0.02
+		end
+
+		local function setShadowSpeedMultiplier(multiplier)
+			multiplier = math.max(tonumber(multiplier) or 1, 1)
+
+			local playerStats = getPlayerStats()
+			if not playerStats then
+				warn("[ShadowSpeed] PlayerStats not found")
+				return
+			end
+
+			local buff = getShadowSpeedBuff()
+			local level = math.floor(((multiplier - 1) / buff) + 0.5)
+			playerStats:SetAttribute("ShadowSpeed", level)
 		end
 
 		--==================================================
@@ -151,58 +182,70 @@ return {
 		end
 
 		--==================================================
-		-- FEATURE: INSTANT ARISE
+		-- FEATURE: SHADOW SPEED
 		--==================================================
 		do
 			local Feature = RegisterFeature({
-				Key = "InstaArise",
+				Key = "ShadowSpeed",
 				Tab = "Combat",
-				Section = "Passes",
+				Section = "Shadow",
 				Order = 30,
 
 				Defaults = {
-					InstaArise = false,
+					ShadowSpeedMultiplier = 2,
+					ForceShadowSpeed = false,
+				},
+
+				State = {
+					Running = false,
+					LoopId = 0,
+					PollDelay = 0.5,
 				},
 
 				Options = {
-					{ Id = "InstaArise", Type = "toggle", Label = "Instant Arise", Description = "Instantly arises shadows" },
+					{ Id = "ShadowSpeedMultiplier", Type = "number", Label = "Shadow Speed", Description = "Set shadow speed multiplier", Min = 1, Max = 100 },
+					{ Id = "ForceShadowSpeed", Type = "toggle", Label = "Force Shadow Speed", Description = "Keeps shadow speed applied" },
+					{ Id = "ApplyShadowSpeed", Type = "button", Label = "Apply Shadow Speed", Description = "Apply shadow speed", ButtonText = "Apply" },
 				}
 			})
 
+			function Feature:Start(values)
+				self:Stop()
+
+				self.State.Running = true
+				self.State.LoopId = self.State.LoopId + 1
+				local id = self.State.LoopId
+
+				task.spawn(function()
+					while self.State.Running and self.State.LoopId == id do
+						if not values or not values.ForceShadowSpeed then break end
+						setShadowSpeedMultiplier(values.ShadowSpeedMultiplier)
+						task.wait(self.State.PollDelay)
+					end
+				end)
+			end
+
+			function Feature:Stop()
+				self.State.Running = false
+				self.State.LoopId = self.State.LoopId + 1
+			end
+
 			function Feature:GetHandlers()
 				return {
-					InstaArise = function(value)
-						setPass("InstaArise", value)
+					ShadowSpeedMultiplier = function(value, values)
+						if values and values.ForceShadowSpeed then setShadowSpeedMultiplier(value) end
+					end,
+					ForceShadowSpeed = function(value, values)
+						if value then self:Start(values) else self:Stop() end
+					end,
+					ApplyShadowSpeed = function(_, values)
+						setShadowSpeedMultiplier(values and values.ShadowSpeedMultiplier)
 					end,
 				}
 			end
-		end
 
-		--==================================================
-		-- FEATURE: INSTANT DESTROY
-		--==================================================
-		do
-			local Feature = RegisterFeature({
-				Key = "InstaDestroy",
-				Tab = "Combat",
-				Section = "Passes",
-				Order = 40,
-
-				Defaults = {
-					InstaDestroy = false,
-				},
-
-				Options = {
-					{ Id = "InstaDestroy", Type = "toggle", Label = "Instant Destroy", Description = "Instantly destroys shadows" },
-				}
-			})
-
-			function Feature:GetHandlers()
-				return {
-					InstaDestroy = function(value)
-						setPass("InstaDestroy", value)
-					end,
-				}
+			function Feature:Cleanup()
+				self:Stop()
 			end
 		end
 	end

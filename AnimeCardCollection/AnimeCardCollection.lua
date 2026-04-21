@@ -9,6 +9,7 @@ return {
 		local Players = game:GetService("Players")
 
 		local player = Players.LocalPlayer
+		local unpackArgs = table.unpack or unpack
 
 		--==================================================
 		-- TABS
@@ -91,6 +92,17 @@ return {
 			return 1
 		end
 
+		local function fireCardAction(actionName, amountValue, ...)
+			local args = {actionName, ...}
+			local amount = tostring(parseCardActionAmount(amountValue))
+
+			if amount ~= "1" then
+				args[#args + 1] = amount
+			end
+
+			CardRemote:FireServer(unpackArgs(args))
+		end
+
 		local function addUniqueItem(items, seen, value)
 			value = tostring(value or "")
 			if value == "" or value == "All" or seen[value] then
@@ -165,13 +177,12 @@ return {
 			return getFilteredMutationItems({Rainbow = true})
 		end
 
-		local function getUpgradeToMutationItems()
+		local function getNonRegularMutationItems()
 			return getFilteredMutationItems({Regular = true})
 		end
 
-		local function getDowngradeMutationItems()
-			return getFilteredMutationItems({Regular = true})
-		end
+		local getUpgradeToMutationItems = getNonRegularMutationItems
+		local getDowngradeMutationItems = getNonRegularMutationItems
 
 		local function getCardActionAmountItems()
 			return {"x1", "x10", "x100"}
@@ -1080,17 +1091,12 @@ return {
 				local pack = normalizePackName(values.UpgradePack)
 				local fromMutation = tostring(values.UpgradeFromMutation or "")
 				local toMutation = tostring(values.UpgradeToMutation or "")
-				local amount = tostring(parseCardActionAmount(values.UpgradeAmount))
 
 				if pack == "" or fromMutation == "" or toMutation == "" then
 					return
 				end
 
-				if amount == "1" then
-					CardRemote:FireServer("Exchange", pack, fromMutation, toMutation)
-				else
-					CardRemote:FireServer("Exchange", pack, fromMutation, toMutation, amount)
-				end
+				fireCardAction("Exchange", values.UpgradeAmount, pack, fromMutation, toMutation)
 			end
 
 			function Feature:GetHandlers()
@@ -1155,17 +1161,12 @@ return {
 
 				local pack = normalizePackName(values.DowngradePack)
 				local mutation = tostring(values.DowngradeMutation or "")
-				local amount = tostring(parseCardActionAmount(values.DowngradeAmount))
 
 				if pack == "" or mutation == "" then
 					return
 				end
 
-				if amount == "1" then
-					CardRemote:FireServer("Downgrade", pack, mutation)
-				else
-					CardRemote:FireServer("Downgrade", pack, mutation, amount)
-				end
+				fireCardAction("Downgrade", values.DowngradeAmount, pack, mutation)
 			end
 
 			function Feature:GetHandlers()

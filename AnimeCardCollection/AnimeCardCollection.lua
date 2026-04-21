@@ -82,6 +82,25 @@ return {
 			return tonumber(string.match(tostring(text or ""), "%d+")) or 0
 		end
 
+		local function parseExchangeAmount(value)
+			local amount = tonumber(string.match(tostring(value or ""), "%d+")) or 1
+			if amount == 10 or amount == 100 then
+				return amount
+			end
+
+			return 1
+		end
+
+		local function addUniqueItem(items, seen, value)
+			value = tostring(value or "")
+			if value == "" or value == "All" or seen[value] then
+				return
+			end
+
+			seen[value] = true
+			items[#items + 1] = value
+		end
+
 		local function getPackItems()
 			local items = {"All"}
 
@@ -89,6 +108,18 @@ return {
 				for _, packName in pairs(CardConfig.List.Packs) do
 					items[#items + 1] = tostring(packName)
 				end
+			end
+
+			return items
+		end
+
+		local function getExchangePackItems()
+			local items = {}
+			local seen = {}
+
+			addUniqueItem(items, seen, "Pirate")
+			for _, packName in ipairs(getPackItems()) do
+				addUniqueItem(items, seen, packName)
 			end
 
 			return items
@@ -104,6 +135,24 @@ return {
 			end
 
 			return items
+		end
+
+		local function getExchangeMutationItems()
+			local items = {}
+			local seen = {}
+
+			addUniqueItem(items, seen, "Regular")
+			addUniqueItem(items, seen, "Gold")
+			addUniqueItem(items, seen, "Emerald")
+			for _, mutation in ipairs(getMutationItems()) do
+				addUniqueItem(items, seen, mutation)
+			end
+
+			return items
+		end
+
+		local function getExchangeAmountItems()
+			return {"x1", "x10", "x100"}
 		end
 
 		local function getGradeItems()
@@ -944,6 +993,90 @@ return {
 			function Feature:Cleanup()
 				self:Stop()
 				self.State.PanelRef = nil
+			end
+		end
+
+		--==================================================
+		-- FEATURE: EXCHANGE
+		--==================================================
+		do
+			local Feature = RegisterFeature({
+				Key = "Exchange",
+				Tab = "Shop",
+				Section = "Exchange",
+				Order = 30,
+
+				Defaults = {
+					ExchangePack = "Pirate",
+					ExchangeFromMutation = "Gold",
+					ExchangeToMutation = "Emerald",
+					ExchangeAmount = "x1",
+				},
+
+				Options = {
+					{
+						Id = "ExchangePack",
+						Type = "select",
+						Label = "Pack",
+						Description = "Pack to exchange",
+						Items = getExchangePackItems
+					},
+					{
+						Id = "ExchangeFromMutation",
+						Type = "select",
+						Label = "From Mutation",
+						Description = "Mutation to exchange from",
+						Items = getExchangeMutationItems
+					},
+					{
+						Id = "ExchangeToMutation",
+						Type = "select",
+						Label = "To Mutation",
+						Description = "Mutation to exchange into",
+						Items = getExchangeMutationItems
+					},
+					{
+						Id = "ExchangeAmount",
+						Type = "select",
+						Label = "Amount",
+						Description = "How many exchanges to run",
+						Items = getExchangeAmountItems
+					},
+					{
+						Id = "ExchangeRun",
+						Type = "button",
+						Label = "Exchange",
+						Description = "Run the selected exchange",
+						ButtonText = "Exchange"
+					},
+				}
+			})
+
+			function Feature:Run(values)
+				values = values or {}
+
+				local pack = normalizePackName(values.ExchangePack)
+				local fromMutation = tostring(values.ExchangeFromMutation or "")
+				local toMutation = tostring(values.ExchangeToMutation or "")
+				local amount = tostring(parseExchangeAmount(values.ExchangeAmount))
+
+				if pack == "" or fromMutation == "" or toMutation == "" then
+					return
+				end
+
+				if amount == "1" then
+					CardRemote:FireServer("Exchange", pack, fromMutation, toMutation)
+				else
+					CardRemote:FireServer("Exchange", pack, fromMutation, toMutation, amount)
+				end
+			end
+
+			function Feature:GetHandlers()
+				return {
+					ExchangeRun = function(_, values)
+						self:Run(values)
+					end
+				}
 			end
 		end
 	end

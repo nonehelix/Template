@@ -50,28 +50,6 @@ local function copySimpleValue(value)
 	return copy
 end
 
-Features.DebugEnabled = true
-Features.DebugMessages = {}
-Features.DebugToggleColors = false
-
-local function DebugLog(scope, message, level)
-	if not Features.DebugEnabled then
-		return
-	end
-
-	local line = "[" .. tostring(scope or "Debug") .. "] " .. tostring(message)
-	table.insert(Features.DebugMessages, line)
-	if #Features.DebugMessages > 200 then
-		table.remove(Features.DebugMessages, 1)
-	end
-
-	if level == "warn" then
-		warn(line)
-	else
-		print(line)
-	end
-end
-
 local function arrayContains(arr, target)
 	for _, value in ipairs(arr or {}) do
 		if tostring(value) == tostring(target) then
@@ -857,14 +835,12 @@ do
 
 	function Feature:Init(context)
 		self.State.virtualUser = game:GetService("VirtualUser")
-		print("[AntiAFK] Feature initialized")
 	end
 
 	function Feature:StartAntiAFK()
 		self:StopAntiAFK()
 
 		local localPlayer = Players.LocalPlayer
-		print("[AntiAFK] Starting Anti-AFK...")
 
 		-- Do NOT disable every Idled connection globally unless you really need to.
 		-- It can break other scripts and doesn't help anti-idle reliability.
@@ -891,15 +867,12 @@ do
 				vu:Button2Up(Vector2.new(0, 0), camera.CFrame)
 			end)
 
-			if ok then
-				print("[AntiAFK] Input sent (" .. reason .. ")")
-			else
+			if not ok then
 				warn("[AntiAFK] Input failed (" .. reason .. "): " .. tostring(err))
 			end
 		end
 
 		self.State.antiAfkConnection = localPlayer.Idled:Connect(function(idleTime)
-			print("[AntiAFK] Idled event: " .. tostring(idleTime))
 			fireAntiIdle("Idled")
 		end)
 
@@ -913,8 +886,6 @@ do
 				fireAntiIdle("Heartbeat")
 			end
 		end)
-
-		print("[AntiAFK] ACTIVE (Idled + 2min heartbeat)")
 	end
 
 	function Feature:StopAntiAFK()
@@ -927,14 +898,11 @@ do
 			task.cancel(self.State.heartbeatConnection)
 			self.State.heartbeatConnection = nil
 		end
-
-		print("[AntiAFK] Anti-AFK stopped")
 	end
 
 	function Feature:GetHandlers()
 		return {
 			AntiAFK = function(enabled)
-				print("[AntiAFK] Toggle -> " .. (enabled and "ON" or "OFF"))
 				if enabled then
 					self:StartAntiAFK()
 				else
@@ -1268,7 +1236,6 @@ local function CompilePanelConfig(baseConfig)
 end
 
 function Features.BuildPanelConfig()
-	DebugLog("Shared", "BuildPanelConfig start. CurrentGameKey = " .. tostring(Features.CurrentGameKey) .. ", FeatureList size = " .. tostring(#FeatureList))
 	local panelConfig = CompilePanelConfig(BASE_CONFIG)
 	ApplyFeatureDefaults(panelConfig.Values)
 	local defaultValues = copySimpleValue(panelConfig.Values)
@@ -1277,14 +1244,6 @@ function Features.BuildPanelConfig()
 		panelConfig.Values = LoadSettings(panelConfig.Values)
 		SanitizePanelValues(panelConfig, defaultValues)
 	end
-
-	DebugLog("Shared", "BuildPanelConfig complete. Tab count = " .. tostring(#panelConfig.Tabs) .. ", value count = " .. tostring((function()
-		local count = 0
-		for _ in pairs(panelConfig.Values) do
-			count += 1
-		end
-		return count
-	end)()))
 
 	return panelConfig
 end
@@ -1311,6 +1270,5 @@ Features.roundTo2 = roundTo2
 Features.arrayContains = arrayContains
 Features.ExtractPlaceIdFromLink = extractPlaceIdFromLink
 Features.ResolveOptionItems = resolveOptionItems
-Features.DebugLog = DebugLog
 
 return Features

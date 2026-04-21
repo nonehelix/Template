@@ -1,7 +1,6 @@
 return {
 	Load = function(Shared)
 		local RegisterFeature, RegisterTabs = Shared.RegisterFeature, Shared.RegisterTabs
-		local ReplicatedStorage = game:GetService("ReplicatedStorage")
 		local Players = game:GetService("Players")
 		local player = Players.LocalPlayer
 
@@ -20,11 +19,6 @@ return {
 		local function getPasses()
 			local leaderstats = player:WaitForChild("leaderstats", 10)
 			return leaderstats and leaderstats:WaitForChild("Passes", 10) or nil
-		end
-
-		local function getPlayerStats()
-			local leaderstats = player:WaitForChild("leaderstats", 10)
-			return leaderstats and leaderstats:WaitForChild("PlayerStats", 10) or nil
 		end
 
 		local function setPass(passName, enabled)
@@ -46,29 +40,18 @@ return {
 			setPass("AutoClicker", enabled)
 		end
 
-		local function getShadowSpeedBuff()
-			local indexer = ReplicatedStorage:FindFirstChild("Indexer")
-			local module = indexer and indexer:FindFirstChild("StatsInfo")
-			if not module or not module:IsA("ModuleScript") then return 0.02 end
-
-			local ok, statsInfo = pcall(require, module)
-			local shadowSpeed = ok and type(statsInfo) == "table" and statsInfo.Info and statsInfo.Info.ShadowSpeed
-			local buff = shadowSpeed and tonumber(shadowSpeed.Buff) or 0.02
-			return buff > 0 and buff or 0.02
+		local function getShadowExchangeButton()
+			local playerGui = player:FindFirstChild("PlayerGui")
+			local hud = playerGui and playerGui:FindFirstChild("Hud")
+			local leftContainer = hud and hud:FindFirstChild("LeftContainer")
+			return leftContainer and leftContainer:FindFirstChild("ShadowExchange") or nil
 		end
 
-		local function setShadowSpeedMultiplier(multiplier)
-			multiplier = math.max(tonumber(multiplier) or 1, 1)
+		local function setShadowExchange(enabled)
+			setPass("ShadowExchange", enabled)
 
-			local playerStats = getPlayerStats()
-			if not playerStats then
-				warn("[ShadowSpeed] PlayerStats not found")
-				return
-			end
-
-			local buff = getShadowSpeedBuff()
-			local level = math.floor(((multiplier - 1) / buff) + 0.5)
-			playerStats:SetAttribute("ShadowSpeed", level)
+			local button = getShadowExchangeButton()
+			if button then button.Visible = enabled == true end
 		end
 
 		--==================================================
@@ -182,35 +165,66 @@ return {
 		end
 
 		--==================================================
-		-- FEATURE: SHADOW SPEED
+		-- FEATURE: SHADOW EXCHANGE
 		--==================================================
 		do
 			local Feature = RegisterFeature({
-				Key = "ShadowSpeed",
+				Key = "ShadowExchange",
 				Tab = "Combat",
-				Section = "Shadow",
+				Section = "Exchange",
 				Order = 30,
 
 				Defaults = {
-					ShadowSpeedMultiplier = 2,
-					ForceShadowSpeed = false,
+					ShadowExchange = false,
 				},
 
 				State = {
 					Running = false,
 					LoopId = 0,
 					PollDelay = 0.5,
+					CapturedOriginal = false,
+					OriginalPass = nil,
+					OriginalButtonVisible = nil,
 				},
 
 				Options = {
-					{ Id = "ShadowSpeedMultiplier", Type = "number", Label = "Shadow Speed", Description = "Set shadow speed multiplier", Min = 1, Max = 100 },
-					{ Id = "ForceShadowSpeed", Type = "toggle", Label = "Force Shadow Speed", Description = "Keeps shadow speed applied" },
-					{ Id = "ApplyShadowSpeed", Type = "button", Label = "Apply Shadow Speed", Description = "Apply shadow speed", ButtonText = "Apply" },
+					{ Id = "ShadowExchange", Type = "toggle", Label = "Shadow Exchange", Description = "Enables Shadow Exchange" },
 				}
 			})
 
-			function Feature:Start(values)
+			function Feature:CaptureOriginalValues()
+				if self.State.CapturedOriginal then return end
+
+				local passes = getPasses()
+				local button = getShadowExchangeButton()
+				self.State.OriginalPass = passes and passes:GetAttribute("ShadowExchange") or nil
+				self.State.OriginalButtonVisible = button and button.Visible or nil
+				self.State.CapturedOriginal = true
+			end
+
+			function Feature:RestoreOriginalValues()
+				if not self.State.CapturedOriginal then return end
+
+				local passes = getPasses()
+				if passes then passes:SetAttribute("ShadowExchange", self.State.OriginalPass == true) end
+
+				local button = getShadowExchangeButton()
+				if button then
+					if self.State.OriginalButtonVisible ~= nil then
+						button.Visible = self.State.OriginalButtonVisible
+					else
+						button.Visible = self.State.OriginalPass == true
+					end
+				end
+
+				self.State.CapturedOriginal = false
+				self.State.OriginalPass = nil
+				self.State.OriginalButtonVisible = nil
+			end
+
+			function Feature:Start()
 				self:Stop()
+				self:CaptureOriginalValues()
 
 				self.State.Running = true
 				self.State.LoopId = self.State.LoopId + 1
@@ -218,8 +232,7 @@ return {
 
 				task.spawn(function()
 					while self.State.Running and self.State.LoopId == id do
-						if not values or not values.ForceShadowSpeed then break end
-						setShadowSpeedMultiplier(values.ShadowSpeedMultiplier)
+						setShadowExchange(true)
 						task.wait(self.State.PollDelay)
 					end
 				end)
@@ -228,18 +241,13 @@ return {
 			function Feature:Stop()
 				self.State.Running = false
 				self.State.LoopId = self.State.LoopId + 1
+				self:RestoreOriginalValues()
 			end
 
 			function Feature:GetHandlers()
 				return {
-					ShadowSpeedMultiplier = function(value, values)
-						if values and values.ForceShadowSpeed then setShadowSpeedMultiplier(value) end
-					end,
-					ForceShadowSpeed = function(value, values)
-						if value then self:Start(values) else self:Stop() end
-					end,
-					ApplyShadowSpeed = function(_, values)
-						setShadowSpeedMultiplier(values and values.ShadowSpeedMultiplier)
+					ShadowExchange = function(value)
+						if value then self:Start() else self:Stop() end
 					end,
 				}
 			end
@@ -248,5 +256,6 @@ return {
 				self:Stop()
 			end
 		end
+
 	end
 }

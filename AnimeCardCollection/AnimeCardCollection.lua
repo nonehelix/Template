@@ -173,16 +173,39 @@ return {
 			return items
 		end
 
-		local function getUpgradeFromMutationItems()
-			return getFilteredMutationItems({Rainbow = true})
+		local function getUpgradeMutationOrder()
+			return getFilteredMutationItems({})
 		end
 
-		local function getNonRegularMutationItems()
+		local function getNextUpgradeMutation(fromMutation)
+			fromMutation = tostring(fromMutation or "")
+			local mutations = getUpgradeMutationOrder()
+
+			for index, mutation in ipairs(mutations) do
+				if tostring(mutation) == fromMutation then
+					return mutations[index + 1]
+				end
+			end
+
+			return nil
+		end
+
+		local function getUpgradeFromMutationItems()
+			local items = {}
+			local mutations = getUpgradeMutationOrder()
+
+			for index, mutation in ipairs(mutations) do
+				if index < #mutations and tostring(mutation) ~= "Rainbow" then
+					items[#items + 1] = mutation
+				end
+			end
+
+			return items
+		end
+
+		local function getDowngradeMutationItems()
 			return getFilteredMutationItems({Regular = true})
 		end
-
-		local getUpgradeToMutationItems = getNonRegularMutationItems
-		local getDowngradeMutationItems = getNonRegularMutationItems
 
 		local function getCardActionAmountItems()
 			return {"x1", "x10", "x100"}
@@ -1042,7 +1065,6 @@ return {
 				Defaults = {
 					UpgradePack = "Pirate",
 					UpgradeFromMutation = "Gold",
-					UpgradeToMutation = "Emerald",
 					UpgradeAmount = "x1",
 				},
 
@@ -1060,13 +1082,6 @@ return {
 						Label = "From Mutation",
 						Description = "Mutation to upgrade from",
 						Items = getUpgradeFromMutationItems
-					},
-					{
-						Id = "UpgradeToMutation",
-						Type = "select",
-						Label = "To Mutation",
-						Description = "Mutation to upgrade into",
-						Items = getUpgradeToMutationItems
 					},
 					{
 						Id = "UpgradeAmount",
@@ -1090,9 +1105,9 @@ return {
 
 				local pack = normalizePackName(values.UpgradePack)
 				local fromMutation = tostring(values.UpgradeFromMutation or "")
-				local toMutation = tostring(values.UpgradeToMutation or "")
+				local toMutation = getNextUpgradeMutation(fromMutation)
 
-				if pack == "" or fromMutation == "" or toMutation == "" then
+				if pack == "" or fromMutation == "" or not toMutation or toMutation == "" then
 					return
 				end
 

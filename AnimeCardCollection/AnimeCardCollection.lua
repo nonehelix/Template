@@ -382,6 +382,51 @@ return {
 			end
 		end
 
+		local function bindPollingToggleFeature(feature, optionId, onTick)
+			function feature:Start(panelRef)
+				setFeaturePanelRef(self, panelRef)
+				if self.State.Running then
+					return
+				end
+
+				self.State.Running = true
+
+				task.spawn(function()
+					while self.State.Running do
+						local values = getPanelValues(self.State.PanelRef)
+						if not values or not values[optionId] then
+							break
+						end
+
+						onTick(self)
+						task.wait(self.State.PollDelay)
+					end
+
+					self.State.Running = false
+				end)
+			end
+
+			function feature:Stop()
+				self.State.Running = false
+			end
+
+			function feature:GetHandlers()
+				return {
+					[optionId] = buildToggleHandler(self, function(panelRef)
+						self:Start(panelRef)
+					end),
+				}
+			end
+
+			function feature:Cleanup()
+				self:Stop()
+				self.State.PanelRef = nil
+				if self.State.LastCollectTimes then
+					table.clear(self.State.LastCollectTimes)
+				end
+			end
+		end
+
 		local function getClientTokenFolder()
 			local items = Workspace:FindFirstChild("Items")
 			local tokens = items and items:FindFirstChild("Tokens")
@@ -500,13 +545,13 @@ return {
 						Id = "AutoBuyEnabled",
 						Type = "toggle",
 						Label = "Enable Auto Buy",
-						Description = "Auto buys matching conveyor packs"
+						Description = "Auto buys conveyor packs"
 					},
 					{
 						Id = "AutoBuyPack",
 						Type = "multiselect",
-						Label = "Pack ID",
-						Description = "Choose one or more packs",
+						Label = "Pack",
+						Description = "Select packs",
 						Items = getPackItems,
 						EmptyText = "Nothing selected"
 					},
@@ -514,7 +559,7 @@ return {
 						Id = "AutoBuyMutation",
 						Type = "multiselect",
 						Label = "Mutation",
-						Description = "Choose one or more rarities",
+						Description = "Select mutations",
 						Items = getMutationItems,
 						EmptyText = "Nothing selected"
 					},
@@ -692,13 +737,13 @@ return {
 						Id = "AutoGradeEnabled",
 						Type = "toggle",
 						Label = "Enable Auto Grade",
-						Description = "Automatically grades selected cards to target grade(s)"
+						Description = "Auto grades selected cards"
 					},
 					{
 						Id = "AutoGradeCards",
 						Type = "multiselect",
 						Label = "Select Cards",
-						Description = "Choose which cards to auto grade (All = every owned card)",
+						Description = "Select cards to grade",
 						Items = getAllCardNames,
 						EmptyText = "Nothing selected"
 					},
@@ -706,7 +751,7 @@ return {
 						Id = "AutoGradeTarget",
 						Type = "multiselect",
 						Label = "Target Grade",
-						Description = "Stop grading when card reaches any of these grades or better",
+						Description = "Select target grades",
 						Items = getGradeItems(),
 						EmptyText = "Nothing selected"
 					},
@@ -1064,13 +1109,13 @@ return {
 						Id = "AutoBuyMarketEnabled",
 						Type = "toggle",
 						Label = "Enable Auto Buy Market",
-						Description = "Automatically buys selected packs from the market every 60 seconds"
+						Description = "Auto buys market packs"
 					},
 					{
 						Id = "AutoBuyMarketPack",
 						Type = "multiselect",
-						Label = "Pack ID",
-						Description = "Choose packs to buy from market",
+						Label = "Pack",
+						Description = "Select packs",
 						Items = getPackItems,
 						EmptyText = "Nothing selected"
 					},
@@ -1078,7 +1123,7 @@ return {
 						Id = "AutoBuyMarketMutation",
 						Type = "multiselect",
 						Label = "Mutation",
-						Description = "Choose mutations/rarities to buy",
+						Description = "Select mutations",
 						Items = getMutationItems,
 						EmptyText = "Nothing selected"
 					},
@@ -1263,7 +1308,7 @@ return {
 						Id = "AutoCollectGT",
 						Type = "toggle",
 						Label = "Auto Collect Grade Tokens",
-						Description = "Automatically collects Grade Tokens"
+						Description = "Auto collects Grade Tokens"
 					},
 				}
 			})
@@ -1284,46 +1329,9 @@ return {
 				end
 			end
 
-			function Feature:Start(panelRef)
-				setFeaturePanelRef(self, panelRef)
-				if self.State.Running then
-					return
-				end
-
-				self.State.Running = true
-
-				task.spawn(function()
-					while self.State.Running do
-						local values = getPanelValues(self.State.PanelRef)
-						if not values or not values.AutoCollectGT then
-							break
-						end
-
-						self:CollectVisibleTokens()
-						task.wait(self.State.PollDelay)
-					end
-
-					self.State.Running = false
-				end)
-			end
-
-			function Feature:Stop()
-				self.State.Running = false
-			end
-
-			function Feature:GetHandlers()
-				return {
-					AutoCollectGT = buildToggleHandler(self, function(panelRef)
-						self:Start(panelRef)
-					end),
-				}
-			end
-
-			function Feature:Cleanup()
-				self:Stop()
-				self.State.PanelRef = nil
-				table.clear(self.State.LastCollectTimes)
-			end
+			bindPollingToggleFeature(Feature, "AutoCollectGT", function(self)
+				self:CollectVisibleTokens()
+			end)
 		end
 
 		--==================================================
@@ -1354,7 +1362,7 @@ return {
 						Id = "AutoCollectTT",
 						Type = "toggle",
 						Label = "Auto Collect Travel Tokens",
-						Description = "Automatically collects Travel Tokens"
+						Description = "Auto collects Travel Tokens"
 					},
 				}
 			})
@@ -1370,46 +1378,9 @@ return {
 				end
 			end
 
-			function Feature:Start(panelRef)
-				setFeaturePanelRef(self, panelRef)
-				if self.State.Running then
-					return
-				end
-
-				self.State.Running = true
-
-				task.spawn(function()
-					while self.State.Running do
-						local values = getPanelValues(self.State.PanelRef)
-						if not values or not values.AutoCollectTT then
-							break
-						end
-
-						self:CollectReadyTokens()
-						task.wait(self.State.PollDelay)
-					end
-
-					self.State.Running = false
-				end)
-			end
-
-			function Feature:Stop()
-				self.State.Running = false
-			end
-
-			function Feature:GetHandlers()
-				return {
-					AutoCollectTT = buildToggleHandler(self, function(panelRef)
-						self:Start(panelRef)
-					end),
-				}
-			end
-
-			function Feature:Cleanup()
-				self:Stop()
-				self.State.PanelRef = nil
-				table.clear(self.State.LastCollectTimes)
-			end
+			bindPollingToggleFeature(Feature, "AutoCollectTT", function(self)
+				self:CollectReadyTokens()
+			end)
 		end
 
 		--==================================================
@@ -1433,28 +1404,28 @@ return {
 						Id = "UpgradePack",
 						Type = "select",
 						Label = "Pack",
-						Description = "Pack to upgrade",
+						Description = "Select pack",
 						Items = getCardActionPackItems
 					},
 					{
 						Id = "UpgradeFromMutation",
 						Type = "select",
 						Label = "From Mutation",
-						Description = "Mutation to upgrade from",
+						Description = "Select mutation",
 						Items = getUpgradeFromMutationItems
 					},
 					{
 						Id = "UpgradeAmount",
 						Type = "select",
 						Label = "Amount",
-						Description = "How many upgrades to run",
+						Description = "Select amount",
 						Items = getCardActionAmountItems
 					},
 					{
 						Id = "UpgradeRun",
 						Type = "button",
 						Label = "Upgrade",
-						Description = "Run the selected upgrade",
+						Description = "Upgrade selected cards",
 						ButtonText = "Upgrade"
 					},
 				}
@@ -1493,10 +1464,10 @@ return {
 			ActionName = "Downgrade",
 			DefaultMutation = "Gold",
 			MutationItems = getDowngradeMutationItems,
-			PackDescription = "Pack to downgrade",
-			MutationDescription = "Mutation to downgrade",
-			AmountDescription = "How many downgrades to run",
-			ButtonDescription = "Run the selected downgrade",
+			PackDescription = "Select pack",
+			MutationDescription = "Select mutation",
+			AmountDescription = "Select amount",
+			ButtonDescription = "Downgrade selected cards",
 		})
 
 		--==================================================
@@ -1509,10 +1480,10 @@ return {
 			ActionName = "Bundle",
 			DefaultMutation = "Regular",
 			MutationItems = getBundleMutationItems,
-			PackDescription = "Pack to bundle",
-			MutationDescription = "Mutation to bundle",
-			AmountDescription = "How many bundles to create",
-			ButtonDescription = "Convert 100 selected cards into one bundle",
+			PackDescription = "Select pack",
+			MutationDescription = "Select mutation",
+			AmountDescription = "Select amount",
+			ButtonDescription = "Create selected bundles",
 		})
 	end
 }

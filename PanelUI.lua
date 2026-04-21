@@ -1475,8 +1475,6 @@ function Panel:Init()
 	else
 		self:Restore(true)
 	end
-
-	print("Panel loaded succesfully")
 end
 
 return Panel

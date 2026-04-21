@@ -118,7 +118,7 @@ return {
 			if not guiFunctions or type(guiFunctions.GetStatsBuff) ~= "function" then
 				if not shadowReachPatch.WarnedMissingGetStatsBuff then
 					shadowReachPatch.WarnedMissingGetStatsBuff = true
-					warn("[ShadowReach] GuiFunctions.GetStatsBuff not found; using StatsInfo fallback")
+					print("[ShadowReach] Using StatsInfo fallback")
 				end
 
 				return false

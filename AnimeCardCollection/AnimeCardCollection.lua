@@ -258,34 +258,10 @@ return {
 				},
 
 				Options = {
-					{
-						Id = packId,
-						Type = "select",
-						Label = "Pack",
-						Description = config.PackDescription,
-						Items = getCardActionPackItems
-					},
-					{
-						Id = mutationId,
-						Type = "select",
-						Label = "Mutation",
-						Description = config.MutationDescription,
-						Items = config.MutationItems
-					},
-					{
-						Id = amountId,
-						Type = "select",
-						Label = "Amount",
-						Description = config.AmountDescription,
-						Items = getCardActionAmountItems
-					},
-					{
-						Id = runId,
-						Type = "button",
-						Label = config.ButtonLabel or key,
-						Description = config.ButtonDescription,
-						ButtonText = config.ButtonText or key
-					},
+					{ Id = packId, Type = "select", Label = "Pack", Description = config.PackDescription, Items = getCardActionPackItems },
+					{ Id = mutationId, Type = "select", Label = "Mutation", Description = config.MutationDescription, Items = config.MutationItems },
+					{ Id = amountId, Type = "select", Label = "Amount", Description = config.AmountDescription, Items = getCardActionAmountItems },
+					{ Id = runId, Type = "button", Label = config.ButtonLabel or key, Description = config.ButtonDescription, ButtonText = config.ButtonText or key },
 				}
 			})
 
@@ -541,28 +517,9 @@ return {
 				},
 
 				Options = {
-					{
-						Id = "AutoBuyEnabled",
-						Type = "toggle",
-						Label = "Enable Auto Buy",
-						Description = "Auto buys conveyor packs"
-					},
-					{
-						Id = "AutoBuyPack",
-						Type = "multiselect",
-						Label = "Pack",
-						Description = "Select packs",
-						Items = getPackItems,
-						EmptyText = "Nothing selected"
-					},
-					{
-						Id = "AutoBuyMutation",
-						Type = "multiselect",
-						Label = "Mutation",
-						Description = "Select mutations",
-						Items = getMutationItems,
-						EmptyText = "Nothing selected"
-					},
+					{ Id = "AutoBuyEnabled", Type = "toggle", Label = "Enable Auto Buy", Description = "Auto buys conveyor packs" },
+					{ Id = "AutoBuyPack", Type = "multiselect", Label = "Pack", Description = "Select packs", Items = getPackItems, EmptyText = "Nothing selected" },
+					{ Id = "AutoBuyMutation", Type = "multiselect", Label = "Mutation", Description = "Select mutations", Items = getMutationItems, EmptyText = "Nothing selected" },
 				}
 			})
 
@@ -733,28 +690,9 @@ return {
 				},
 
 				Options = {
-					{
-						Id = "AutoGradeEnabled",
-						Type = "toggle",
-						Label = "Enable Auto Grade",
-						Description = "Auto grades selected cards"
-					},
-					{
-						Id = "AutoGradeCards",
-						Type = "multiselect",
-						Label = "Select Cards",
-						Description = "Select cards to grade",
-						Items = getAllCardNames,
-						EmptyText = "Nothing selected"
-					},
-					{
-						Id = "AutoGradeTarget",
-						Type = "multiselect",
-						Label = "Target Grade",
-						Description = "Select target grades",
-						Items = getGradeItems(),
-						EmptyText = "Nothing selected"
-					},
+					{ Id = "AutoGradeEnabled", Type = "toggle", Label = "Enable Auto Grade", Description = "Auto grades selected cards" },
+					{ Id = "AutoGradeCards", Type = "multiselect", Label = "Select Cards", Description = "Select cards to grade", Items = getAllCardNames, EmptyText = "Nothing selected" },
+					{ Id = "AutoGradeTarget", Type = "multiselect", Label = "Target Grade", Description = "Select target grades", Items = getGradeItems(), EmptyText = "Nothing selected" },
 				}
 			})
 
@@ -1105,28 +1043,9 @@ return {
 				},
 
 				Options = {
-					{
-						Id = "AutoBuyMarketEnabled",
-						Type = "toggle",
-						Label = "Enable Auto Buy Market",
-						Description = "Auto buys market packs"
-					},
-					{
-						Id = "AutoBuyMarketPack",
-						Type = "multiselect",
-						Label = "Pack",
-						Description = "Select packs",
-						Items = getPackItems,
-						EmptyText = "Nothing selected"
-					},
-					{
-						Id = "AutoBuyMarketMutation",
-						Type = "multiselect",
-						Label = "Mutation",
-						Description = "Select mutations",
-						Items = getMutationItems,
-						EmptyText = "Nothing selected"
-					},
+					{ Id = "AutoBuyMarketEnabled", Type = "toggle", Label = "Enable Auto Buy Market", Description = "Auto buys market packs" },
+					{ Id = "AutoBuyMarketPack", Type = "multiselect", Label = "Pack", Description = "Select packs", Items = getPackItems, EmptyText = "Nothing selected" },
+					{ Id = "AutoBuyMarketMutation", Type = "multiselect", Label = "Mutation", Description = "Select mutations", Items = getMutationItems, EmptyText = "Nothing selected" },
 				}
 			})
 
@@ -1288,7 +1207,6 @@ return {
 			local Feature = RegisterFeature({
 				Key = "AutoCollectGT",
 				Tab = "Collect",
-				Section = "Grade Tokens",
 				Order = 10,
 
 				Defaults = {
@@ -1304,12 +1222,7 @@ return {
 				},
 
 				Options = {
-					{
-						Id = "AutoCollectGT",
-						Type = "toggle",
-						Label = "Auto Collect Grade Tokens",
-						Description = "Auto collects Grade Tokens"
-					},
+					{ Id = "AutoCollectGT", Type = "toggle", Label = "Auto Collect Grade Tokens", Description = "Auto collects Grade Tokens" },
 				}
 			})
 
@@ -1341,7 +1254,6 @@ return {
 			local Feature = RegisterFeature({
 				Key = "AutoCollectTT",
 				Tab = "Collect",
-				Section = "Travel Tokens",
 				Order = 20,
 
 				Defaults = {
@@ -1358,12 +1270,7 @@ return {
 				},
 
 				Options = {
-					{
-						Id = "AutoCollectTT",
-						Type = "toggle",
-						Label = "Auto Collect Travel Tokens",
-						Description = "Auto collects Travel Tokens"
-					},
+					{ Id = "AutoCollectTT", Type = "toggle", Label = "Auto Collect Travel Tokens", Description = "Auto collects Travel Tokens" },
 				}
 			})
 
@@ -1395,39 +1302,15 @@ return {
 
 				Defaults = {
 					UpgradePack = "Pirate",
-					UpgradeFromMutation = "Gold",
+					UpgradeFromMutation = "Regular",
 					UpgradeAmount = "x1",
 				},
 
 				Options = {
-					{
-						Id = "UpgradePack",
-						Type = "select",
-						Label = "Pack",
-						Description = "Select pack",
-						Items = getCardActionPackItems
-					},
-					{
-						Id = "UpgradeFromMutation",
-						Type = "select",
-						Label = "From Mutation",
-						Description = "Select mutation",
-						Items = getUpgradeFromMutationItems
-					},
-					{
-						Id = "UpgradeAmount",
-						Type = "select",
-						Label = "Amount",
-						Description = "Select amount",
-						Items = getCardActionAmountItems
-					},
-					{
-						Id = "UpgradeRun",
-						Type = "button",
-						Label = "Upgrade",
-						Description = "Upgrade selected cards",
-						ButtonText = "Upgrade"
-					},
+					{ Id = "UpgradePack", Type = "select", Label = "Pack", Description = "Select pack", Items = getCardActionPackItems },
+					{ Id = "UpgradeFromMutation", Type = "select", Label = "From Mutation", Description = "Select mutation", Items = getUpgradeFromMutationItems },
+					{ Id = "UpgradeAmount", Type = "select", Label = "Amount", Description = "Select amount", Items = getCardActionAmountItems },
+					{ Id = "UpgradeRun", Type = "button", Label = "Upgrade", Description = "Upgrade selected cards", ButtonText = "Upgrade" },
 				}
 			})
 

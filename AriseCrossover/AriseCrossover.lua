@@ -557,19 +557,11 @@ return {
 			return "total=" .. total .. ", matching=" .. matching .. ", alive=" .. alive .. ", rejects={" .. table.concat(reasonParts, ", ") .. "}"
 		end
 
-		local function getModeFlag(attributeName)
-			return player:GetAttribute(attributeName) == true or ReplicatedStorage:GetAttribute(attributeName) == true
-		end
-
-		local function isExcludedDungeonMode()
-			return getModeFlag("InTimeTrial")
-				or getModeFlag("InBossRush")
-				or ReplicatedStorage:GetAttribute("IsCastle") == true
-		end
-
 		local function isNormalDungeonInstance()
-			return getModeFlag("InDungeon")
-				and not isExcludedDungeonMode()
+			return player:GetAttribute("InDungeon") == true
+				and player:GetAttribute("InTimeTrial") ~= true
+				and player:GetAttribute("InBossRush") ~= true
+				and ReplicatedStorage:GetAttribute("IsCastle") ~= true
 		end
 
 		local knownEnemyNameCache = nil

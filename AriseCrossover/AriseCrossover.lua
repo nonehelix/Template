@@ -226,8 +226,8 @@ return {
 			return closestEnemy
 		end
 
-		local function isInDungeon()
-			return player:GetAttribute("InDungeon") == true
+		local function isDungeonInstance()
+			return ReplicatedStorage:GetAttribute("Dungeon") == true
 		end
 
 		local knownEnemyNameCache = nil
@@ -670,7 +670,7 @@ return {
 				Defaults = {AutoDungeon = false},
 				State = {Running = false, LoopId = 0, PanelRef = nil, PollDelay = AUTO_FARM_POLL_DELAY, TeleportDistance = 7, CurrentTarget = nil},
 				Options = {
-					{ Id = "AutoDungeon", Type = "toggle", Label = "Auto Dungeon", Description = "Teleports through dungeon enemies while InDungeon is enabled" },
+					{ Id = "AutoDungeon", Type = "toggle", Label = "Auto Dungeon", Description = "Teleports through dungeon enemies only inside an active dungeon instance" },
 				}
 			})
 
@@ -686,7 +686,7 @@ return {
 			end
 
 			function Feature:Tick()
-				if not isInDungeon() then
+				if not isDungeonInstance() then
 					self.State.CurrentTarget = nil
 					return
 				end

@@ -32,6 +32,12 @@ local Theme = {
 
 Features.Theme = Theme
 
+local ACCENT_PRESETS = {
+	Blue = Theme.Accent,
+	Green = Theme.Green,
+	Purple = Color3.fromRGB(170, 110, 255)
+}
+
 --==================================================
 -- SHARED HELPERS
 --==================================================
@@ -260,7 +266,6 @@ local function RegisterFeature(feature)
 	assert(type(feature.Key) == "string" and feature.Key ~= "", "Feature.Key is required")
 	assert(type(feature.Tab) == "string" and feature.Tab ~= "", "Feature.Tab is required")
 
-	feature.Section = feature.Section or nil
 	feature.Order = feature.Order or 999
 	feature.Defaults = feature.Defaults or {}
 	feature.Options = feature.Options or {}
@@ -848,13 +853,7 @@ do
 	function Feature:GetHandlers()
 		return {
 			UIAccent = function(value, _, panelRef)
-				if value == "Green" then
-					Theme.Accent = Color3.fromRGB(60, 200, 120)
-				elseif value == "Purple" then
-					Theme.Accent = Color3.fromRGB(170, 110, 255)
-				else
-					Theme.Accent = Color3.fromRGB(90, 140, 255)
-				end
+				Theme.Accent = ACCENT_PRESETS[value] or ACCENT_PRESETS.Blue
 
 				if panelRef and panelRef.RefreshAllControls then
 					panelRef:RefreshAllControls()

@@ -21,6 +21,7 @@ return {
 		local NO_ENEMY_OPTION, NO_DUNGEON_OPTION = "Select enemy", "Select dungeon"
 		local AUTO_CLICK_POLL_DELAY, AUTO_FARM_POLL_DELAY, SHADOW_EXCHANGE_POLL_DELAY = 0.5, 0.25, 0.5
 		local DUNGEON_CREATE_DELAY, DUNGEON_INSTANCE_WAIT, AVAILABLE_DUNGEON_CACHE_TTL = 0.5, 6, 960
+		local DUNGEON_DEBUG_PREFIX = "[AriseCrossover][Dungeon]"
 
 		local function getPanelValues(panelRef) return panelRef and panelRef.Config and panelRef.Config.Values or nil end
 
@@ -51,6 +52,14 @@ return {
 					feature:Start(panelRef)
 				end
 			end
+		end
+
+		local function debugDungeon(...)
+			local parts = {DUNGEON_DEBUG_PREFIX}
+			for index = 1, select("#", ...) do
+				parts[#parts + 1] = tostring(select(index, ...))
+			end
+			print(table.concat(parts, " "))
 		end
 
 		local function getSettings()
@@ -305,6 +314,25 @@ return {
 			return type(name) == "string" and name ~= "" and name or tostring(dungeonKey)
 		end
 
+		local function formatDungeonInfo(dungeonInfo)
+			if type(dungeonInfo) ~= "table" then return tostring(dungeonInfo) end
+
+			return string.format(
+				"{Key=%s,Dungeon=%s,DungeonMap=%s,Map=%s,MapName=%s,World=%s,Rank=%s,ID=%s,DoubleID=%s,Source=%s,Instance=%s}",
+				tostring(dungeonInfo.Key),
+				tostring(dungeonInfo.Dungeon),
+				tostring(dungeonInfo.DungeonMap),
+				tostring(dungeonInfo.Map),
+				tostring(dungeonInfo.MapName),
+				tostring(dungeonInfo.World),
+				tostring(dungeonInfo.DungeonRank),
+				tostring(dungeonInfo.ID),
+				tostring(dungeonInfo.DoubleID),
+				tostring(dungeonInfo.Source),
+				dungeonInfo.Instance and dungeonInfo.Instance:GetFullName() or "nil"
+			)
+		end
+
 		local function getLiveDungeonFolder()
 			local main = Workspace:FindFirstChild("__Main")
 			return main and main:FindFirstChild("__Dungeon") or nil
@@ -359,7 +387,10 @@ return {
 
 		local function getLiveDungeonEntries()
 			local folder = getLiveDungeonFolder()
-			if not folder then return {} end
+			if not folder then
+				debugDungeon("Workspace.__Main.__Dungeon not found")
+				return {}
+			end
 
 			local entries = {}
 			local seen = {}
@@ -388,6 +419,11 @@ return {
 				if rankA ~= nil and rankB ~= nil and rankA ~= rankB then return rankA < rankB end
 				return tostring(a.Label) < tostring(b.Label)
 			end)
+
+			debugDungeon("Live dungeon scan found", #entries, "entries in", folder:GetFullName())
+			for _, entry in ipairs(entries) do
+				debugDungeon("Live entry", formatDungeonInfo(entry))
+			end
 
 			return entries
 		end
@@ -494,6 +530,7 @@ return {
 
 			availableDungeonKeys = keys
 			availableDungeonUpdatedAt = os.clock()
+			debugDungeon("Updated cached available dungeons from event/info:", table.concat(keys, ", "))
 			return keys
 		end
 
@@ -592,6 +629,9 @@ return {
 				collectAvailableDungeonsFromReplicatedInfo(keys, seen)
 				collectAvailableDungeonsFromGui(keys, seen)
 				sortDungeonKeys(keys)
+				debugDungeon("Fallback available dungeon keys:", #keys > 0 and table.concat(keys, ", ") or "(none)")
+			else
+				debugDungeon("Using cached available dungeon keys:", table.concat(keys, ", "))
 			end
 
 			return keys
@@ -599,7 +639,10 @@ return {
 
 		local function getAvailableDungeonEntries()
 			local liveEntries = getLiveDungeonEntries()
-			if #liveEntries > 0 then return liveEntries end
+			if #liveEntries > 0 then
+				debugDungeon("Using live workspace dungeon entries for dropdown")
+				return liveEntries
+			end
 
 			local entries = {}
 			for _, dungeonKey in ipairs(getAvailableDungeonKeys()) do
@@ -612,6 +655,11 @@ return {
 					Label = getDungeonDisplayName(dungeonKey, dungeonInfo),
 					Source = "Fallback"
 				}
+			end
+
+			debugDungeon("Using fallback dungeon entries for dropdown:", #entries)
+			for _, entry in ipairs(entries) do
+				debugDungeon("Fallback entry", formatDungeonInfo(entry))
 			end
 
 			return entries
@@ -635,6 +683,7 @@ return {
 				items[#items + 1] = uniqueLabel
 			end
 
+			debugDungeon("Dropdown items built:", table.concat(items, " | "))
 			return items
 		end
 
@@ -642,10 +691,19 @@ return {
 			if selectedDungeon == nil or selectedDungeon == "" or selectedDungeon == NO_DUNGEON_OPTION then return nil end
 
 			local mappedInfo = dungeonLabelToInfo[selectedDungeon]
-			if mappedInfo then return mappedInfo end
+			if mappedInfo then
+				debugDungeon("Selected dungeon resolved immediately:", selectedDungeon, formatDungeonInfo(mappedInfo))
+				return mappedInfo
+			end
 
 			getDungeonItems()
-			return dungeonLabelToInfo[selectedDungeon]
+			mappedInfo = dungeonLabelToInfo[selectedDungeon]
+			if mappedInfo then
+				debugDungeon("Selected dungeon resolved after refresh:", selectedDungeon, formatDungeonInfo(mappedInfo))
+			else
+				debugDungeon("Selected dungeon could not be resolved:", tostring(selectedDungeon))
+			end
+			return mappedInfo
 		end
 
 		local function getOwnDungeonInfo()
@@ -656,13 +714,18 @@ return {
 
 		local function waitForOwnDungeonInfo(timeout)
 			local startedAt = os.clock()
+			debugDungeon("Waiting for own dungeon info. Timeout:", timeout or DUNGEON_INSTANCE_WAIT)
 
 			repeat
 				local dungeon = getOwnDungeonInfo()
-				if dungeon then return dungeon end
+				if dungeon then
+					debugDungeon("Own dungeon info resolved during wait:", dungeon:GetFullName())
+					return dungeon
+				end
 				task.wait(0.25)
 			until os.clock() - startedAt >= (timeout or DUNGEON_INSTANCE_WAIT)
 
+			debugDungeon("Own dungeon info wait timed out")
 			return nil
 		end
 
@@ -673,13 +736,22 @@ return {
 				payload[key] = value
 			end
 
+			local payloadParts = {}
+			for key, value in pairs(payload) do
+				payloadParts[#payloadParts + 1] = tostring(key) .. "=" .. tostring(value)
+			end
+			table.sort(payloadParts)
+			debugDungeon("Sending GENERAL_EVENT DungeonAction:", table.concat(payloadParts, ", "))
+
 			return fireGeneralEvent(payload)
 		end
 
 		local function updateAvailableDungeonsFromEvent(payload)
-			if type(payload) ~= "table" or payload.Event ~= "OpenDungeon" then return end
+			if type(payload) ~= "table" then return end
+			if payload.Event ~= "OpenDungeon" then return end
 
 			local info = payload.Info or payload.Infos
+			debugDungeon("Received DUNGEON_EVENT OpenDungeon payload", info ~= nil and "with info" or "without info")
 			if info ~= nil then
 				setAvailableDungeonsFromInfo(info)
 			end
@@ -896,7 +968,10 @@ return {
 				if self.State.DungeonEventConnection then return end
 
 				local bridge = getBridge("DUNGEON_EVENT")
-				if not bridge or type(bridge.Connect) ~= "function" then return end
+				if not bridge or type(bridge.Connect) ~= "function" then
+					debugDungeon("DUNGEON_EVENT bridge missing or has no Connect method")
+					return
+				end
 
 				local ok, connection = pcall(function()
 					return bridge:Connect(updateAvailableDungeonsFromEvent)
@@ -904,6 +979,9 @@ return {
 
 				if ok then
 					self.State.DungeonEventConnection = connection
+					debugDungeon("Connected to DUNGEON_EVENT bridge")
+				else
+					debugDungeon("Failed connecting to DUNGEON_EVENT bridge:", tostring(connection))
 				end
 			end
 
@@ -912,6 +990,7 @@ return {
 				local dungeonMap = type(dungeonInfo) == "table" and (dungeonInfo.DungeonMap or dungeonInfo.Map or dungeonInfo.Key) or dungeonInfo
 				local map = type(dungeonInfo) == "table" and (dungeonInfo.Map or dungeonInfo.DungeonMap or dungeonInfo.Key) or dungeonInfo
 
+				debugDungeon("CreateDungeon using", formatDungeonInfo(dungeonInfo))
 				return sendDungeonAction("Create", {
 					Dungeon = dungeon,
 					DungeonMap = dungeonMap,
@@ -930,6 +1009,7 @@ return {
 				local dungeonMap = type(dungeonInfo) == "table" and (dungeonInfo.DungeonMap or dungeonInfo.Map or dungeonInfo.Key) or dungeonInfo
 				local map = type(dungeonInfo) == "table" and (dungeonInfo.Map or dungeonInfo.DungeonMap or dungeonInfo.Key) or dungeonInfo
 
+				debugDungeon("StartDungeon using", formatDungeonInfo(dungeonInfo))
 				return sendDungeonAction("Start", {
 					Dungeon = player.UserId,
 					DungeonMap = dungeonMap,
@@ -948,22 +1028,31 @@ return {
 				local values = setFeaturePanelRef(self, panelRef)
 				if self.State.Starting then return end
 
+				debugDungeon("Start button pressed. Selected value:", values and values.SelectedDungeon or "nil")
 				local dungeonInfo = getSelectedDungeonInfo(values and values.SelectedDungeon)
 				if not dungeonInfo then return end
 
 				self.State.Starting = true
 
 				task.spawn(function()
-					if not getOwnDungeonInfo() then
+					local ownDungeon = getOwnDungeonInfo()
+					debugDungeon("Own dungeon before create:", ownDungeon and ownDungeon:GetFullName() or "nil")
+					if not ownDungeon then
 						self:CreateDungeon(dungeonInfo)
+						debugDungeon("Waiting", DUNGEON_CREATE_DELAY, "seconds after create")
 						task.wait(DUNGEON_CREATE_DELAY)
 					end
 
-					if getOwnDungeonInfo() or waitForOwnDungeonInfo(DUNGEON_INSTANCE_WAIT) then
+					ownDungeon = getOwnDungeonInfo() or waitForOwnDungeonInfo(DUNGEON_INSTANCE_WAIT)
+					debugDungeon("Own dungeon after create/wait:", ownDungeon and ownDungeon:GetFullName() or "nil")
+					if ownDungeon then
 						self:StartDungeon(dungeonInfo)
+					else
+						debugDungeon("Failed to resolve own dungeon instance before start")
 					end
 
 					self.State.Starting = false
+					debugDungeon("Dungeon run finished")
 				end)
 			end
 

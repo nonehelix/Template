@@ -1,27 +1,255 @@
 return {
 	Load = function(Shared)
-		local Workspace, RegisterFeature, RegisterTabs = Shared.Workspace or game:GetService("Workspace"), Shared.RegisterFeature, Shared.RegisterTabs
-		local Players, ReplicatedStorage = game:GetService("Players"), game:GetService("ReplicatedStorage")
+		local Workspace, RegisterFeature, RegisterTabs = Shared.Workspace, Shared.RegisterFeature, Shared.RegisterTabs
+
+		local ReplicatedStorage, ReplicatedFirst, Players = game:GetService("ReplicatedStorage"), game:GetService("ReplicatedFirst"), game:GetService("Players")
 
 		local player = Players.LocalPlayer
+		local unpackArgs = table.unpack or unpack
 
 		--==================================================
 		-- TABS
 		--==================================================
-		RegisterTabs({{Name = "Combat", Order = 20}, {Name = "Dungeon", Order = 30}, {Name = "Debug", Order = 40}})
+		RegisterTabs({{Name = "Card", Order = 20}, {Name = "Shop", Order = 25}, {Name = "Collect", Order = 30}})
 
 		--==================================================
 		-- GAME REFERENCES
 		--==================================================
-		local Indexer = ReplicatedStorage:FindFirstChild("Indexer")
+		local Remotes = ReplicatedStorage:WaitForChild("Remotes")
+		local CardRemote, StockRemote = Remotes:WaitForChild("Card"), Remotes:WaitForChild("Stock")
+		local GradeRemote, PotionRemote = Remotes:WaitForChild("Grade"), Remotes:WaitForChild("Potion")
+
+		local CardConfig = require(
+			ReplicatedStorage:WaitForChild("Modules")
+				:WaitForChild("Config")
+				:WaitForChild("Core")
+				:WaitForChild("CardConfig")
+		)
+
+		local GradesConfig = require(
+			ReplicatedStorage:WaitForChild("Modules")
+				:WaitForChild("Config")
+				:WaitForChild("Core")
+				:WaitForChild("Grades")
+		)
 
 		--==================================================
 		-- HELPERS
 		--==================================================
-		local NO_ENEMY_OPTION, NO_DUNGEON_OPTION = "Select enemy", "Select dungeon"
-		local EMPTY_TABLE = {}
-		local AUTO_CLICK_POLL_DELAY, AUTO_FARM_POLL_DELAY, SHADOW_EXCHANGE_POLL_DELAY, DEBUG_POLL_DELAY = 0.5, 0.25, 0.5, 1
-		local DUNGEON_CREATE_DELAY, DUNGEON_INSTANCE_WAIT = 0.5, 6
+		local arrayContains = assert(Shared.arrayContains, "Shared.arrayContains is required")
+		local AUTO_BUY_POLL_DELAY, AUTO_GRADE_REQUEST_DELAY, REPLICATED_DATA_WAIT_DELAY = 0.15, 0.01, 0.1
+		local MARKET_BUY_COOLDOWN, MARKET_CHECK_INTERVAL, MARKET_POLL_DELAY, COLLECT_POLL_DELAY = 0.08, 60, 1, 1
+
+		local function normalizeSelectionArray(values)
+			local result = {}
+			if type(values) ~= "table" then
+				return result
+			end
+
+			for _, v in ipairs(values) do
+				result[#result + 1] = tostring(v)
+			end
+
+			return result
+		end
+
+		local function normalizePackName(name)
+			name = tostring(name or "")
+			name = name:gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
+			name = name:gsub("%s+[Pp]ack$", "")
+			return name
+		end
+
+		local function buildRemotePackId(packName, mutation)
+			local base = normalizePackName(packName)
+			if base == "" then return nil end
+			if mutation == "Regular" or mutation == nil or mutation == "" then return base end
+			return base .. "-" .. tostring(mutation)
+		end
+
+		local function parseStockAmount(text) return tonumber(string.match(tostring(text or ""), "%d+")) or 0 end
+
+		local function parseCardActionAmount(value)
+			local amount = tonumber(string.match(tostring(value or ""), "%d+")) or 1
+			if amount == 10 or amount == 100 then return amount end
+			return 1
+		end
+
+		local function fireCardAction(actionName, amountValue, ...)
+			local args = {actionName, ...}
+			local amount = tostring(parseCardActionAmount(amountValue))
+
+			if amount ~= "1" then args[#args + 1] = amount end
+			CardRemote:FireServer(unpackArgs(args))
+		end
+
+		local function runPackMutationCardAction(actionName, amountValue, packValue, mutationValue)
+			local pack = normalizePackName(packValue)
+			local mutation = tostring(mutationValue or "")
+
+			if pack == "" or mutation == "" then return end
+			fireCardAction(actionName, amountValue, pack, mutation)
+		end
+
+		local function addUniqueItem(items, seen, value)
+			value = tostring(value or "")
+			if value == "" or value == "All" or seen[value] then return end
+			seen[value] = true
+			items[#items + 1] = value
+		end
+
+		local function getPackItems()
+			local items = {"All"}
+			if CardConfig and CardConfig.List and CardConfig.List.Packs then
+				for _, packName in pairs(CardConfig.List.Packs) do
+					items[#items + 1] = tostring(packName)
+				end
+			end
+			return items
+		end
+
+		local function getCardActionPackItems()
+			local items = {}
+			local seen = {}
+			addUniqueItem(items, seen, "Pirate")
+			for _, packName in ipairs(getPackItems()) do
+				addUniqueItem(items, seen, packName)
+			end
+			return items
+		end
+
+		local function getMutationItems()
+			local items = {"All", "Regular"}
+			if CardConfig and CardConfig.List and CardConfig.List.Mutations then
+				local mutationList = CardConfig.List.Mutations
+				local addedArrayItems = false
+
+				for _, mut in ipairs(mutationList) do
+					items[#items + 1] = tostring(mut)
+					addedArrayItems = true
+				end
+
+				if not addedArrayItems then
+					for _, mut in pairs(mutationList) do
+						items[#items + 1] = tostring(mut)
+					end
+				end
+			end
+			return items
+		end
+
+		local function getFilteredMutationItems(excluded)
+			local items = {}
+			local seen = {}
+			excluded = excluded or {}
+
+			local function addMutation(value)
+				value = tostring(value or "")
+				if excluded[value] then return end
+				addUniqueItem(items, seen, value)
+			end
+
+			addMutation("Regular")
+			addMutation("Gold")
+			addMutation("Emerald")
+			for _, mutation in ipairs(getMutationItems()) do
+				addMutation(mutation)
+			end
+			return items
+		end
+
+		local function getUpgradeMutationOrder() return getFilteredMutationItems({Rainbow = true}) end
+
+		local function getNextUpgradeMutation(fromMutation)
+			fromMutation = tostring(fromMutation or "")
+			local mutations = getUpgradeMutationOrder()
+
+			for index, mutation in ipairs(mutations) do
+				if tostring(mutation) == fromMutation then return mutations[index + 1] end
+			end
+			return nil
+		end
+
+		local function getUpgradeFromMutationItems()
+			local items = {}
+			local mutations = getUpgradeMutationOrder()
+
+			for index, mutation in ipairs(mutations) do
+				if index < #mutations then items[#items + 1] = mutation end
+			end
+			return items
+		end
+
+		local function getDowngradeMutationItems() return getFilteredMutationItems({Regular = true}) end
+		local function getBundleMutationItems() return getFilteredMutationItems({}) end
+		local function getCardActionAmountItems() return {"x1", "x10", "x100"} end
+
+		local function registerPackMutationActionFeature(config)
+			local key = config.Key
+			local packId = key .. "Pack"
+			local mutationId = key .. "Mutation"
+			local amountId = key .. "Amount"
+			local runId = key .. "Run"
+
+			local Feature = RegisterFeature({
+				Key = key, Tab = "Shop", Section = config.Section or key, Order = config.Order,
+				Defaults = {[packId] = config.DefaultPack or "Pirate", [mutationId] = config.DefaultMutation or "Regular", [amountId] = config.DefaultAmount or "x1"},
+				Options = {
+					{ Id = packId, Type = "select", Label = "Pack", Description = config.PackDescription, Items = getCardActionPackItems },
+					{ Id = mutationId, Type = "select", Label = "Mutation", Description = config.MutationDescription, Items = config.MutationItems },
+					{ Id = amountId, Type = "select", Label = "Amount", Description = config.AmountDescription, Items = getCardActionAmountItems },
+					{ Id = runId, Type = "button", Label = config.ButtonLabel or key, Description = config.ButtonDescription, ButtonText = config.ButtonText or key },
+				}
+			})
+
+			function Feature:Run(values)
+				values = values or {}
+				runPackMutationCardAction(config.ActionName or key, values[amountId], values[packId], values[mutationId])
+			end
+
+			function Feature:GetHandlers()
+				return {[runId] = function(_, values) self:Run(values) end}
+			end
+
+			return Feature
+		end
+
+		local function getGradeItems()
+			local items = {}
+			if GradesConfig and GradesConfig.List then
+				for _, grade in ipairs(GradesConfig.List) do
+					items[#items + 1] = tostring(grade)
+				end
+			else
+				items = {"F", "E", "D", "C", "B", "A", "S", "S+", "SS", "SR", "UR"}
+			end
+			return items
+		end
+
+		local function getAllCardNames()
+			local seen = {}
+			local cardNames = {}
+			if CardConfig and CardConfig.Packs then
+				for _, packData in pairs(CardConfig.Packs) do
+					if packData.List then
+						for cardName in pairs(packData.List) do
+							cardName = tostring(cardName)
+							if not seen[cardName] then
+								seen[cardName] = true
+								cardNames[#cardNames + 1] = cardName
+							end
+						end
+					end
+				end
+			end
+
+			table.sort(cardNames)
+			local items = {"All"}
+			for _, cardName in ipairs(cardNames) do
+				items[#items + 1] = cardName
+			end
+			return items
+		end
 
 		local function getPanelValues(panelRef) return panelRef and panelRef.Config and panelRef.Config.Values or nil end
 
@@ -54,338 +282,63 @@ return {
 			end
 		end
 
-		local function disconnectConnection(connection)
-			if connection and connection.Connected then
-				connection:Disconnect()
-			end
-			return nil
-		end
-
-		local function bindConnectionToggleFeature(feature, optionId, onStart, config)
-			config = config or EMPTY_TABLE
-
+		local function bindPollingToggleFeature(feature, optionId, onTick)
 			function feature:Start(panelRef)
 				setFeaturePanelRef(self, panelRef)
-				if config.RestartOnStart then
-					self:Stop()
-					setFeaturePanelRef(self, panelRef)
-				elseif self.State.Running then
-					return
-				end
+				if self.State.Running then return end
 
 				self.State.Running = true
-				onStart(self, panelRef)
-			end
-
-			function feature:Stop()
-				self.State.Running = false
-				if config.BeforeStop then
-					config.BeforeStop(self)
-				end
-			end
-
-			function feature:GetHandlers()
-				return {
-					[optionId] = buildToggleHandler(self, function(panelRef) self:Start(panelRef) end),
-				}
-			end
-
-			function feature:Cleanup()
-				self:Stop()
-				self.State.PanelRef = nil
-				if config.OnCleanup then
-					config.OnCleanup(self)
-				end
-			end
-		end
-
-		local function formatDebugValue(value)
-			local valueType = typeof(value)
-			if valueType == "Vector3" then
-				return string.format("(%.2f, %.2f, %.2f)", value.X, value.Y, value.Z)
-			elseif valueType == "Vector2" then
-				return string.format("(%.2f, %.2f)", value.X, value.Y)
-			elseif valueType == "CFrame" then
-				local position = value.Position
-				return string.format("CFrame(%.2f, %.2f, %.2f)", position.X, position.Y, position.Z)
-			elseif valueType == "Instance" then
-				return value:GetFullName()
-			end
-
-			return tostring(value)
-		end
-
-		local function debugLog(scope, message)
-			print("[AriseCrossover][" .. tostring(scope) .. "] " .. tostring(message))
-		end
-
-		local DebugFlags = {
-			Farm = false,
-		}
-
-		local function farmDebugLog(scope, message)
-			if DebugFlags.Farm then
-				debugLog(scope, message)
-			end
-		end
-
-		local function featureDebugLog(feature, scope, message)
-			if not DebugFlags.Farm then return end
-			if feature and feature.State then
-				if feature.State.LastDebugMessage == message then return end
-				feature.State.LastDebugMessage = message
-			end
-
-			farmDebugLog(scope, message)
-		end
-
-		local function buildAttributeSnapshot(instance)
-			if not instance then return "<missing>" end
-
-			local ok, attributes = pcall(function()
-				return instance:GetAttributes()
-			end)
-			if not ok or type(attributes) ~= "table" then return "<unavailable>" end
-
-			local names = {}
-			for name in pairs(attributes) do
-				names[#names + 1] = tostring(name)
-			end
-
-			table.sort(names)
-			if #names == 0 then return "<none>" end
-
-			local parts = {}
-			for _, name in ipairs(names) do
-				parts[#parts + 1] = name .. "=" .. formatDebugValue(attributes[name])
-			end
-
-			return table.concat(parts, ", ")
-		end
-
-		local function bindPollingToggleFeature(feature, optionId, onTick, config)
-			config = config or EMPTY_TABLE
-
-			function feature:Start(panelRef)
-				setFeaturePanelRef(self, panelRef)
-				if config.RestartOnStart then
-					self:Stop()
-					setFeaturePanelRef(self, panelRef)
-				elseif self.State.Running then
-					return
-				end
-
-				if config.BeforeStart then
-					config.BeforeStart(self, panelRef)
-				end
-
-				self.State.Running = true
-
-				local loopId = nil
-				if config.UseLoopId or self.State.LoopId ~= nil then
-					self.State.LoopId = (self.State.LoopId or 0) + 1
-					loopId = self.State.LoopId
-				end
 
 				task.spawn(function()
 					while self.State.Running do
-						if loopId ~= nil and self.State.LoopId ~= loopId then break end
-
 						local values = getPanelValues(self.State.PanelRef)
-						if not values or values[optionId] ~= true then break end
+						if not values or not values[optionId] then break end
 
-						onTick(self, values)
-						task.wait(self.State.PollDelay or config.PollDelay or 0.5)
+						onTick(self)
+						task.wait(self.State.PollDelay)
 					end
 
-					if self.State.Running and (loopId == nil or self.State.LoopId == loopId) then
-						self:Stop()
-					end
+					self.State.Running = false
 				end)
 			end
 
-			function feature:Stop()
-				self.State.Running = false
-				if config.UseLoopId or self.State.LoopId ~= nil then
-					self.State.LoopId = (self.State.LoopId or 0) + 1
-				end
-
-				if config.BeforeStop then
-					config.BeforeStop(self)
-				end
-			end
+			function feature:Stop() self.State.Running = false end
 
 			function feature:GetHandlers()
-				local handlers = {
-					[optionId] = buildToggleHandler(self, function(panelRef) self:Start(panelRef) end),
-				}
-
-				for handlerId, handler in pairs(config.ExtraHandlers or EMPTY_TABLE) do
-					handlers[handlerId] = handler
-				end
-
-				return handlers
+				return {[optionId] = buildToggleHandler(self, function(panelRef) self:Start(panelRef) end)}
 			end
 
 			function feature:Cleanup()
 				self:Stop()
 				self.State.PanelRef = nil
-
-				if config.OnCleanup then
-					config.OnCleanup(self)
-				end
+				if self.State.LastCollectAt then table.clear(self.State.LastCollectAt) end
 			end
 		end
 
-		local settingsCache, leaderstatsCache, passesCache = nil, nil, nil
-		local function getSettings()
-			if settingsCache and settingsCache.Parent == player then return settingsCache end
-			settingsCache = player:FindFirstChild("Settings") or player:WaitForChild("Settings", 10)
-			return settingsCache
+		local function getClientTokenFolder()
+			local items = Workspace:FindFirstChild("Items")
+			local tokens = items and items:FindFirstChild("Tokens")
+			return tokens and tokens:FindFirstChild("Client") or nil
 		end
 
-		local function getLeaderstats()
-			if leaderstatsCache and leaderstatsCache.Parent == player then return leaderstatsCache end
-			leaderstatsCache = player:FindFirstChild("leaderstats") or player:WaitForChild("leaderstats", 10)
-			return leaderstatsCache
+		local function getCollectablesFolder()
+			local items = Workspace:FindFirstChild("Items")
+			local misc = items and items:FindFirstChild("Misc")
+			return misc and misc:FindFirstChild("Collectables") or nil
 		end
 
-		local function getPasses()
-			if passesCache and passesCache.Parent then return passesCache end
-			local leaderstats = getLeaderstats()
-			passesCache = leaderstats and (leaderstats:FindFirstChild("Passes") or leaderstats:WaitForChild("Passes", 10)) or nil
-			return passesCache
+		local function getCollectable(name)
+			local collectables = getCollectablesFolder()
+			if not collectables then return nil end
+			return collectables:FindFirstChild(name)
 		end
 
-		local function setPass(passName, enabled)
-			local passes = getPasses()
-			if passes then passes:SetAttribute(passName, enabled == true) end
-		end
+		local function isCollectableVisible(collectable)
+			if not collectable then return false end
+			if collectable:IsA("BasePart") then return collectable.Transparency < 1 end
 
-		local function setAutoAttack(enabled)
-			local settings = getSettings()
-			if settings then settings:SetAttribute("AutoAttack", enabled == true) end
-			setPass("AutoAttack", enabled)
-		end
-
-		local function setAutoClick(enabled)
-			local settings = getSettings()
-			if settings then settings:SetAttribute("AutoClick", enabled == true) end
-			setPass("AutoClicker", enabled)
-		end
-
-		local bridgeCache = {}
-
-		local function getBridge(bridgeName)
-			if bridgeCache[bridgeName] ~= nil then return bridgeCache[bridgeName] end
-
-			local bridgeModule = ReplicatedStorage:FindFirstChild("BridgeNet2")
-			if not bridgeModule then return nil end
-
-			local ok, bridgeNet = pcall(require, bridgeModule)
-			if not ok or type(bridgeNet) ~= "table" or type(bridgeNet.ReferenceBridge) ~= "function" then return nil end
-
-			local bridgeOk, bridge = pcall(function()
-				return bridgeNet.ReferenceBridge(bridgeName)
-			end)
-
-			if bridgeOk then
-				bridgeCache[bridgeName] = bridge
-				return bridge
-			end
-
-			return nil
-		end
-
-		local function fireGeneralEvent(payload)
-			local bridge = getBridge("GENERAL_EVENT")
-			if not bridge or type(payload) ~= "table" then return false end
-
-			local ok = pcall(function()
-				bridge:Fire(payload)
-			end)
-
-			return ok
-		end
-
-		local function getShadowExchangeButton()
-			local playerGui = player:FindFirstChild("PlayerGui")
-			local hud = playerGui and playerGui:FindFirstChild("Hud")
-			local leftContainer = hud and hud:FindFirstChild("LeftContainer")
-			return leftContainer and leftContainer:FindFirstChild("ShadowExchange") or nil
-		end
-
-		local function setShadowExchange(enabled)
-			setPass("ShadowExchange", enabled)
-
-			local button = getShadowExchangeButton()
-			if button then button.Visible = enabled == true end
-		end
-
-		local function readValueObject(valueObject)
-			if not valueObject then return nil end
-			if valueObject:IsA("TextLabel") or valueObject:IsA("TextButton") or valueObject:IsA("TextBox") then return valueObject.Text end
-			if valueObject:IsA("StringValue") or valueObject:IsA("NumberValue") or valueObject:IsA("IntValue") then return valueObject.Value end
-			return valueObject:GetAttribute("Text") or valueObject:GetAttribute("Value")
-		end
-
-		local function parseHealthNumber(value)
-			if value == nil then return nil end
-
-			local text = tostring(value):gsub(",", "")
-			local numberText = text:match("%-?%d+%.?%d*")
-			return numberText and tonumber(numberText) or nil
-		end
-
-		local function getCharacterRoot()
-			local character = player.Character
-			return character and character:FindFirstChild("HumanoidRootPart") or nil
-		end
-
-		local function getEnemyRoot(enemy)
-			if not enemy then return nil end
-			return enemy.PrimaryPart or enemy:FindFirstChild("HumanoidRootPart") or enemy:FindFirstChildWhichIsA("BasePart", true)
-		end
-
-		local function getEnemyFolders()
-			local main = Workspace:FindFirstChild("__Main")
-			local enemies = main and main:FindFirstChild("__Enemies")
-			return enemies and enemies:FindFirstChild("Client") or nil, enemies and enemies:FindFirstChild("Server") or nil
-		end
-
-		local function getEnemyHealthBarMain(enemy)
-			local healthBar = enemy and enemy:FindFirstChild("HealthBar")
-			return healthBar and healthBar:FindFirstChild("Main") or nil
-		end
-
-		local function getEnemyDisplayName(enemy)
-			local main = getEnemyHealthBarMain(enemy)
-			local title = main and main:FindFirstChild("Title")
-			local titleText = readValueObject(title)
-			if titleText and tostring(titleText) ~= "" then return tostring(titleText) end
-
-			local attributeName = enemy and enemy:GetAttribute("Name")
-			if attributeName and tostring(attributeName) ~= "" then return tostring(attributeName) end
-
-			return enemy and enemy.Name or nil
-		end
-
-		local function getEnemyClientHealth(enemy)
-			local main = getEnemyHealthBarMain(enemy)
-			local amount = main and main:FindFirstChild("Amount")
-			return parseHealthNumber(readValueObject(amount))
-		end
-
-		local function getEnemyHealthObject(enemy)
-			local main = getEnemyHealthBarMain(enemy)
-			return main and main:FindFirstChild("Amount") or nil
-		end
-
-		local function hasDeadAttribute(instance)
-			if not instance then return false end
-
-			for _, attributeName in ipairs({"Dead", "IsDead", "Died", "Removed", "Remove"}) do
-				if instance:GetAttribute(attributeName) == true then
+			for _, descendant in ipairs(collectable:GetDescendants()) do
+				if descendant:IsA("BasePart") and descendant.Transparency < 1 then
 					return true
 				end
 			end
@@ -393,959 +346,680 @@ return {
 			return false
 		end
 
-		local function getAttributeHealth(instance)
-			if not instance then return nil end
+		local function canCollectVisibleItem(state, itemName)
+			local item = getCollectable(itemName)
+			if not item or not isCollectableVisible(item) then return false end
 
-			for _, attributeName in ipairs({"Health", "HP", "CurrentHealth", "CurrentHP"}) do
-				local health = parseHealthNumber(instance:GetAttribute(attributeName))
-				if health ~= nil then return health end
+			local now = Workspace:GetServerTimeNow()
+			local lastCollect = state.LastCollectAt[itemName] or 0
+			return (now - lastCollect) >= state.CooldownSeconds
+		end
+
+		local function tryCollectVisibleItem(state, itemName)
+			if not canCollectVisibleItem(state, itemName) then return end
+
+			local fired = pcall(function() PotionRemote:FireServer("Collect", itemName) end)
+			if fired then state.LastCollectAt[itemName] = Workspace:GetServerTimeNow() end
+		end
+
+		local function collectVisibleItems(state)
+			for _, itemName in ipairs(state.ItemNames) do tryCollectVisibleItem(state, itemName) end
+		end
+
+		--==================================================
+		-- FEATURE: AUTO BUY (CONVEYOR)
+		--==================================================
+		do
+			local Feature = RegisterFeature({
+				Key = "AutoBuy", Tab = "Card", Section = "Buying", Order = 10,
+				Defaults = {AutoBuyEnabled = false, AutoBuyPack = {}, AutoBuyMutation = {}},
+				State = {LastBuyTimes = {}, Running = false, PanelRef = nil, PackMetadata = setmetatable({}, {__mode = "k"})},
+				Options = {
+					{ Id = "AutoBuyEnabled", Type = "toggle", Label = "Enable Auto Buy", Description = "Auto buys conveyor packs" },
+					{ Id = "AutoBuyPack", Type = "multiselect", Label = "Pack", Description = "Select packs", Items = getPackItems, EmptyText = "Nothing selected" },
+					{ Id = "AutoBuyMutation", Type = "multiselect", Label = "Mutation", Description = "Select mutations", Items = getMutationItems, EmptyText = "Nothing selected" },
+				}
+			})
+
+			function Feature:GetPackMetadata(packModel)
+				if not packModel then return nil end
+
+				local cached = self.State.PackMetadata[packModel]
+				if not cached then
+					local packTypePart = packModel.PrimaryPart or packModel:FindFirstChildWhichIsA("BasePart")
+					local mutationLabel = packModel:FindFirstChild("Mutation", true)
+
+					cached = {
+						PackId = packModel.Name ~= "" and packModel.Name or nil,
+						PackTypePart = packTypePart,
+						MutationLabel = mutationLabel and mutationLabel:IsA("TextLabel") and mutationLabel or nil,
+					}
+					self.State.PackMetadata[packModel] = cached
+				end
+
+				cached.PackId = packModel.Name ~= "" and packModel.Name or cached.PackId
+
+				local packTypePart = cached.PackTypePart
+				if not packTypePart or not packTypePart.Parent then
+					packTypePart = packModel.PrimaryPart or packModel:FindFirstChildWhichIsA("BasePart")
+					cached.PackTypePart = packTypePart
+				end
+
+				local mutationLabel = cached.MutationLabel
+				if not mutationLabel or not mutationLabel.Parent then
+					local foundMutationLabel = packModel:FindFirstChild("Mutation", true)
+					mutationLabel = foundMutationLabel and foundMutationLabel:IsA("TextLabel") and foundMutationLabel or nil
+					cached.MutationLabel = mutationLabel
+				end
+
+				local mutation = "Regular"
+				if mutationLabel and mutationLabel.Visible and mutationLabel.Text ~= "" then
+					mutation = tostring(mutationLabel.Text)
+				end
+
+				return {
+					PackId = cached.PackId,
+					PackType = packTypePart and packTypePart.Name ~= "" and packTypePart.Name or nil,
+					Mutation = mutation,
+				}
 			end
 
-			return nil
-		end
+			function Feature:Matches(packType, mutation, selectedPacks, selectedMutations)
+				if not packType or packType == "" then return false end
+				if type(selectedPacks) ~= "table" or #selectedPacks == 0 then return false end
+				if type(selectedMutations) ~= "table" or #selectedMutations == 0 then return false end
 
-		local function getServerEnemy(enemy)
-			local _, serverFolder = getEnemyFolders()
-			return enemy and serverFolder and serverFolder:FindFirstChild(enemy.Name) or nil
-		end
-
-		local function getEnemyAliveState(enemy, options)
-			options = options or EMPTY_TABLE
-
-			if not enemy or not enemy.Parent then return false, "missing-model" end
-			if hasDeadAttribute(enemy) then return false, "client-dead-attribute" end
-
-			local enemyRoot = getEnemyRoot(enemy)
-			if not enemyRoot then return false, "missing-root" end
-
-			local serverEnemy = getServerEnemy(enemy)
-			if serverEnemy then
-				if hasDeadAttribute(serverEnemy) then return false, "server-dead-attribute" end
-
-				local serverHealth = getAttributeHealth(serverEnemy)
-				if serverHealth ~= nil and serverHealth <= 0 then return false, "server-health-zero" end
-				if serverHealth ~= nil and serverHealth > 0 then return true, "server-health-positive" end
+				local packOk = arrayContains(selectedPacks, "All") or arrayContains(selectedPacks, packType)
+				local mutOk = arrayContains(selectedMutations, "All") or arrayContains(selectedMutations, mutation)
+				return packOk and mutOk
 			end
 
-			local clientAttributeHealth = getAttributeHealth(enemy)
-			if clientAttributeHealth ~= nil and clientAttributeHealth <= 0 then return false, "client-health-zero" end
-			if clientAttributeHealth ~= nil and clientAttributeHealth > 0 then return true, "client-health-positive" end
+			function Feature:Tick(values)
+				if not values.AutoBuyEnabled then return end
 
-			local healthObject = getEnemyHealthObject(enemy)
-			local clientHealth = getEnemyClientHealth(enemy)
-			if clientHealth ~= nil and clientHealth <= 0 then return false, "client-healthbar-zero" end
-			if clientHealth ~= nil and clientHealth > 0 then return true, "client-healthbar-positive" end
-			if healthObject then return false, "client-healthbar-unreadable" end
+				local selectedPacks = normalizeSelectionArray(values.AutoBuyPack)
+				local selectedMutations = normalizeSelectionArray(values.AutoBuyMutation)
 
-			if options.AllowUnknownHealth then return true, "unknown-health-allowed" end
-			return false, "missing-healthbar"
-		end
+				if #selectedPacks == 0 or #selectedMutations == 0 then return end
 
-		local function isEnemyAlive(enemy, options)
-			local alive = getEnemyAliveState(enemy, options)
-			return alive == true
-		end
+				local packsFolder = Workspace:FindFirstChild("Client") and Workspace.Client:FindFirstChild("Packs")
+				if not packsFolder then return end
 
-		local function findClosestEnemy(matchFn, options)
-			options = options or EMPTY_TABLE
-			local enemyFolder = getEnemyFolders()
-			if not enemyFolder then return nil end
+				local now = tick()
 
-			local characterRoot = getCharacterRoot()
-			local closestEnemy = nil
-			local closestDistance = nil
+				for _, child in ipairs(packsFolder:GetChildren()) do
+					if child:IsA("Model") then
+						local metadata = self:GetPackMetadata(child)
+						local packId = metadata and metadata.PackId
+						local packType = metadata and metadata.PackType
+						local mutation = metadata and metadata.Mutation
 
-			for _, enemy in ipairs(enemyFolder:GetChildren()) do
-				if matchFn == nil or matchFn(enemy) then
-					local alive = options.IgnoreAlive == true or isEnemyAlive(enemy, options)
-					if alive then
-						local enemyRoot = getEnemyRoot(enemy)
-						if enemyRoot then
-							local distance = characterRoot and (characterRoot.Position - enemyRoot.Position).Magnitude or 0
-							if closestDistance == nil or distance < closestDistance then
-								closestEnemy = enemy
-								closestDistance = distance
+						if packId and packType and self:Matches(packType, mutation, selectedPacks, selectedMutations) then
+							if not self.State.LastBuyTimes[packId] or (now - self.State.LastBuyTimes[packId]) > 1 then
+								self.State.LastBuyTimes[packId] = now
+								CardRemote:FireServer("BuyPack", packId)
 							end
 						end
 					end
 				end
 			end
 
-			return closestEnemy, closestDistance
-		end
-
-		local function describeEnemy(enemy, options)
-			if not enemy then return "nil" end
-
-			options = options or EMPTY_TABLE
-			local alive, reason = getEnemyAliveState(enemy, options)
-			local serverEnemy = getServerEnemy(enemy)
-			local enemyRoot = getEnemyRoot(enemy)
-			local characterRoot = getCharacterRoot()
-			local distance = characterRoot and enemyRoot and (characterRoot.Position - enemyRoot.Position).Magnitude or nil
-
-			local parts = {
-				"Name=" .. tostring(getEnemyDisplayName(enemy)),
-				"Model=" .. tostring(enemy.Name),
-				"Alive=" .. tostring(alive),
-				"Reason=" .. tostring(reason),
-				"ClientHealth=" .. tostring(getEnemyClientHealth(enemy)),
-				"ClientAttrHealth=" .. tostring(getAttributeHealth(enemy)),
-				"ServerHealth=" .. tostring(getAttributeHealth(serverEnemy)),
-				"HasHealthObject=" .. tostring(getEnemyHealthObject(enemy) ~= nil),
-				"Distance=" .. (distance and string.format("%.2f", distance) or "nil"),
-				"Root=" .. (enemyRoot and formatDebugValue(enemyRoot.Position) or "nil"),
-				"Path=" .. enemy:GetFullName(),
-			}
-
-			if options.IncludeAttributes then
-				parts[#parts + 1] = "Attrs={" .. buildAttributeSnapshot(enemy) .. "}"
-				if serverEnemy then
-					parts[#parts + 1] = "ServerAttrs={" .. buildAttributeSnapshot(serverEnemy) .. "}"
-				end
-			end
-
-			return table.concat(parts, " | ")
-		end
-
-		local function getEnemyScanSummary(matchFn, options)
-			options = options or EMPTY_TABLE
-			local enemyFolder = getEnemyFolders()
-			if not enemyFolder then return "enemy-folder-missing" end
-
-			local total, matching, alive = 0, 0, 0
-			local reasons = {}
-			for _, enemy in ipairs(enemyFolder:GetChildren()) do
-				total = total + 1
-				if matchFn == nil or matchFn(enemy) then
-					matching = matching + 1
-					local isAlive, reason = getEnemyAliveState(enemy, options)
-					if isAlive then
-						alive = alive + 1
-					else
-						reasons[reason] = (reasons[reason] or 0) + 1
-					end
-				end
-			end
-
-			local reasonParts = {}
-			for reason, count in pairs(reasons) do
-				reasonParts[#reasonParts + 1] = tostring(reason) .. "=" .. tostring(count)
-			end
-			table.sort(reasonParts)
-
-			return "total=" .. total .. ", matching=" .. matching .. ", alive=" .. alive .. ", rejects={" .. table.concat(reasonParts, ", ") .. "}"
-		end
-
-		local function isDungeonInstance()
-			return ReplicatedStorage:GetAttribute("Dungeon") == true
-		end
-
-		local knownEnemyNameCache = nil
-
-		local function getKnownEnemyNames()
-			if knownEnemyNameCache then return knownEnemyNameCache end
-
-			local names = {}
-			local infoModule = nil
-
-			if Indexer then
-				for _, moduleName in ipairs({"EnemiesInfo", "EnemyInfo", "Enemies", "MobsInfo"}) do
-					local candidate = Indexer:FindFirstChild(moduleName)
-					if candidate and candidate:IsA("ModuleScript") then
-						infoModule = candidate
-						break
-					end
-				end
-			end
-
-			if not infoModule then return names end
-
-			local ok, enemyInfo = pcall(require, infoModule)
-			if not ok or type(enemyInfo) ~= "table" then return names end
-
-			local seen = {}
-			for _, info in pairs(enemyInfo) do
-				if type(info) == "table" and type(info.Name) == "string" and info.Name ~= "" and not seen[info.Name] then
-					seen[info.Name] = true
-					names[#names + 1] = info.Name
-				end
-			end
-
-			table.sort(names)
-			knownEnemyNameCache = names
-			return names
-		end
-
-		local function getAutoFarmEnemyItems()
-			local items = {NO_ENEMY_OPTION}
-			local seen = {[NO_ENEMY_OPTION] = true}
-			local enemyFolder = getEnemyFolders()
-
-			if enemyFolder then
-				for _, enemy in ipairs(enemyFolder:GetChildren()) do
-					local enemyName = getEnemyDisplayName(enemy)
-					if enemyName and enemyName ~= "" and not seen[enemyName] then
-						seen[enemyName] = true
-						items[#items + 1] = enemyName
-					end
-				end
-			end
-
-			if #items == 1 then
-				for _, enemyName in ipairs(getKnownEnemyNames()) do
-					if not seen[enemyName] then
-						seen[enemyName] = true
-						items[#items + 1] = enemyName
-					end
-				end
-			else
-				table.sort(items, function(a, b)
-					if a == b then return false end
-					if a == NO_ENEMY_OPTION then return true end
-					if b == NO_ENEMY_OPTION then return false end
-					return a < b
-				end)
-			end
-
-			return items
-		end
-
-		local function getClosestTeleportCFrame(enemyRoot, distance)
-			local characterRoot = getCharacterRoot()
-			local enemyPosition = enemyRoot.Position
-			local radius = distance or 7
-
-			local direction = nil
-			if characterRoot then
-				local offset = characterRoot.Position - enemyPosition
-				local flatOffset = Vector3.new(offset.X, 0, offset.Z)
-				if flatOffset.Magnitude > 0.001 then
-					direction = flatOffset.Unit
-				end
-			end
-
-			if not direction then
-				local lookVector = enemyRoot.CFrame.LookVector
-				local flatLook = Vector3.new(lookVector.X, 0, lookVector.Z)
-				direction = flatLook.Magnitude > 0.001 and flatLook.Unit or Vector3.new(0, 0, -1)
-			end
-
-			local targetPosition = enemyPosition + direction * radius
-			targetPosition = Vector3.new(targetPosition.X, enemyPosition.Y, targetPosition.Z)
-
-			return CFrame.lookAt(targetPosition, Vector3.new(enemyPosition.X, targetPosition.Y, enemyPosition.Z))
-		end
-
-		local function teleportToEnemy(enemy, distance)
-			local character = player.Character
-			local enemyRoot = getEnemyRoot(enemy)
-			if not character or not enemyRoot then return end
-			character:PivotTo(getClosestTeleportCFrame(enemyRoot, distance))
-		end
-
-		local function setFeatureTarget(feature, target)
-			if feature.State.CurrentTarget == target then return end
-
-			feature.State.CurrentTarget = target
-			if target then teleportToEnemy(target, feature.State.TeleportDistance) end
-		end
-
-		local dungeonLabelToInfo = {}
-
-		local function getLiveDungeonFolder()
-			local main = Workspace:FindFirstChild("__Main")
-			if not main then return nil end
-
-			return main:FindFirstChild("__Dungeon") or main:FindFirstChild("Dungeon") or main:FindFirstChild("__Dungeon", true)
-		end
-
-		local function makeDungeonLabel(info)
-			local mapName = tostring(info.MapName or info.Dungeon or "Dungeon")
-			local rank = info.DungeonRank ~= nil and tostring(info.DungeonRank) or "?"
-			return mapName .. " - Rank " .. rank
-		end
-
-		local function getSafeAttributes(instance)
-			if not instance then return nil end
-
-			local ok, attrs = pcall(function()
-				return instance:GetAttributes()
-			end)
-
-			if not ok or type(attrs) ~= "table" then return nil end
-			return attrs
-		end
-
-		local function isDungeonCandidate(instance, attrs)
-			if not instance or not attrs then return false end
-
-			local hasCoreInfo = attrs.Dungeon ~= nil or attrs.DungeonMap ~= nil or attrs.MapName ~= nil
-			local hasIdentifier = attrs.ID ~= nil or attrs.DoubleID ~= nil or attrs._C ~= nil
-			return hasCoreInfo and hasIdentifier
-		end
-
-		local function getLiveDungeonInfo(dungeonObject)
-			if not dungeonObject then return nil end
-
-			local attrs = getSafeAttributes(dungeonObject)
-			if not isDungeonCandidate(dungeonObject, attrs) then return nil end
-
-			local mapName = attrs.MapName or attrs.Dungeon or attrs.DungeonMap
-			local dungeonName = attrs.Dungeon or mapName or attrs.DungeonMap
-			local dungeonMap = attrs.DungeonMap or attrs.Map or attrs.Dungeon or mapName
-			if dungeonName == nil and dungeonMap == nil then return nil end
-
-			local info = {
-				Key = tostring(attrs.DoubleID or attrs.ID or attrs.DungeonMap or attrs.Dungeon or dungeonObject.Name),
-				Dungeon = dungeonName and tostring(dungeonName) or tostring(dungeonMap),
-				DungeonMap = dungeonMap and tostring(dungeonMap) or tostring(dungeonName),
-				Map = dungeonMap and tostring(dungeonMap) or tostring(dungeonName),
-				MapName = mapName and tostring(mapName) or nil,
-				World = attrs.World and tostring(attrs.World) or nil,
-				DungeonRank = attrs.DungeonRank or attrs.Rank,
-				ID = attrs.ID,
-				DoubleID = attrs.DoubleID,
-				Instance = dungeonObject,
-			}
-
-			info.Label = makeDungeonLabel(info)
-			return info
-		end
-
-		local function getLiveDungeonEntries()
-			local entries = {}
-			local seenInstances = {}
-			local seenKeys = {}
-			local folder = getLiveDungeonFolder()
-			local main = Workspace:FindFirstChild("__Main")
-
-			local function addCandidate(dungeonObject)
-				if not dungeonObject or seenInstances[dungeonObject] then return end
-				seenInstances[dungeonObject] = true
-
-				local info = getLiveDungeonInfo(dungeonObject)
-				if not info or seenKeys[info.Key] then return end
-
-				seenKeys[info.Key] = true
-				entries[#entries + 1] = info
-			end
-
-			local function scanContainer(container)
-				if not container then return end
-
-				addCandidate(container)
-
-				local okChildren, children = pcall(function()
-					return container:GetChildren()
-				end)
-				if okChildren and type(children) == "table" then
-					for _, child in ipairs(children) do
-						addCandidate(child)
-					end
-				end
-
-				local okDescendants, descendants = pcall(function()
-					return container:GetDescendants()
-				end)
-				if okDescendants and type(descendants) == "table" then
-					for _, descendant in ipairs(descendants) do
-						addCandidate(descendant)
-					end
-				end
-			end
-
-			if folder then
-				scanContainer(folder)
-			elseif main then
-				scanContainer(main)
-			end
-
-			table.sort(entries, function(a, b)
-				local rankA = tonumber(a.DungeonRank)
-				local rankB = tonumber(b.DungeonRank)
-				if rankA ~= nil and rankB ~= nil and rankA ~= rankB then return rankA < rankB end
-				return tostring(a.Label) < tostring(b.Label)
-			end)
-
-			return entries
-		end
-
-		local function getDungeonItems()
-			local items = {NO_DUNGEON_OPTION}
-			dungeonLabelToInfo = {}
-
-			for _, dungeonInfo in ipairs(getLiveDungeonEntries()) do
-				local label = dungeonInfo.Label
-				local uniqueLabel = label
-				local index = 2
-
-				while dungeonLabelToInfo[uniqueLabel] ~= nil do
-					uniqueLabel = label .. " (" .. tostring(index) .. ")"
-					index = index + 1
-				end
-
-				dungeonLabelToInfo[uniqueLabel] = dungeonInfo
-				items[#items + 1] = uniqueLabel
-			end
-
-			return items
-		end
-
-		local function getSelectedDungeonInfo(selectedDungeon)
-			if selectedDungeon == nil or selectedDungeon == "" or selectedDungeon == NO_DUNGEON_OPTION then return nil end
-
-			local mappedInfo = dungeonLabelToInfo[selectedDungeon]
-			if mappedInfo then return mappedInfo end
-
-			getDungeonItems()
-			return dungeonLabelToInfo[selectedDungeon]
-		end
-
-		local function getOwnDungeonInfo()
-			local infos = ReplicatedStorage:FindFirstChild("__Infos")
-			local dungeons = infos and infos:FindFirstChild("__Dungeons")
-			return dungeons and dungeons:FindFirstChild(tostring(player.UserId)) or nil
-		end
-
-		local function waitForOwnDungeonInfo(timeout)
-			local startedAt = os.clock()
-
-			repeat
-				local dungeon = getOwnDungeonInfo()
-				if dungeon then return dungeon end
-				task.wait(0.25)
-			until os.clock() - startedAt >= (timeout or DUNGEON_INSTANCE_WAIT)
-
-			return nil
-		end
-
-		local function sendDungeonAction(action, extraPayload)
-			local payload = {Event = "DungeonAction", Action = action}
-
-			for key, value in pairs(extraPayload or {}) do
-				payload[key] = value
-			end
-
-			return fireGeneralEvent(payload)
-		end
-
-		local function buildDungeonActionPayload(dungeonOwner, dungeonInfo)
-			local isTable = type(dungeonInfo) == "table"
-			local dungeon = isTable and (dungeonInfo.Dungeon or dungeonInfo.Key) or dungeonInfo
-			local dungeonMap = isTable and (dungeonInfo.DungeonMap or dungeonInfo.Map or dungeonInfo.Key) or dungeonInfo
-			local map = isTable and (dungeonInfo.Map or dungeonInfo.DungeonMap or dungeonInfo.Key) or dungeonInfo
-
-			return {
-				Dungeon = dungeonOwner ~= nil and dungeonOwner or dungeon,
-				DungeonMap = dungeonMap,
-				Map = map,
-				ID = isTable and dungeonInfo.ID or nil,
-				DungeonID = isTable and dungeonInfo.ID or nil,
-				DungeonName = isTable and dungeonInfo.Dungeon or nil,
-				MapName = isTable and dungeonInfo.MapName or nil,
-				DoubleID = isTable and dungeonInfo.DoubleID or nil,
-				World = isTable and dungeonInfo.World or nil,
-				DungeonRank = isTable and dungeonInfo.DungeonRank or nil,
-			}
-		end
-
-		local function getChildCount(instance)
-			if not instance then return 0 end
-			local ok, children = pcall(function()
-				return instance:GetChildren()
-			end)
-			return ok and #children or 0
-		end
-
-		local function buildDungeonRuntimeSnapshot()
-			local enemyClientFolder, enemyServerFolder = getEnemyFolders()
-			local dungeonFolder = getLiveDungeonFolder()
-			local characterRoot = getCharacterRoot()
-
-			return table.concat({
-				"Player.InDungeon=" .. formatDebugValue(player:GetAttribute("InDungeon")),
-				"Replicated.Dungeon=" .. formatDebugValue(ReplicatedStorage:GetAttribute("Dungeon")),
-				"EnemyClientCount=" .. tostring(getChildCount(enemyClientFolder)),
-				"EnemyServerCount=" .. tostring(getChildCount(enemyServerFolder)),
-				"DungeonEntries=" .. tostring(getChildCount(dungeonFolder)),
-				"CharacterRoot=" .. (characterRoot and formatDebugValue(characterRoot.Position) or "nil"),
-			}, " | ")
-		end
-
-		local function dumpDebugSnapshot()
-			debugLog("Snapshot", "PlayerAttrs: " .. buildAttributeSnapshot(player))
-			debugLog("Snapshot", "ReplicatedAttrs: " .. buildAttributeSnapshot(ReplicatedStorage))
-			debugLog("Snapshot", "DungeonState: " .. buildDungeonRuntimeSnapshot())
-			debugLog("Snapshot", "AvailableDungeons: " .. tostring(#getLiveDungeonEntries()))
-		end
-
-		--==================================================
-		-- FEATURE: AUTO CLICK
-		--==================================================
-		do
-			local Feature = RegisterFeature({
-				Key = "AutoClick", Tab = "Combat", Section = "Click", Order = 10,
-				Defaults = {AutoClick = false},
-				State = {Running = false, PanelRef = nil, CapturedOriginal = false, OriginalAutoClick = nil, OriginalAutoClicker = nil},
-				Options = {
-					{ Id = "AutoClick", Type = "toggle", Label = "Auto Click", Description = "Auto clicks attacks" },
-				}
-			})
-
-			function Feature:CaptureOriginalValues()
-				if self.State.CapturedOriginal then return end
-
-				local settings = getSettings()
-				local passes = getPasses()
-				self.State.OriginalAutoClick = settings and settings:GetAttribute("AutoClick") or nil
-				self.State.OriginalAutoClicker = passes and passes:GetAttribute("AutoClicker") or nil
-				self.State.CapturedOriginal = true
-			end
-
-			function Feature:RestoreOriginalValues()
-				if not self.State.CapturedOriginal then return end
-
-				local settings = getSettings()
-				if settings then settings:SetAttribute("AutoClick", self.State.OriginalAutoClick) end
-
-				local passes = getPasses()
-				if passes then passes:SetAttribute("AutoClicker", self.State.OriginalAutoClicker) end
-
-				self.State.CapturedOriginal = false
-				self.State.OriginalAutoClick = nil
-				self.State.OriginalAutoClicker = nil
-			end
-
-			bindPollingToggleFeature(Feature, "AutoClick", function()
-				setAutoClick(true)
-			end, {
-				PollDelay = AUTO_CLICK_POLL_DELAY,
-				BeforeStart = function(self)
-					self:CaptureOriginalValues()
-				end,
-				BeforeStop = function(self)
-					self:RestoreOriginalValues()
-				end,
-			})
-		end
-
-		--==================================================
-		-- FEATURE: AUTO ATTACK
-		--==================================================
-		do
-			local Feature = RegisterFeature({
-				Key = "AutoAttack", Tab = "Combat", Section = "Attack", Order = 20,
-				Defaults = {AutoAttack = false},
-				Options = {
-					{ Id = "AutoAttack", Type = "toggle", Label = "Auto Attack", Description = "Auto attacks enemies" },
-				}
-			})
-
-			function Feature:GetHandlers()
-				return {
-					AutoAttack = function(value)
-						setAutoAttack(value)
-					end,
-				}
-			end
-		end
-
-		--==================================================
-		-- FEATURE: AUTO FARM
-		--==================================================
-		do
-			local Feature = RegisterFeature({
-				Key = "AutoFarm", Tab = "Combat", Section = "Farm", Order = 25,
-				Defaults = {AutoFarmEnemy = NO_ENEMY_OPTION, AutoFarm = false},
-				State = {Running = false, LoopId = 0, PanelRef = nil, PollDelay = AUTO_FARM_POLL_DELAY, TeleportDistance = 7, CurrentTarget = nil},
-				Options = {
-					{ Id = "AutoFarmEnemy", Type = "select", Label = "Enemy", Description = "Select enemy to farm", Items = getAutoFarmEnemyItems },
-					{ Id = "AutoFarm", Type = "toggle", Label = "Auto Farm", Description = "Teleports to the closest selected enemy and retargets on death" },
-				}
-			})
-
-			function Feature:FindTarget(enemyName)
-				return findClosestEnemy(function(enemy)
-					return getEnemyDisplayName(enemy) == enemyName
-				end)
-			end
-
-			function Feature:TargetMatches(target, enemyName)
-				return target and target.Parent and getEnemyDisplayName(target) == enemyName
-			end
-
-			function Feature:SetTarget(target)
-				setFeatureTarget(self, target)
-			end
-
-			function Feature:Tick(values)
-				local enemyName = values and values.AutoFarmEnemy
-				if enemyName == nil or enemyName == "" or enemyName == NO_ENEMY_OPTION then
-					featureDebugLog(self, "AutoFarm", "Waiting for enemy selection")
-					return
-				end
-
-				local target = self.State.CurrentTarget
-				if not self:TargetMatches(target, enemyName) or not isEnemyAlive(target) then
-					local selectedName = enemyName
-					local newTarget = self:FindTarget(selectedName)
-					if newTarget then
-						featureDebugLog(self, "AutoFarm", "Target selected: " .. describeEnemy(newTarget))
-					else
-						featureDebugLog(self, "AutoFarm", "No alive target for " .. tostring(selectedName) .. " | " .. getEnemyScanSummary(function(enemy)
-							return getEnemyDisplayName(enemy) == selectedName
-						end))
-					end
-					self:SetTarget(newTarget)
-				end
-			end
-
-			bindPollingToggleFeature(Feature, "AutoFarm", function(self, values)
-				self:Tick(values)
-			end, {
-				RestartOnStart = true,
-				UseLoopId = true,
-				BeforeStop = function(self)
-					self.State.CurrentTarget = nil
-					self.State.LastDebugMessage = nil
-				end,
-				ExtraHandlers = {
-					AutoFarmEnemy = buildRestartHandler(Feature, "AutoFarm"),
-				},
-			})
-		end
-
-		--==================================================
-		-- FEATURE: AUTO DUNGEON
-		--==================================================
-		do
-			local Feature = RegisterFeature({
-				Key = "AutoDungeon", Tab = "Dungeon", Section = "Farm", Order = 20,
-				Defaults = {AutoDungeon = false},
-				State = {Running = false, LoopId = 0, PanelRef = nil, PollDelay = AUTO_FARM_POLL_DELAY, TeleportDistance = 7, CurrentTarget = nil},
-				Options = {
-					{ Id = "AutoDungeon", Type = "toggle", Label = "Auto Dungeon", Description = "Teleports to the closest alive enemy only inside an active dungeon instance" },
-				}
-			})
-
-			function Feature:FindTarget()
-				return findClosestEnemy(nil, {AllowUnknownHealth = true})
-			end
-
-			function Feature:SetTarget(target)
-				setFeatureTarget(self, target)
-			end
-
-			function Feature:Tick()
-				if not isDungeonInstance() then
-					self.State.CurrentTarget = nil
-					featureDebugLog(self, "AutoDungeon", "Waiting for active dungeon instance | " .. buildDungeonRuntimeSnapshot())
-					return
-				end
-
-				local target = self.State.CurrentTarget
-				if not target or not target.Parent or not isEnemyAlive(target, {AllowUnknownHealth = true}) then
-					local newTarget = self:FindTarget()
-					if newTarget then
-						featureDebugLog(self, "AutoDungeon", "Target selected: " .. describeEnemy(newTarget, {AllowUnknownHealth = true}))
-					else
-						featureDebugLog(self, "AutoDungeon", "No alive dungeon target | " .. getEnemyScanSummary(nil, {AllowUnknownHealth = true}) .. " | " .. buildDungeonRuntimeSnapshot())
-					end
-					self:SetTarget(newTarget)
-				end
-			end
-
-			bindPollingToggleFeature(Feature, "AutoDungeon", function(self)
-				self:Tick()
-			end, {
-				RestartOnStart = true,
-				UseLoopId = true,
-				BeforeStop = function(self)
-					self.State.CurrentTarget = nil
-					self.State.LastDebugMessage = nil
-				end,
-			})
-		end
-
-		--==================================================
-		-- FEATURE: DUNGEON STARTER
-		--==================================================
-		do
-			local Feature = RegisterFeature({
-				Key = "DungeonStarter", Tab = "Dungeon", Section = "Dungeon", Order = 10,
-				Defaults = {SelectedDungeon = NO_DUNGEON_OPTION},
-				State = {Starting = false, PanelRef = nil},
-				Options = {
-					{ Id = "SelectedDungeon", Type = "select", Label = "Dungeon", Description = "Available dungeon maps and ranks", Items = getDungeonItems },
-					{ Id = "StartDungeon", Type = "button", Label = "Start Dungeon", Description = "Creates and starts selected dungeon", ButtonText = "Start" },
-				}
-			})
-
-			function Feature:CreateDungeon(dungeonInfo)
-				return sendDungeonAction("Create", buildDungeonActionPayload(nil, dungeonInfo))
-			end
-
-			function Feature:StartDungeon(dungeonInfo)
-				return sendDungeonAction("Start", buildDungeonActionPayload(player.UserId, dungeonInfo))
-			end
-
-			function Feature:Run(panelRef)
-				local values = setFeaturePanelRef(self, panelRef)
-				if self.State.Starting then return end
-
-				local dungeonInfo = getSelectedDungeonInfo(values and values.SelectedDungeon)
-				if not dungeonInfo then return end
-
-				self.State.Starting = true
+			function Feature:Start(panelRef)
+				setFeaturePanelRef(self, panelRef)
+				if self.State.Running then return end
+
+				self.State.Running = true
 
 				task.spawn(function()
-					pcall(function()
-						local ownDungeon = getOwnDungeonInfo()
-						if not ownDungeon then
-							self:CreateDungeon(dungeonInfo)
-							task.wait(DUNGEON_CREATE_DELAY)
+					while self.State.Running do
+						local values = getPanelValues(self.State.PanelRef)
+						if values and values.AutoBuyEnabled then
+							self:Tick(values)
 						end
-
-						ownDungeon = getOwnDungeonInfo() or waitForOwnDungeonInfo(DUNGEON_INSTANCE_WAIT)
-						if ownDungeon then
-							self:StartDungeon(dungeonInfo)
-						end
-					end)
-					self.State.Starting = false
+						task.wait(AUTO_BUY_POLL_DELAY)
+					end
 				end)
 			end
 
+			function Feature:Stop() self.State.Running = false end
+
 			function Feature:GetHandlers()
 				return {
-					SelectedDungeon = buildPanelRefHandler(self),
-					StartDungeon = function(_, _, panelRef) self:Run(panelRef) end,
+					AutoBuyEnabled = buildToggleHandler(self, function(panelRef) self:Start(panelRef) end),
+					AutoBuyPack = buildPanelRefHandler(self),
+					AutoBuyMutation = buildPanelRefHandler(self),
 				}
 			end
 
 			function Feature:Cleanup()
-				self.State.Starting = false
+				self:Stop()
 				self.State.PanelRef = nil
+				table.clear(self.State.LastBuyTimes)
+				self.State.PackMetadata = setmetatable({}, {__mode = "k"})
 			end
 		end
 
 		--==================================================
-		-- FEATURE: SHADOW EXCHANGE
+		-- FEATURE: AUTO GRADE
 		--==================================================
 		do
 			local Feature = RegisterFeature({
-				Key = "ShadowExchange", Tab = "Combat", Section = "Exchange", Order = 30,
-				Defaults = {ShadowExchange = false},
-				State = {Running = false, LoopId = 0, PanelRef = nil, CapturedOriginal = false, OriginalPass = nil, OriginalButtonVisible = nil},
+				Key = "AutoGrade", Tab = "Card", Section = "Grading", Order = 15,
+				Defaults = {AutoGradeEnabled = false, AutoGradeCards = {}, AutoGradeTarget = {}},
+				State = {Grading = false, PanelRef = nil, Queue = {}, QueueIndex = 0, TargetDone = {}, TargetMinRank = nil, RequestDelay = AUTO_GRADE_REQUEST_DELAY, ReplicatedData = nil},
 				Options = {
-					{ Id = "ShadowExchange", Type = "toggle", Label = "Shadow Exchange", Description = "Enables Shadow Exchange" },
+					{ Id = "AutoGradeEnabled", Type = "toggle", Label = "Enable Auto Grade", Description = "Auto grades selected cards" },
+					{ Id = "AutoGradeCards", Type = "multiselect", Label = "Select Cards", Description = "Select cards to grade", Items = getAllCardNames, EmptyText = "Nothing selected" },
+					{ Id = "AutoGradeTarget", Type = "multiselect", Label = "Target Grade", Description = "Select target grades", Items = getGradeItems(), EmptyText = "Nothing selected" },
 				}
 			})
 
-			function Feature:CaptureOriginalValues()
-				if self.State.CapturedOriginal then return end
-
-				local passes = getPasses()
-				local button = getShadowExchangeButton()
-				self.State.OriginalPass = passes and passes:GetAttribute("ShadowExchange") or nil
-				self.State.OriginalButtonVisible = button and button.Visible or nil
-				self.State.CapturedOriginal = true
+			local gradeOrder = {}
+			if GradesConfig and GradesConfig.List then
+				for i, g in ipairs(GradesConfig.List) do
+					gradeOrder[tostring(g)] = i
+				end
 			end
 
-			function Feature:RestoreOriginalValues()
-				if not self.State.CapturedOriginal then return end
+			local function requireReplicatedDataModule()
+				local replicatedDataModule = ReplicatedFirst:FindFirstChild("ReplicatedData")
+				if not replicatedDataModule then warn("[AutoGrade] Missing ReplicatedFirst.ReplicatedData"); return nil end
 
-				local passes = getPasses()
-				if passes then passes:SetAttribute("ShadowExchange", self.State.OriginalPass == true) end
+				local ok, result = pcall(require, replicatedDataModule)
+				if not ok then warn("[AutoGrade] Failed to require ReplicatedData:", tostring(result)); return nil end
 
-				local button = getShadowExchangeButton()
-				if button then
-					if self.State.OriginalButtonVisible ~= nil then
-						button.Visible = self.State.OriginalButtonVisible
-					else
-						button.Visible = self.State.OriginalPass == true
+				return result
+			end
+
+			function Feature:GetReplicatedData(timeout)
+				if self.State.ReplicatedData and type(self.State.ReplicatedData.GetData) == "function" then
+					return self.State.ReplicatedData
+				end
+
+				timeout = timeout or 10
+				local replicatedData = requireReplicatedDataModule()
+				if not replicatedData then return nil end
+
+				local startTime = tick()
+				while tick() - startTime < timeout do
+					if type(replicatedData.GetData) == "function" then
+						self.State.ReplicatedData = replicatedData
+						return replicatedData
+					end
+					task.wait(REPLICATED_DATA_WAIT_DELAY)
+				end
+
+				warn("[AutoGrade] ReplicatedData loaded but GetData never became available")
+				return nil
+			end
+
+			function Feature:GetReplicatedTable(key)
+				local replicatedData = self:GetReplicatedData()
+				if not replicatedData then return {} end
+
+				local ok, data = pcall(function()
+					return replicatedData.GetData(key)
+				end)
+
+				if not ok or type(data) ~= "table" then return {} end
+				return data
+			end
+
+			function Feature:GetOwnedCards() return self:GetReplicatedTable("Cards") end
+			function Feature:GetServerAutoGrades() return self:GetReplicatedTable("AutoGrades") end
+
+			function Feature:GetLoopDataSnapshot()
+				return {OwnedCards = self:GetOwnedCards(), AutoGrades = self:GetServerAutoGrades()}
+			end
+
+			function Feature:GetGradeRank(gradeName)
+				if not gradeName then return 0 end
+				return gradeOrder[tostring(gradeName)] or 0
+			end
+
+			function Feature:GetTargetMinRank(selectedGrades)
+				local minRank = nil
+
+				for _, gradeName in ipairs(selectedGrades or {}) do
+					local rank = self:GetGradeRank(gradeName)
+					if rank > 0 and (minRank == nil or rank < minRank) then
+						minRank = rank
 					end
 				end
 
-				self.State.CapturedOriginal = false
-				self.State.OriginalPass = nil
-				self.State.OriginalButtonVisible = nil
+				return minRank
 			end
 
-			bindPollingToggleFeature(Feature, "ShadowExchange", function()
-				setShadowExchange(true)
-			end, {
-				PollDelay = SHADOW_EXCHANGE_POLL_DELAY,
-				RestartOnStart = true,
-				UseLoopId = true,
-				BeforeStart = function(self)
-					self:CaptureOriginalValues()
-				end,
-				BeforeStop = function(self)
-					self:RestoreOriginalValues()
-				end,
-			})
-		end
+			function Feature:GetCardCurrentGrade(cardId, ownedCards)
+				local cardData = (ownedCards or self:GetOwnedCards())[tostring(cardId)]
+				return type(cardData) == "table" and cardData.Grade or nil
+			end
 
-		--==================================================
-		-- FEATURE: DEBUG PLAYER ATTRIBUTES
-		--==================================================
-		do
-			local Feature = RegisterFeature({
-				Key = "DebugPlayerAttributes", Tab = "Debug", Section = "Attributes", Order = 10,
-				Defaults = {DebugPlayerAttributes = false},
-				State = {Running = false, PanelRef = nil, AttributeConnection = nil},
-				Options = {
-					{ Id = "DebugPlayerAttributes", Type = "toggle", Label = "Monitor Player Attributes", Description = "Logs LocalPlayer attribute changes to console" },
-				}
-			})
+			function Feature:CardMeetsOrBeatsTarget(cardId, targetMinRank, ownedCards)
+				local currentRank = self:GetGradeRank(self:GetCardCurrentGrade(cardId, ownedCards))
+				return currentRank >= (targetMinRank or math.huge)
+			end
 
-			bindConnectionToggleFeature(Feature, "DebugPlayerAttributes", function(self)
-				debugLog("PlayerAttrs", "Initial: " .. buildAttributeSnapshot(player))
-				self.State.AttributeConnection = player.AttributeChanged:Connect(function(attributeName)
-					if not self.State.Running then return end
-					debugLog("PlayerAttrs", tostring(attributeName) .. "=" .. formatDebugValue(player:GetAttribute(attributeName)))
-				end)
-			end, {
-				RestartOnStart = true,
-				BeforeStop = function(self)
-					self.State.AttributeConnection = disconnectConnection(self.State.AttributeConnection)
-				end,
-			})
-		end
+			function Feature:CurrentCardNeedsConfirm(cardId, ownedCards, serverAutoGrades)
+				local currentGrade = self:GetCardCurrentGrade(cardId, ownedCards)
+				if not currentGrade then return false end
+				return arrayContains(serverAutoGrades or self:GetServerAutoGrades(), tostring(currentGrade))
+			end
 
-		--==================================================
-		-- FEATURE: DEBUG REPLICATED ATTRIBUTES
-		--==================================================
-		do
-			local Feature = RegisterFeature({
-				Key = "DebugReplicatedAttributes", Tab = "Debug", Section = "Attributes", Order = 20,
-				Defaults = {DebugReplicatedAttributes = false},
-				State = {Running = false, PanelRef = nil, AttributeConnection = nil},
-				Options = {
-					{ Id = "DebugReplicatedAttributes", Type = "toggle", Label = "Monitor Replicated Attributes", Description = "Logs ReplicatedStorage attribute changes to console" },
-				}
-			})
+			function Feature:BuildQueue(selectedCards, ownedCards)
+				ownedCards = ownedCards or self:GetOwnedCards()
+				if type(ownedCards) ~= "table" then return {} end
 
-			bindConnectionToggleFeature(Feature, "DebugReplicatedAttributes", function(self)
-				debugLog("ReplicatedAttrs", "Initial: " .. buildAttributeSnapshot(ReplicatedStorage))
-				self.State.AttributeConnection = ReplicatedStorage.AttributeChanged:Connect(function(attributeName)
-					if not self.State.Running then return end
-					debugLog("ReplicatedAttrs", tostring(attributeName) .. "=" .. formatDebugValue(ReplicatedStorage:GetAttribute(attributeName)))
-				end)
-			end, {
-				RestartOnStart = true,
-				BeforeStop = function(self)
-					self.State.AttributeConnection = disconnectConnection(self.State.AttributeConnection)
-				end,
-			})
-		end
+				local queue = {}
 
-		--==================================================
-		-- FEATURE: DEBUG DUNGEON STATE
-		--==================================================
-		do
-			local Feature = RegisterFeature({
-				Key = "DebugDungeonState", Tab = "Debug", Section = "Dungeon", Order = 30,
-				Defaults = {DebugDungeonState = false},
-				State = {Running = false, LoopId = 0, PanelRef = nil, PollDelay = DEBUG_POLL_DELAY, LastSnapshot = nil},
-				Options = {
-					{ Id = "DebugDungeonState", Type = "toggle", Label = "Monitor Dungeon State", Description = "Logs dungeon flags and enemy counts when they change" },
-				}
-			})
-
-			bindPollingToggleFeature(Feature, "DebugDungeonState", function(self)
-				local snapshot = buildDungeonRuntimeSnapshot()
-				if self.State.LastSnapshot ~= snapshot then
-					self.State.LastSnapshot = snapshot
-					debugLog("DungeonState", snapshot)
+				if arrayContains(selectedCards, "All") then
+					for cardId in pairs(ownedCards) do
+						queue[#queue + 1] = tostring(cardId)
+					end
+					table.sort(queue, function(a, b)
+						return tostring(a) < tostring(b)
+					end)
+				else
+					local seen = {}
+					for _, cardId in ipairs(selectedCards) do
+						cardId = tostring(cardId)
+						if cardId ~= "All" and ownedCards[cardId] ~= nil and not seen[cardId] then
+							seen[cardId] = true
+							queue[#queue + 1] = cardId
+						end
+					end
 				end
-			end, {
-				RestartOnStart = true,
-				UseLoopId = true,
-				BeforeStop = function(self)
-					self.State.LastSnapshot = nil
-				end,
-			})
-		end
 
-		--==================================================
-		-- FEATURE: DEBUG FARM TARGETING
-		--==================================================
-		do
-			local Feature = RegisterFeature({
-				Key = "DebugFarmTargeting", Tab = "Debug", Section = "Farm", Order = 40,
-				Defaults = {DebugFarmTargeting = false},
-				State = {PanelRef = nil},
-				Options = {
-					{ Id = "DebugFarmTargeting", Type = "toggle", Label = "Debug Farm Targeting", Description = "Logs Auto Farm and Auto Dungeon target decisions" },
-				}
-			})
+				return queue
+			end
+
+			function Feature:MarkFinishedCards(ownedCards)
+				if not self.State.TargetMinRank then return end
+
+				ownedCards = ownedCards or self:GetOwnedCards()
+
+				for _, cardId in ipairs(self.State.Queue) do
+					local cardData = ownedCards[cardId]
+					if not cardData then
+						self.State.TargetDone[cardId] = true
+					elseif self:CardMeetsOrBeatsTarget(cardId, self.State.TargetMinRank, ownedCards) then
+						self.State.TargetDone[cardId] = true
+					end
+				end
+			end
+
+			function Feature:IsCardDone(cardId)
+				return self.State.TargetDone[cardId] == true
+			end
+
+			function Feature:AllCardsDone()
+				for _, cardId in ipairs(self.State.Queue) do
+					if not self:IsCardDone(cardId) then return false end
+				end
+				return true
+			end
+
+			function Feature:GetNextCardToRoll(ownedCards)
+				local count = #self.State.Queue
+				if count == 0 then return nil end
+
+				ownedCards = ownedCards or self:GetOwnedCards()
+
+				for _ = 1, count do
+					self.State.QueueIndex += 1
+					if self.State.QueueIndex > count then self.State.QueueIndex = 1 end
+
+					local cardId = self.State.Queue[self.State.QueueIndex]
+					if cardId and not self:IsCardDone(cardId) and ownedCards[cardId] ~= nil then
+						return cardId
+					end
+				end
+
+				return nil
+			end
+
+			function Feature:SendGradeRoll(cardId, ownedCards, serverAutoGrades)
+				if self:CurrentCardNeedsConfirm(cardId, ownedCards, serverAutoGrades) then
+					GradeRemote:FireServer("Roll", cardId, nil, true)
+				else
+					GradeRemote:FireServer("Roll", cardId)
+				end
+			end
+
+			function Feature:Loop()
+				while self.State.Grading do
+					local values = getPanelValues(self.State.PanelRef)
+					if not values or not values.AutoGradeEnabled then
+						self:Stop()
+						break
+					end
+
+					local snapshot = self:GetLoopDataSnapshot()
+					local ownedCards = snapshot.OwnedCards
+					local serverAutoGrades = snapshot.AutoGrades
+
+					self:MarkFinishedCards(ownedCards)
+
+					if self:AllCardsDone() then
+						self:Stop()
+						break
+					end
+
+					local nextCard = self:GetNextCardToRoll(ownedCards)
+					if not nextCard then
+						self:Stop()
+						break
+					end
+
+					if self:CardMeetsOrBeatsTarget(nextCard, self.State.TargetMinRank, ownedCards) then
+						self.State.TargetDone[nextCard] = true
+					else
+						self:SendGradeRoll(nextCard, ownedCards, serverAutoGrades)
+					end
+
+					task.wait(self.State.RequestDelay)
+				end
+			end
+
+			function Feature:Start(panelRef)
+				setFeaturePanelRef(self, panelRef)
+
+				local values = getPanelValues(panelRef)
+				if not values then self:Stop(); return end
+
+				local selectedCards = normalizeSelectionArray(values.AutoGradeCards)
+				local selectedGrades = normalizeSelectionArray(values.AutoGradeTarget)
+
+				if #selectedCards == 0 or #selectedGrades == 0 then self:Stop(); return end
+
+				if not self:GetReplicatedData() then self:Stop(); return end
+
+				local targetMinRank = self:GetTargetMinRank(selectedGrades)
+				if not targetMinRank then self:Stop(); return end
+
+				local ownedCards = self:GetOwnedCards()
+				local queue = self:BuildQueue(selectedCards, ownedCards)
+				if #queue == 0 then self:Stop(); return end
+
+				self:Stop()
+
+				self.State.Grading = true
+				self.State.Queue = queue
+				self.State.QueueIndex = 0
+				self.State.TargetDone = {}
+				self.State.TargetMinRank = targetMinRank
+
+				self:MarkFinishedCards(ownedCards)
+
+				if self:AllCardsDone() then self:Stop(); return end
+
+				task.spawn(function() self:Loop() end)
+			end
+
+			function Feature:Stop()
+				self.State.Grading = false
+				self.State.Queue = {}
+				self.State.QueueIndex = 0
+				self.State.TargetDone = {}
+				self.State.TargetMinRank = nil
+			end
 
 			function Feature:GetHandlers()
 				return {
-					DebugFarmTargeting = function(value, _, panelRef)
-						setFeaturePanelRef(self, panelRef)
-						DebugFlags.Farm = value == true
-						debugLog("FarmDebug", "Farm targeting debug " .. (DebugFlags.Farm and "enabled" or "disabled"))
-					end,
+					AutoGradeEnabled = buildToggleHandler(self, function(panelRef) self:Start(panelRef) end),
+					AutoGradeCards = buildRestartHandler(self, "AutoGradeEnabled"),
+					AutoGradeTarget = buildRestartHandler(self, "AutoGradeEnabled"),
 				}
 			end
 
 			function Feature:Cleanup()
-				DebugFlags.Farm = false
+				self:Stop()
+				self.State.PanelRef = nil
+				self.State.ReplicatedData = nil
+			end
+		end
+
+		--==================================================
+		-- FEATURE: AUTO BUY MARKET
+		--==================================================
+		do
+			local Feature = RegisterFeature({
+				Key = "AutoBuyMarket", Tab = "Shop", Order = 20,
+				Defaults = {AutoBuyMarketEnabled = false, AutoBuyMarketPack = {}, AutoBuyMarketMutation = {}},
+				State = {LastCheckTime = 0, PanelRef = nil, Running = false, BuyCooldown = MARKET_BUY_COOLDOWN},
+				Options = {
+					{ Id = "AutoBuyMarketEnabled", Type = "toggle", Label = "Enable Auto Buy Market", Description = "Auto buys market packs" },
+					{ Id = "AutoBuyMarketPack", Type = "multiselect", Label = "Pack", Description = "Select packs", Items = getPackItems, EmptyText = "Nothing selected" },
+					{ Id = "AutoBuyMarketMutation", Type = "multiselect", Label = "Mutation", Description = "Select mutations", Items = getMutationItems, EmptyText = "Nothing selected" },
+				}
+			})
+
+			function Feature:GetMarketStock()
+				local playerGui = player:FindFirstChild("PlayerGui")
+				if not playerGui then return {} end
+
+				local stockGui = playerGui:FindFirstChild("Stock")
+				if not stockGui then return {} end
+
+				local frame = stockGui:FindFirstChild("Frame")
+				if not frame then return {} end
+
+				local scrolling = frame:FindFirstChild("ScrollingFrame")
+				if not scrolling then return {} end
+
+				local stockList = {}
+
+				for i = 1, 8 do
+					local slot = scrolling:FindFirstChild(tostring(i))
+					if slot then
+						local packLabel = slot:FindFirstChild("PackName")
+						local mutationLabel = slot:FindFirstChild("Mutation")
+						local stockLabel = slot:FindFirstChild("Stock")
+
+						local packName = packLabel and packLabel.Text or ""
+						local mutation = "Regular"
+						local amount = stockLabel and parseStockAmount(stockLabel.Text) or 0
+
+						if mutationLabel and mutationLabel.Visible and mutationLabel.Text and mutationLabel.Text ~= "" then
+							mutation = tostring(mutationLabel.Text)
+						end
+
+						if packName ~= "" then
+							stockList[#stockList + 1] = {PackName = packName, NormalizedPackName = normalizePackName(packName), Mutation = mutation, RemoteId = buildRemotePackId(packName, mutation), Amount = amount, Slot = i}
+						end
+					end
+				end
+
+				return stockList
+			end
+
+			function Feature:RunStockCheck()
+				local values = getPanelValues(self.State.PanelRef)
+				if not values or not values.AutoBuyMarketEnabled then return end
+
+				local selectedPacks = normalizeSelectionArray(values.AutoBuyMarketPack)
+				local selectedMutations = normalizeSelectionArray(values.AutoBuyMarketMutation)
+
+				if #selectedPacks == 0 or #selectedMutations == 0 then return end
+
+				local selectedNormalizedPacks = {}
+				for _, p in ipairs(selectedPacks) do
+					selectedNormalizedPacks[#selectedNormalizedPacks + 1] = normalizePackName(p)
+				end
+
+				local marketStock = self:GetMarketStock()
+				if #marketStock == 0 then return end
+
+				local buyQueue = {}
+
+				for _, item in ipairs(marketStock) do
+					local packOk = arrayContains(selectedPacks, "All") or arrayContains(selectedNormalizedPacks, item.NormalizedPackName)
+					local mutationOk = arrayContains(selectedMutations, "All") or arrayContains(selectedMutations, item.Mutation)
+
+					if packOk and mutationOk and item.RemoteId and item.Amount > 0 then
+						for _ = 1, item.Amount do
+							buyQueue[#buyQueue + 1] = item.RemoteId
+						end
+					end
+				end
+
+				if #buyQueue == 0 then return end
+
+				for i, remoteId in ipairs(buyQueue) do
+					StockRemote:FireServer("Buy", remoteId)
+					if self.State.BuyCooldown > 0 and i < #buyQueue then
+						task.wait(self.State.BuyCooldown)
+					end
+				end
+			end
+
+			function Feature:Start(panelRef)
+				setFeaturePanelRef(self, panelRef)
+				self.State.LastCheckTime = 0
+				if self.State.Running then return end
+
+				self.State.Running = true
+
+				task.spawn(function()
+					while self.State.Running do
+						local values = getPanelValues(self.State.PanelRef)
+						if not values or not values.AutoBuyMarketEnabled then
+							break
+						end
+
+						if tick() - self.State.LastCheckTime >= MARKET_CHECK_INTERVAL then
+							self.State.LastCheckTime = tick()
+							self:RunStockCheck()
+						end
+
+						task.wait(MARKET_POLL_DELAY)
+					end
+
+					self.State.Running = false
+				end)
+			end
+
+			function Feature:Stop() self.State.Running = false end
+
+			function Feature:GetHandlers()
+				return {
+					AutoBuyMarketEnabled = buildToggleHandler(self, function(panelRef)
+						self.State.LastCheckTime = 0
+						self:Start(panelRef)
+					end),
+					AutoBuyMarketPack = buildPanelRefHandler(self),
+					AutoBuyMarketMutation = buildPanelRefHandler(self),
+				}
+			end
+
+			function Feature:Cleanup()
+				self:Stop()
 				self.State.PanelRef = nil
 			end
 		end
 
 		--==================================================
-		-- FEATURE: DEBUG CLOSEST ENEMY
+		-- FEATURE: AUTO COLLECT GRADE TOKENS
 		--==================================================
 		do
 			local Feature = RegisterFeature({
-				Key = "DebugClosestEnemy", Tab = "Debug", Section = "Farm", Order = 50,
-				Defaults = {DebugClosestEnemy = false},
-				State = {Running = false, LoopId = 0, PanelRef = nil, PollDelay = DEBUG_POLL_DELAY, LastSnapshot = nil},
+				Key = "AutoCollectGT", Tab = "Collect", Section = "Grade Tokens", Order = 10,
+				Defaults = {AutoCollectGT = false},
+				State = {PanelRef = nil, Running = false, PollDelay = COLLECT_POLL_DELAY, CooldownSeconds = 0.75, LastCollectAt = {}},
 				Options = {
-					{ Id = "DebugClosestEnemy", Type = "toggle", Label = "Monitor Closest Enemy", Description = "Logs closest enemy attributes, health, distance, and path when it changes" },
+					{ Id = "AutoCollectGT", Type = "toggle", Label = "Auto Collect Grade Tokens", Description = "Auto collects grade tokens" },
 				}
 			})
 
-			bindPollingToggleFeature(Feature, "DebugClosestEnemy", function(self)
-				local enemy = findClosestEnemy(nil, {IgnoreAlive = true})
-				local snapshot = enemy and describeEnemy(enemy, {AllowUnknownHealth = true, IncludeAttributes = true}) or "nil"
-				if self.State.LastSnapshot ~= snapshot then
-					self.State.LastSnapshot = snapshot
-					debugLog("ClosestEnemy", snapshot)
+			function Feature:CollectVisibleTokens()
+				local tokenFolder = getClientTokenFolder()
+				if not tokenFolder then return end
+
+				local now = Workspace:GetServerTimeNow()
+				for _, token in ipairs(tokenFolder:GetChildren()) do
+					local tokenId = tostring(token.Name or "")
+					if tokenId ~= "" and (now - (self.State.LastCollectAt[tokenId] or 0)) >= self.State.CooldownSeconds then
+						self.State.LastCollectAt[tokenId] = now
+						CardRemote:FireServer("CollectToken", tokenId)
+					end
 				end
-			end, {
-				RestartOnStart = true,
-				UseLoopId = true,
-				BeforeStop = function(self)
-					self.State.LastSnapshot = nil
-				end,
-			})
+			end
+
+			bindPollingToggleFeature(Feature, "AutoCollectGT", function(self) self:CollectVisibleTokens() end)
 		end
 
 		--==================================================
-		-- FEATURE: DEBUG SNAPSHOT
+		-- FEATURE: AUTO COLLECT TRAVEL TOKENS
 		--==================================================
 		do
 			local Feature = RegisterFeature({
-				Key = "DebugSnapshot", Tab = "Debug", Section = "Tools", Order = 40,
-				Defaults = {},
+				Key = "AutoCollectTT", Tab = "Collect", Section = "Travel Tokens", Order = 20,
+				Defaults = {AutoCollectTT = false},
+				State = {PanelRef = nil, Running = false, PollDelay = COLLECT_POLL_DELAY, CooldownSeconds = 1200, LastCollectAt = {TravelToken1 = 0, TravelToken2 = 0}, ItemNames = {"TravelToken1", "TravelToken2"}},
 				Options = {
-					{ Id = "DumpDebugSnapshot", Type = "button", Label = "Dump Snapshot", Description = "Prints current player, replicated, and dungeon state to console", ButtonText = "Dump" },
+					{ Id = "AutoCollectTT", Type = "toggle", Label = "Auto Collect Travel Tokens", Description = "Auto collects travel tokens" },
 				}
 			})
+
+			bindPollingToggleFeature(Feature, "AutoCollectTT", function(self) collectVisibleItems(self.State) end)
+		end
+
+		--==================================================
+		-- FEATURE: AUTO COLLECT POTIONS
+		--==================================================
+		do
+			local Feature = RegisterFeature({
+				Key = "AutoCollectPotions", Tab = "Collect", Section = "Potions", Order = 30,
+				Defaults = {AutoCollectPotions = false},
+				State = {PanelRef = nil, Running = false, PollDelay = COLLECT_POLL_DELAY, CooldownSeconds = 600, LastCollectAt = {Luck = 0, HatchTime = 0}, ItemNames = {"Luck", "HatchTime"}},
+				Options = {
+					{ Id = "AutoCollectPotions", Type = "toggle", Label = "Auto Collect Potions", Description = "Auto collects potions" },
+				}
+			})
+
+			bindPollingToggleFeature(Feature, "AutoCollectPotions", function(self) collectVisibleItems(self.State) end)
+		end
+
+		--==================================================
+		-- FEATURE: UPGRADE
+		--==================================================
+		do
+			local Feature = RegisterFeature({
+				Key = "Upgrade", Tab = "Shop", Section = "Upgrade", Order = 30,
+				Defaults = {UpgradePack = "Pirate", UpgradeFromMutation = "Regular", UpgradeAmount = "x1"},
+				Options = {
+					{ Id = "UpgradePack", Type = "select", Label = "Pack", Description = "Select pack", Items = getCardActionPackItems },
+					{ Id = "UpgradeFromMutation", Type = "select", Label = "From Mutation", Description = "Select mutation", Items = getUpgradeFromMutationItems },
+					{ Id = "UpgradeAmount", Type = "select", Label = "Amount", Description = "Select amount", Items = getCardActionAmountItems },
+					{ Id = "UpgradeRun", Type = "button", Label = "Upgrade", Description = "Upgrade selected cards", ButtonText = "Upgrade" },
+				}
+			})
+
+			function Feature:Run(values)
+				values = values or {}
+
+				local pack = normalizePackName(values.UpgradePack)
+				local fromMutation = tostring(values.UpgradeFromMutation or "")
+				local toMutation = getNextUpgradeMutation(fromMutation)
+
+				if pack == "" or fromMutation == "" or not toMutation or toMutation == "" then return end
+
+				fireCardAction("Exchange", values.UpgradeAmount, pack, fromMutation, toMutation)
+			end
 
 			function Feature:GetHandlers()
-				return {
-					DumpDebugSnapshot = function()
-						dumpDebugSnapshot()
-					end,
-				}
+				return {UpgradeRun = function(_, values) self:Run(values) end}
 			end
 		end
+
+		--==================================================
+		-- FEATURE: DOWNGRADE
+		--==================================================
+		registerPackMutationActionFeature({Key = "Downgrade", Section = "Downgrade", Order = 31, ActionName = "Downgrade", DefaultMutation = "Gold", MutationItems = getDowngradeMutationItems, PackDescription = "Select pack", MutationDescription = "Select mutation", AmountDescription = "Select amount", ButtonDescription = "Downgrade selected cards"})
+
+		--==================================================
+		-- FEATURE: BUNDLE
+		--==================================================
+		registerPackMutationActionFeature({Key = "Bundle", Section = "Bundle", Order = 32, ActionName = "Bundle", DefaultMutation = "Regular", MutationItems = getBundleMutationItems, PackDescription = "Select pack", MutationDescription = "Select mutation", AmountDescription = "Select amount", ButtonDescription = "Create selected bundles"})
 	end
 }

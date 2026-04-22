@@ -536,19 +536,6 @@ return {
 
 			return "total=" .. total .. ", matching=" .. matching .. ", alive=" .. alive .. ", rejects={" .. table.concat(reasonParts, ", ") .. "}"
 		end
-					local enemyRoot = getEnemyRoot(enemy)
-					if enemyRoot then
-						local distance = characterRoot and (characterRoot.Position - enemyRoot.Position).Magnitude or 0
-						if closestDistance == nil or distance < closestDistance then
-							closestEnemy = enemy
-							closestDistance = distance
-						end
-					end
-				end
-			end
-
-			return closestEnemy
-		end
 
 		local function isDungeonInstance()
 			return ReplicatedStorage:GetAttribute("Dungeon") == true

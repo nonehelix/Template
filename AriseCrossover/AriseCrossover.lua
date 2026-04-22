@@ -283,7 +283,9 @@ return {
 
 		local function getLiveDungeonFolder()
 			local main = Workspace:FindFirstChild("__Main")
-			return main and main:FindFirstChild("__Dungeon") or nil
+			if not main then return nil end
+
+			return main:FindFirstChild("__Dungeon") or main:FindFirstChild("Dungeon") or main:FindFirstChild("__Dungeon", true)
 		end
 
 		local function makeDungeonLabel(info)
@@ -292,22 +294,44 @@ return {
 			return mapName .. " - Rank " .. rank
 		end
 
+		local function getSafeAttributes(instance)
+			if not instance then return nil end
+
+			local ok, attrs = pcall(function()
+				return instance:GetAttributes()
+			end)
+
+			if not ok or type(attrs) ~= "table" then return nil end
+			return attrs
+		end
+
+		local function isDungeonCandidate(instance, attrs)
+			if not instance or not attrs then return false end
+
+			local hasCoreInfo = attrs.Dungeon ~= nil or attrs.DungeonMap ~= nil or attrs.MapName ~= nil
+			local hasIdentifier = attrs.ID ~= nil or attrs.DoubleID ~= nil or attrs._C ~= nil
+			return hasCoreInfo and hasIdentifier
+		end
+
 		local function getLiveDungeonInfo(dungeonObject)
 			if not dungeonObject then return nil end
 
-			local attrs = dungeonObject:GetAttributes()
-			local dungeonName = attrs.Dungeon or attrs.MapName
-			local dungeonMap = attrs.DungeonMap or attrs.Map or attrs.Dungeon or attrs.MapName
+			local attrs = getSafeAttributes(dungeonObject)
+			if not isDungeonCandidate(dungeonObject, attrs) then return nil end
+
+			local mapName = attrs.MapName or attrs.Dungeon or attrs.DungeonMap
+			local dungeonName = attrs.Dungeon or mapName or attrs.DungeonMap
+			local dungeonMap = attrs.DungeonMap or attrs.Map or attrs.Dungeon or mapName
 			if dungeonName == nil and dungeonMap == nil then return nil end
 
 			local info = {
-				Key = tostring(attrs.ID or attrs.DoubleID or dungeonObject.Name),
+				Key = tostring(attrs.DoubleID or attrs.ID or attrs.DungeonMap or attrs.Dungeon or dungeonObject.Name),
 				Dungeon = dungeonName and tostring(dungeonName) or tostring(dungeonMap),
 				DungeonMap = dungeonMap and tostring(dungeonMap) or tostring(dungeonName),
 				Map = dungeonMap and tostring(dungeonMap) or tostring(dungeonName),
-				MapName = attrs.MapName and tostring(attrs.MapName) or nil,
+				MapName = mapName and tostring(mapName) or nil,
 				World = attrs.World and tostring(attrs.World) or nil,
-				DungeonRank = attrs.DungeonRank,
+				DungeonRank = attrs.DungeonRank or attrs.Rank,
 				ID = attrs.ID,
 				DoubleID = attrs.DoubleID,
 				Instance = dungeonObject,
@@ -318,28 +342,51 @@ return {
 		end
 
 		local function getLiveDungeonEntries()
-			local folder = getLiveDungeonFolder()
-			if not folder then return {} end
-
 			local entries = {}
-			local seen = {}
+			local seenInstances = {}
+			local seenKeys = {}
+			local folder = getLiveDungeonFolder()
+			local main = Workspace:FindFirstChild("__Main")
 
 			local function addCandidate(dungeonObject)
-				if seen[dungeonObject] then return end
-				seen[dungeonObject] = true
+				if not dungeonObject or seenInstances[dungeonObject] then return end
+				seenInstances[dungeonObject] = true
 
 				local info = getLiveDungeonInfo(dungeonObject)
-				if info then
-					entries[#entries + 1] = info
+				if not info or seenKeys[info.Key] then return end
+
+				seenKeys[info.Key] = true
+				entries[#entries + 1] = info
+			end
+
+			local function scanContainer(container)
+				if not container then return end
+
+				addCandidate(container)
+
+				local okChildren, children = pcall(function()
+					return container:GetChildren()
+				end)
+				if okChildren and type(children) == "table" then
+					for _, child in ipairs(children) do
+						addCandidate(child)
+					end
+				end
+
+				local okDescendants, descendants = pcall(function()
+					return container:GetDescendants()
+				end)
+				if okDescendants and type(descendants) == "table" then
+					for _, descendant in ipairs(descendants) do
+						addCandidate(descendant)
+					end
 				end
 			end
 
-			for _, dungeonObject in ipairs(folder:GetChildren()) do
-				addCandidate(dungeonObject)
-			end
-
-			for _, dungeonObject in ipairs(folder:GetDescendants()) do
-				addCandidate(dungeonObject)
+			if folder then
+				scanContainer(folder)
+			elseif main then
+				scanContainer(main)
 			end
 
 			table.sort(entries, function(a, b)

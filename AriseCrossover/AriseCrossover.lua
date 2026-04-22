@@ -281,7 +281,7 @@ return {
 
 		local dungeonMapsCache = nil
 		local dungeonKeyAliasesCache = nil
-		local dungeonLabelToKey = {}
+		local dungeonLabelToInfo = {}
 		local availableDungeonKeys = {}
 		local availableDungeonUpdatedAt = 0
 
@@ -303,6 +303,93 @@ return {
 		local function getDungeonDisplayName(dungeonKey, dungeonInfo)
 			local name = type(dungeonInfo) == "table" and dungeonInfo.Name or nil
 			return type(name) == "string" and name ~= "" and name or tostring(dungeonKey)
+		end
+
+		local function getLiveDungeonFolder()
+			local main = Workspace:FindFirstChild("__Main")
+			return main and main:FindFirstChild("__Dungeon") or nil
+		end
+
+		local function makeDungeonLabel(info)
+			local baseName = tostring(info.MapName or info.Dungeon or info.Key or "Dungeon")
+			local mapName = tostring(info.DungeonMap or "")
+			local rank = info.DungeonRank ~= nil and tostring(info.DungeonRank) or nil
+			local world = info.World ~= nil and tostring(info.World) or nil
+			local parts = {baseName}
+
+			if mapName ~= "" and mapName ~= baseName then
+				parts[#parts + 1] = mapName
+			end
+			if rank and rank ~= "" then
+				parts[#parts + 1] = "Rank " .. rank
+			end
+			if world and world ~= "" then
+				parts[#parts + 1] = world
+			end
+
+			return table.concat(parts, " - ")
+		end
+
+		local function getLiveDungeonInfo(dungeonObject)
+			if not dungeonObject then return nil end
+
+			local attrs = dungeonObject:GetAttributes()
+			local dungeonName = attrs.Dungeon or attrs.MapName
+			local dungeonMap = attrs.DungeonMap or attrs.Map
+
+			if dungeonName == nil and dungeonMap == nil then return nil end
+
+			local info = {
+				Key = tostring(attrs.ID or attrs.DoubleID or dungeonObject.Name),
+				Dungeon = dungeonName and tostring(dungeonName) or tostring(dungeonMap),
+				DungeonMap = dungeonMap and tostring(dungeonMap) or tostring(dungeonName),
+				Map = dungeonMap and tostring(dungeonMap) or tostring(dungeonName),
+				MapName = attrs.MapName and tostring(attrs.MapName) or nil,
+				World = attrs.World and tostring(attrs.World) or nil,
+				DungeonRank = attrs.DungeonRank,
+				ID = attrs.ID,
+				DoubleID = attrs.DoubleID,
+				Instance = dungeonObject,
+				Source = "Workspace"
+			}
+
+			info.Label = makeDungeonLabel(info)
+			return info
+		end
+
+		local function getLiveDungeonEntries()
+			local folder = getLiveDungeonFolder()
+			if not folder then return {} end
+
+			local entries = {}
+			local seen = {}
+
+			local function addCandidate(dungeonObject)
+				if seen[dungeonObject] then return end
+				seen[dungeonObject] = true
+
+				local info = getLiveDungeonInfo(dungeonObject)
+				if info then
+					entries[#entries + 1] = info
+				end
+			end
+
+			for _, dungeonObject in ipairs(folder:GetChildren()) do
+				addCandidate(dungeonObject)
+			end
+
+			for _, dungeonObject in ipairs(folder:GetDescendants()) do
+				addCandidate(dungeonObject)
+			end
+
+			table.sort(entries, function(a, b)
+				local rankA = tonumber(a.DungeonRank)
+				local rankB = tonumber(b.DungeonRank)
+				if rankA ~= nil and rankB ~= nil and rankA ~= rankB then return rankA < rankB end
+				return tostring(a.Label) < tostring(b.Label)
+			end)
+
+			return entries
 		end
 
 		local function addDungeonAlias(aliases, alias, dungeonKey)
@@ -510,36 +597,55 @@ return {
 			return keys
 		end
 
-		local function getDungeonItems()
-			local items = {NO_DUNGEON_OPTION}
-			dungeonLabelToKey = {}
+		local function getAvailableDungeonEntries()
+			local liveEntries = getLiveDungeonEntries()
+			if #liveEntries > 0 then return liveEntries end
 
+			local entries = {}
 			for _, dungeonKey in ipairs(getAvailableDungeonKeys()) do
 				local dungeonInfo = getDungeonMaps()[dungeonKey]
-				local label = getDungeonDisplayName(dungeonKey, dungeonInfo)
+				entries[#entries + 1] = {
+					Key = tostring(dungeonKey),
+					Dungeon = tostring(dungeonKey),
+					DungeonMap = tostring(dungeonKey),
+					Map = tostring(dungeonKey),
+					Label = getDungeonDisplayName(dungeonKey, dungeonInfo),
+					Source = "Fallback"
+				}
+			end
+
+			return entries
+		end
+
+		local function getDungeonItems()
+			local items = {NO_DUNGEON_OPTION}
+			dungeonLabelToInfo = {}
+
+			for _, dungeonInfo in ipairs(getAvailableDungeonEntries()) do
+				local label = dungeonInfo.Label or makeDungeonLabel(dungeonInfo)
 				local uniqueLabel = label
 				local index = 2
 
-				while dungeonLabelToKey[uniqueLabel] ~= nil do
+				while dungeonLabelToInfo[uniqueLabel] ~= nil do
 					uniqueLabel = label .. " (" .. tostring(index) .. ")"
 					index = index + 1
 				end
 
-				dungeonLabelToKey[uniqueLabel] = tostring(dungeonKey)
+				dungeonLabelToInfo[uniqueLabel] = dungeonInfo
 				items[#items + 1] = uniqueLabel
 			end
 
 			return items
 		end
 
-		local function getSelectedDungeonKey(selectedDungeon)
+		local function getSelectedDungeonInfo(selectedDungeon)
 			if selectedDungeon == nil or selectedDungeon == "" or selectedDungeon == NO_DUNGEON_OPTION then return nil end
 
-			local mappedKey = dungeonLabelToKey[selectedDungeon]
-			if mappedKey then return mappedKey end
+			local mappedInfo = dungeonLabelToInfo[selectedDungeon]
+			if mappedInfo then return mappedInfo end
 
 			getDungeonItems()
-			return dungeonLabelToKey[selectedDungeon]
+			return dungeonLabelToInfo[selectedDungeon]
 		end
 
 		local function getOwnDungeonInfo()
@@ -801,19 +907,40 @@ return {
 				end
 			end
 
-			function Feature:CreateDungeon(dungeonKey)
+			function Feature:CreateDungeon(dungeonInfo)
+				local dungeon = type(dungeonInfo) == "table" and (dungeonInfo.Dungeon or dungeonInfo.Key) or dungeonInfo
+				local dungeonMap = type(dungeonInfo) == "table" and (dungeonInfo.DungeonMap or dungeonInfo.Map or dungeonInfo.Key) or dungeonInfo
+				local map = type(dungeonInfo) == "table" and (dungeonInfo.Map or dungeonInfo.DungeonMap or dungeonInfo.Key) or dungeonInfo
+
 				return sendDungeonAction("Create", {
-					Dungeon = dungeonKey,
-					DungeonMap = dungeonKey,
-					Map = dungeonKey,
+					Dungeon = dungeon,
+					DungeonMap = dungeonMap,
+					Map = map,
+					ID = type(dungeonInfo) == "table" and dungeonInfo.ID or nil,
+					DungeonID = type(dungeonInfo) == "table" and dungeonInfo.ID or nil,
+					DungeonName = type(dungeonInfo) == "table" and dungeonInfo.Dungeon or nil,
+					MapName = type(dungeonInfo) == "table" and dungeonInfo.MapName or nil,
+					DoubleID = type(dungeonInfo) == "table" and dungeonInfo.DoubleID or nil,
+					World = type(dungeonInfo) == "table" and dungeonInfo.World or nil,
+					DungeonRank = type(dungeonInfo) == "table" and dungeonInfo.DungeonRank or nil,
 				})
 			end
 
-			function Feature:StartDungeon(dungeonKey)
+			function Feature:StartDungeon(dungeonInfo)
+				local dungeonMap = type(dungeonInfo) == "table" and (dungeonInfo.DungeonMap or dungeonInfo.Map or dungeonInfo.Key) or dungeonInfo
+				local map = type(dungeonInfo) == "table" and (dungeonInfo.Map or dungeonInfo.DungeonMap or dungeonInfo.Key) or dungeonInfo
+
 				return sendDungeonAction("Start", {
 					Dungeon = player.UserId,
-					DungeonMap = dungeonKey,
-					Map = dungeonKey,
+					DungeonMap = dungeonMap,
+					Map = map,
+					ID = type(dungeonInfo) == "table" and dungeonInfo.ID or nil,
+					DungeonID = type(dungeonInfo) == "table" and dungeonInfo.ID or nil,
+					DungeonName = type(dungeonInfo) == "table" and dungeonInfo.Dungeon or nil,
+					MapName = type(dungeonInfo) == "table" and dungeonInfo.MapName or nil,
+					DoubleID = type(dungeonInfo) == "table" and dungeonInfo.DoubleID or nil,
+					World = type(dungeonInfo) == "table" and dungeonInfo.World or nil,
+					DungeonRank = type(dungeonInfo) == "table" and dungeonInfo.DungeonRank or nil,
 				})
 			end
 
@@ -821,19 +948,19 @@ return {
 				local values = setFeaturePanelRef(self, panelRef)
 				if self.State.Starting then return end
 
-				local dungeonKey = getSelectedDungeonKey(values and values.SelectedDungeon)
-				if not dungeonKey then return end
+				local dungeonInfo = getSelectedDungeonInfo(values and values.SelectedDungeon)
+				if not dungeonInfo then return end
 
 				self.State.Starting = true
 
 				task.spawn(function()
 					if not getOwnDungeonInfo() then
-						self:CreateDungeon(dungeonKey)
+						self:CreateDungeon(dungeonInfo)
 						task.wait(DUNGEON_CREATE_DELAY)
 					end
 
 					if getOwnDungeonInfo() or waitForOwnDungeonInfo(DUNGEON_INSTANCE_WAIT) then
-						self:StartDungeon(dungeonKey)
+						self:StartDungeon(dungeonInfo)
 					end
 
 					self.State.Starting = false

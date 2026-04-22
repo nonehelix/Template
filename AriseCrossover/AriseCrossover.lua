@@ -202,6 +202,34 @@ return {
 			return clientHealth == nil or clientHealth > 0
 		end
 
+		local function findClosestEnemy(matchFn)
+			local enemyFolder = getEnemyFolders()
+			if not enemyFolder then return nil end
+
+			local characterRoot = getCharacterRoot()
+			local closestEnemy = nil
+			local closestDistance = nil
+
+			for _, enemy in ipairs(enemyFolder:GetChildren()) do
+				if (matchFn == nil or matchFn(enemy)) and isEnemyAlive(enemy) then
+					local enemyRoot = getEnemyRoot(enemy)
+					if enemyRoot then
+						local distance = characterRoot and (characterRoot.Position - enemyRoot.Position).Magnitude or 0
+						if closestDistance == nil or distance < closestDistance then
+							closestEnemy = enemy
+							closestDistance = distance
+						end
+					end
+				end
+			end
+
+			return closestEnemy
+		end
+
+		local function isInDungeon()
+			return player:GetAttribute("InDungeon") == true
+		end
+
 		local knownEnemyNameCache = nil
 
 		local function getKnownEnemyNames()
@@ -566,27 +594,9 @@ return {
 			})
 
 			function Feature:FindTarget(enemyName)
-				local enemyFolder = getEnemyFolders()
-				if not enemyFolder then return nil end
-
-				local characterRoot = getCharacterRoot()
-				local closestEnemy = nil
-				local closestDistance = nil
-
-				for _, enemy in ipairs(enemyFolder:GetChildren()) do
-					if getEnemyDisplayName(enemy) == enemyName and isEnemyAlive(enemy) then
-						local enemyRoot = getEnemyRoot(enemy)
-						if enemyRoot then
-							local distance = characterRoot and (characterRoot.Position - enemyRoot.Position).Magnitude or 0
-							if closestDistance == nil or distance < closestDistance then
-								closestEnemy = enemy
-								closestDistance = distance
-							end
-						end
-					end
-				end
-
-				return closestEnemy
+				return findClosestEnemy(function(enemy)
+					return getEnemyDisplayName(enemy) == enemyName
+				end)
 			end
 
 			function Feature:TargetMatches(target, enemyName)
@@ -642,6 +652,82 @@ return {
 				return {
 					AutoFarm = buildToggleHandler(self, function(panelRef) self:Start(panelRef) end),
 					AutoFarmEnemy = buildRestartHandler(self, "AutoFarm"),
+				}
+			end
+
+			function Feature:Cleanup()
+				self:Stop()
+				self.State.PanelRef = nil
+			end
+		end
+
+		--==================================================
+		-- FEATURE: AUTO DUNGEON
+		--==================================================
+		do
+			local Feature = RegisterFeature({
+				Key = "AutoDungeon", Tab = "Dungeon", Section = "Farm", Order = 20,
+				Defaults = {AutoDungeon = false},
+				State = {Running = false, LoopId = 0, PanelRef = nil, PollDelay = AUTO_FARM_POLL_DELAY, TeleportDistance = 7, CurrentTarget = nil},
+				Options = {
+					{ Id = "AutoDungeon", Type = "toggle", Label = "Auto Dungeon", Description = "Teleports through dungeon enemies while InDungeon is enabled" },
+				}
+			})
+
+			function Feature:FindTarget()
+				return findClosestEnemy()
+			end
+
+			function Feature:SetTarget(target)
+				if self.State.CurrentTarget == target then return end
+
+				self.State.CurrentTarget = target
+				if target then teleportToEnemy(target, self.State.TeleportDistance) end
+			end
+
+			function Feature:Tick()
+				if not isInDungeon() then
+					self.State.CurrentTarget = nil
+					return
+				end
+
+				local target = self.State.CurrentTarget
+				if not target or not target.Parent or not isEnemyAlive(target) then
+					self:SetTarget(self:FindTarget())
+				end
+			end
+
+			function Feature:Start(panelRef)
+				setFeaturePanelRef(self, panelRef)
+				self:Stop()
+				setFeaturePanelRef(self, panelRef)
+
+				self.State.Running = true
+				self.State.LoopId = self.State.LoopId + 1
+				local loopId = self.State.LoopId
+
+				task.spawn(function()
+					while self.State.Running and self.State.LoopId == loopId do
+						local values = getPanelValues(self.State.PanelRef)
+						if not values or values.AutoDungeon ~= true then break end
+
+						self:Tick()
+						task.wait(self.State.PollDelay)
+					end
+
+					if self.State.Running and self.State.LoopId == loopId then self:Stop() end
+				end)
+			end
+
+			function Feature:Stop()
+				self.State.Running = false
+				self.State.LoopId = self.State.LoopId + 1
+				self.State.CurrentTarget = nil
+			end
+
+			function Feature:GetHandlers()
+				return {
+					AutoDungeon = buildToggleHandler(self, function(panelRef) self:Start(panelRef) end),
 				}
 			end
 

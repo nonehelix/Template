@@ -356,6 +356,34 @@ return {
 			return parseHealthNumber(readValueObject(amount))
 		end
 
+		local function getEnemyHealthObject(enemy)
+			local main = getEnemyHealthBarMain(enemy)
+			return main and main:FindFirstChild("Amount") or nil
+		end
+
+		local function hasDeadAttribute(instance)
+			if not instance then return false end
+
+			for _, attributeName in ipairs({"Dead", "IsDead", "Died", "Removed", "Remove"}) do
+				if instance:GetAttribute(attributeName) == true then
+					return true
+				end
+			end
+
+			return false
+		end
+
+		local function getAttributeHealth(instance)
+			if not instance then return nil end
+
+			for _, attributeName in ipairs({"Health", "HP", "CurrentHealth", "CurrentHP"}) do
+				local health = parseHealthNumber(instance:GetAttribute(attributeName))
+				if health ~= nil then return health end
+			end
+
+			return nil
+		end
+
 		local function getServerEnemy(enemy)
 			local _, serverFolder = getEnemyFolders()
 			return enemy and serverFolder and serverFolder:FindFirstChild(enemy.Name) or nil
@@ -363,18 +391,25 @@ return {
 
 		local function isEnemyAlive(enemy)
 			if not enemy or not enemy.Parent then return false end
-			if enemy:GetAttribute("Dead") == true then return false end
+			if hasDeadAttribute(enemy) then return false end
+			if not getEnemyRoot(enemy) then return false end
 
 			local serverEnemy = getServerEnemy(enemy)
 			if serverEnemy then
-				if serverEnemy:GetAttribute("Dead") == true then return false end
+				if hasDeadAttribute(serverEnemy) then return false end
 
-				local serverHealth = parseHealthNumber(serverEnemy:GetAttribute("Health") or serverEnemy:GetAttribute("HP"))
+				local serverHealth = getAttributeHealth(serverEnemy)
 				if serverHealth ~= nil and serverHealth <= 0 then return false end
 			end
 
+			local clientAttributeHealth = getAttributeHealth(enemy)
+			if clientAttributeHealth ~= nil and clientAttributeHealth <= 0 then return false end
+
+			local healthObject = getEnemyHealthObject(enemy)
+			if not healthObject then return false end
+
 			local clientHealth = getEnemyClientHealth(enemy)
-			return clientHealth == nil or clientHealth > 0
+			return clientHealth ~= nil and clientHealth > 0
 		end
 
 		local function findClosestEnemy(matchFn)

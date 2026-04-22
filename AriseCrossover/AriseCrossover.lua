@@ -24,6 +24,10 @@ return {
 		local AUTO_CLICK_POLL_DELAY, AUTO_FARM_POLL_DELAY, SHADOW_EXCHANGE_POLL_DELAY, DEBUG_POLL_DELAY = 0.5, 0.25, 0.5, 1
 		local DUNGEON_CREATE_DELAY, DUNGEON_INSTANCE_WAIT = 0.5, 6
 
+		local function newTargetingState()
+			return {Running = false, LoopId = 0, PanelRef = nil, PollDelay = AUTO_FARM_POLL_DELAY, TeleportDistance = 7, CurrentTarget = nil}
+		end
+
 		local function getPanelValues(panelRef) return panelRef and panelRef.Config and panelRef.Config.Values or nil end
 
 		local function setFeaturePanelRef(feature, panelRef)
@@ -124,12 +128,6 @@ return {
 			Farm = false,
 		}
 
-		local function farmDebugLog(scope, message)
-			if DebugFlags.Farm then
-				debugLog(scope, message)
-			end
-		end
-
 		local function featureDebugLog(feature, scope, message)
 			if not DebugFlags.Farm then return end
 			if feature and feature.State then
@@ -137,7 +135,7 @@ return {
 				feature.State.LastDebugMessage = message
 			end
 
-			farmDebugLog(scope, message)
+			debugLog(scope, message)
 		end
 
 		local function buildAttributeSnapshot(instance)
@@ -558,9 +556,7 @@ return {
 		end
 
 		local function isDungeonActive()
-			return player:GetAttribute("InDungeon") == true
-				or ReplicatedStorage:GetAttribute("InDungeon") == true
-				or ReplicatedStorage:GetAttribute("Dungeon") == true
+			return ReplicatedStorage:GetAttribute("Dungeon") == true
 		end
 
 		local function isExcludedDungeonMode()
@@ -901,11 +897,9 @@ return {
 				"NormalDungeon=" .. tostring(isNormalDungeonInstance()),
 				"DungeonActive=" .. tostring(isDungeonActive()),
 				"ExcludedDungeonMode=" .. tostring(isExcludedDungeonMode()),
-				"Player.InDungeon=" .. formatDebugValue(player:GetAttribute("InDungeon")),
+				"Replicated.Dungeon=" .. formatDebugValue(ReplicatedStorage:GetAttribute("Dungeon")),
 				"Player.InTimeTrial=" .. formatDebugValue(player:GetAttribute("InTimeTrial")),
 				"Player.InBossRush=" .. formatDebugValue(player:GetAttribute("InBossRush")),
-				"Replicated.Dungeon=" .. formatDebugValue(ReplicatedStorage:GetAttribute("Dungeon")),
-				"Replicated.InDungeon=" .. formatDebugValue(ReplicatedStorage:GetAttribute("InDungeon")),
 				"Replicated.InTimeTrial=" .. formatDebugValue(ReplicatedStorage:GetAttribute("InTimeTrial")),
 				"Replicated.InBossRush=" .. formatDebugValue(ReplicatedStorage:GetAttribute("InBossRush")),
 				"Replicated.IsCastle=" .. formatDebugValue(ReplicatedStorage:GetAttribute("IsCastle")),
@@ -1001,7 +995,7 @@ return {
 			local Feature = RegisterFeature({
 				Key = "AutoFarm", Tab = "Combat", Section = "Farm", Order = 25,
 				Defaults = {AutoFarmEnemy = NO_ENEMY_OPTION, AutoFarm = false},
-				State = {Running = false, LoopId = 0, PanelRef = nil, PollDelay = AUTO_FARM_POLL_DELAY, TeleportDistance = 7, CurrentTarget = nil},
+				State = newTargetingState(),
 				Options = {
 					{ Id = "AutoFarmEnemy", Type = "select", Label = "Enemy", Description = "Select enemy to farm", Items = getAutoFarmEnemyItems },
 					{ Id = "AutoFarm", Type = "toggle", Label = "Auto Farm", Description = "Teleports to the closest selected enemy and retargets on death" },
@@ -1066,7 +1060,7 @@ return {
 			local Feature = RegisterFeature({
 				Key = "AutoDungeon", Tab = "Dungeon", Section = "Farm", Order = 20,
 				Defaults = {AutoDungeon = false},
-				State = {Running = false, LoopId = 0, PanelRef = nil, PollDelay = AUTO_FARM_POLL_DELAY, TeleportDistance = 7, CurrentTarget = nil},
+				State = newTargetingState(),
 				Options = {
 					{ Id = "AutoDungeon", Type = "toggle", Label = "Auto Dungeon", Description = "Teleports to the closest alive enemy only inside an active dungeon instance" },
 				}

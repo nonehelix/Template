@@ -2,7 +2,10 @@ return {
 	Load = function(Shared)
 		local RegisterFeature, RegisterTabs = Shared.RegisterFeature, Shared.RegisterTabs
 		local Players = game:GetService("Players")
+		local ReplicatedStorage = game:GetService("ReplicatedStorage")
+		local Workspace = game:GetService("Workspace")
 		local player = Players.LocalPlayer
+		local NO_ENEMY_OPTION = "Select enemy"
 
 		--==================================================
 		-- TABS
@@ -52,6 +55,252 @@ return {
 
 			local button = getShadowExchangeButton()
 			if button then button.Visible = enabled == true end
+		end
+
+		local function getEnemyRoot(enemy)
+			if not enemy then return nil end
+			return enemy.PrimaryPart or enemy:FindFirstChild("HumanoidRootPart") or enemy:FindFirstChildWhichIsA("BasePart", true)
+		end
+
+		local function getEnemyClientFolder()
+			local main = Workspace:FindFirstChild("__Main")
+			local enemies = main and main:FindFirstChild("__Enemies")
+			return enemies and enemies:FindFirstChild("Client") or nil
+		end
+
+		local function getEnemyServerFolder()
+			local main = Workspace:FindFirstChild("__Main")
+			local enemies = main and main:FindFirstChild("__Enemies")
+			return enemies and enemies:FindFirstChild("Server") or nil
+		end
+
+		local function getCharacterRoot()
+			local character = player.Character
+			return character and character:FindFirstChild("HumanoidRootPart") or nil
+		end
+
+		local function readValueObject(valueObject)
+			if not valueObject then return nil end
+
+			if valueObject:IsA("TextLabel") or valueObject:IsA("TextButton") or valueObject:IsA("TextBox") then
+				return valueObject.Text
+			end
+
+			if valueObject:IsA("StringValue") or valueObject:IsA("NumberValue") or valueObject:IsA("IntValue") then
+				return valueObject.Value
+			end
+
+			return valueObject:GetAttribute("Text") or valueObject:GetAttribute("Value")
+		end
+
+		local function getEnemyHealthBarMain(enemy)
+			local healthBar = enemy and enemy:FindFirstChild("HealthBar")
+			return healthBar and healthBar:FindFirstChild("Main") or nil
+		end
+
+		local function getEnemyDisplayName(enemy)
+			local main = getEnemyHealthBarMain(enemy)
+			local title = main and main:FindFirstChild("Title")
+			local titleText = readValueObject(title)
+
+			if titleText and tostring(titleText) ~= "" then
+				return tostring(titleText)
+			end
+
+			local attributeName = enemy and enemy:GetAttribute("Name")
+			if attributeName and tostring(attributeName) ~= "" then
+				return tostring(attributeName)
+			end
+
+			return enemy and enemy.Name or nil
+		end
+
+		local function parseHealthNumber(value)
+			if value == nil then return nil end
+
+			local text = tostring(value):gsub(",", "")
+			local numberText = text:match("%-?%d+%.?%d*")
+			return numberText and tonumber(numberText) or nil
+		end
+
+		local function getEnemyClientHealth(enemy)
+			local main = getEnemyHealthBarMain(enemy)
+			local amount = main and (main:FindFirstChild("Amount"))
+			return parseHealthNumber(readValueObject(amount))
+		end
+
+		local function getServerEnemy(enemy)
+			local serverFolder = getEnemyServerFolder()
+			return enemy and serverFolder and serverFolder:FindFirstChild(enemy.Name) or nil
+		end
+
+		local function isEnemyAlive(enemy)
+			if not enemy or not enemy.Parent then return false end
+			if enemy:GetAttribute("Dead") == true then return false end
+
+			local serverEnemy = getServerEnemy(enemy)
+			if serverEnemy then
+				if serverEnemy:GetAttribute("Dead") == true then return false end
+
+				local serverHealth = parseHealthNumber(serverEnemy:GetAttribute("Health") or serverEnemy:GetAttribute("HP"))
+				if serverHealth ~= nil and serverHealth <= 0 then return false end
+			end
+
+			local clientHealth = getEnemyClientHealth(enemy)
+			return clientHealth == nil or clientHealth > 0
+		end
+
+		local knownEnemyNameCache = nil
+
+		local function getKnownEnemyNames()
+			if knownEnemyNameCache then return knownEnemyNameCache end
+
+			local names = {}
+			local indexer = ReplicatedStorage:FindFirstChild("Indexer")
+			local infoModule = nil
+
+			if indexer then
+				for _, moduleName in ipairs({"EnemiesInfo", "EnemyInfo", "Enemies", "MobsInfo"}) do
+					local candidate = indexer:FindFirstChild(moduleName)
+					if candidate and candidate:IsA("ModuleScript") then
+						infoModule = candidate
+						break
+					end
+				end
+			end
+
+			if not infoModule then
+				return names
+			end
+
+			local ok, enemyInfo = pcall(require, infoModule)
+			if not ok or type(enemyInfo) ~= "table" then
+				return names
+			end
+
+			local seen = {}
+			for _, info in pairs(enemyInfo) do
+				if type(info) == "table" and type(info.Name) == "string" and info.Name ~= "" and not seen[info.Name] then
+					seen[info.Name] = true
+					names[#names + 1] = info.Name
+				end
+			end
+
+			table.sort(names)
+			knownEnemyNameCache = names
+			return names
+		end
+
+		local function getAutoFarmEnemyItems()
+			local items = {NO_ENEMY_OPTION}
+			local seen = {[NO_ENEMY_OPTION] = true}
+			local enemyFolder = getEnemyClientFolder()
+
+			if enemyFolder then
+				for _, enemy in ipairs(enemyFolder:GetChildren()) do
+					local enemyName = getEnemyDisplayName(enemy)
+					if enemyName and enemyName ~= "" and not seen[enemyName] then
+						seen[enemyName] = true
+						items[#items + 1] = enemyName
+					end
+				end
+			end
+
+			if #items == 1 then
+				for _, enemyName in ipairs(getKnownEnemyNames()) do
+					if not seen[enemyName] then
+						seen[enemyName] = true
+						items[#items + 1] = enemyName
+					end
+				end
+			else
+				table.sort(items, function(a, b)
+					if a == b then return false end
+					if a == NO_ENEMY_OPTION then return true end
+					if b == NO_ENEMY_OPTION then return false end
+					return a < b
+				end)
+			end
+
+			return items
+		end
+
+		local petEventBridge = nil
+		local petEventBridgeLoaded = false
+
+		local function getPetEventBridge()
+			if petEventBridgeLoaded then return petEventBridge end
+
+			local bridgeModule = ReplicatedStorage:FindFirstChild("BridgeNet2")
+			if not bridgeModule then return nil end
+
+			local ok, bridgeNet = pcall(require, bridgeModule)
+			if not ok or type(bridgeNet) ~= "table" or type(bridgeNet.ReferenceBridge) ~= "function" then
+				return nil
+			end
+
+			local bridgeOk, bridge = pcall(function()
+				return bridgeNet.ReferenceBridge("PET_EVENT")
+			end)
+
+			if bridgeOk then
+				petEventBridge = bridge
+				petEventBridgeLoaded = true
+			end
+
+			return petEventBridge
+		end
+
+		local function getEquippedPetPositions(enemy)
+			local root = getCharacterRoot()
+			if not root then return {} end
+
+			local leaderstats = player:FindFirstChild("leaderstats")
+			local equips = leaderstats and leaderstats:FindFirstChild("Equips")
+			local pets = equips and equips:FindFirstChild("Pets")
+			if not pets then return {} end
+
+			local inventory = leaderstats and leaderstats:FindFirstChild("Inventory")
+			local inventoryPets = inventory and inventory:FindFirstChild("Pets")
+			local positions = {}
+
+			for _, petUid in pairs(pets:GetAttributes()) do
+				if petUid ~= false and petUid ~= nil then
+					local petUidText = tostring(petUid)
+					local petFolder = inventoryPets and inventoryPets:FindFirstChild(petUidText)
+
+					if not enemy or not petFolder or petFolder:GetAttribute("Target") ~= enemy.Name then
+						positions[petUidText] = root.Position
+					end
+				end
+			end
+
+			return positions
+		end
+
+		local function attackEnemy(enemy)
+			local bridge = getPetEventBridge()
+			if not bridge or not enemy then return end
+
+			local petPositions = getEquippedPetPositions(enemy)
+			if next(petPositions) == nil then return end
+
+			pcall(function()
+				bridge:Fire({
+					Event = "Attack",
+					Enemy = enemy.Name,
+					PetPos = petPositions,
+					AttackType = "All",
+				})
+			end)
+		end
+
+		local function teleportToEnemy(enemy, distance)
+			local character = player.Character
+			local enemyRoot = getEnemyRoot(enemy)
+			if not character or not enemyRoot then return end
+
+			character:PivotTo(enemyRoot.CFrame * CFrame.new(0, 0, distance or 7))
 		end
 
 		--==================================================
@@ -161,6 +410,125 @@ return {
 						setAutoAttack(value)
 					end,
 				}
+			end
+		end
+
+		--==================================================
+		-- FEATURE: AUTO FARM
+		--==================================================
+		do
+			local Feature = RegisterFeature({
+				Key = "AutoFarm",
+				Tab = "Combat",
+				Section = "Farm",
+				Order = 25,
+
+				Defaults = {
+					AutoFarmEnemy = NO_ENEMY_OPTION,
+					AutoFarm = false,
+				},
+
+				State = {
+					Running = false,
+					LoopId = 0,
+					PollDelay = 0.25,
+					AttackDelay = 0.35,
+					TeleportDistance = 7,
+					CurrentTarget = nil,
+					LastAttackAt = 0,
+				},
+
+				Options = {
+					{ Id = "AutoFarmEnemy", Type = "select", Label = "Enemy", Description = "Select enemy to farm", Items = getAutoFarmEnemyItems },
+					{ Id = "AutoFarm", Type = "toggle", Label = "Auto Farm", Description = "Teleports to selected enemies and attacks them" },
+				}
+			})
+
+			function Feature:FindTarget(enemyName)
+				local enemyFolder = getEnemyClientFolder()
+				if not enemyFolder then return nil end
+
+				local characterRoot = getCharacterRoot()
+				local closestEnemy = nil
+				local closestDistance = nil
+
+				for _, enemy in ipairs(enemyFolder:GetChildren()) do
+					if getEnemyDisplayName(enemy) == enemyName and isEnemyAlive(enemy) then
+						local enemyRoot = getEnemyRoot(enemy)
+						if enemyRoot then
+							local distance = characterRoot and (characterRoot.Position - enemyRoot.Position).Magnitude or 0
+							if closestDistance == nil or distance < closestDistance then
+								closestEnemy = enemy
+								closestDistance = distance
+							end
+						end
+					end
+				end
+
+				return closestEnemy
+			end
+
+			function Feature:TargetMatches(target, enemyName)
+				return target and target.Parent and getEnemyDisplayName(target) == enemyName
+			end
+
+			function Feature:Tick(values)
+				local enemyName = values and values.AutoFarmEnemy
+				if enemyName == nil or enemyName == "" or enemyName == NO_ENEMY_OPTION then return end
+
+				local target = self.State.CurrentTarget
+				if not self:TargetMatches(target, enemyName) or not isEnemyAlive(target) then
+					target = self:FindTarget(enemyName)
+					self.State.CurrentTarget = target
+				end
+
+				if not target then return end
+
+				teleportToEnemy(target, self.State.TeleportDistance)
+
+				local now = os.clock()
+				if now - self.State.LastAttackAt >= self.State.AttackDelay then
+					self.State.LastAttackAt = now
+					attackEnemy(target)
+				end
+			end
+
+			function Feature:Start(values)
+				self:Stop()
+
+				self.State.Running = true
+				self.State.LoopId = self.State.LoopId + 1
+				self.State.LastAttackAt = 0
+				local id = self.State.LoopId
+
+				task.spawn(function()
+					while self.State.Running and self.State.LoopId == id do
+						self:Tick(values)
+						task.wait(self.State.PollDelay)
+					end
+				end)
+			end
+
+			function Feature:Stop()
+				self.State.Running = false
+				self.State.LoopId = self.State.LoopId + 1
+				self.State.CurrentTarget = nil
+			end
+
+			function Feature:GetHandlers()
+				return {
+					AutoFarm = function(value, values)
+						if value then self:Start(values) else self:Stop() end
+					end,
+					AutoFarmEnemy = function(_, values)
+						self.State.CurrentTarget = nil
+						if values and values.AutoFarm then self:Start(values) end
+					end,
+				}
+			end
+
+			function Feature:Cleanup()
+				self:Stop()
 			end
 		end
 

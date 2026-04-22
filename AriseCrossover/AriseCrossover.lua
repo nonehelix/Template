@@ -564,7 +564,6 @@ return {
 		local function isExcludedDungeonMode()
 			return getModeFlag("InTimeTrial")
 				or getModeFlag("InBossRush")
-				or getModeFlag("InCastle")
 				or ReplicatedStorage:GetAttribute("IsCastle") == true
 		end
 
@@ -900,12 +899,10 @@ return {
 				"Player.InDungeon=" .. formatDebugValue(player:GetAttribute("InDungeon")),
 				"Player.InTimeTrial=" .. formatDebugValue(player:GetAttribute("InTimeTrial")),
 				"Player.InBossRush=" .. formatDebugValue(player:GetAttribute("InBossRush")),
-				"Player.InCastle=" .. formatDebugValue(player:GetAttribute("InCastle")),
 				"Replicated.Dungeon=" .. formatDebugValue(ReplicatedStorage:GetAttribute("Dungeon")),
 				"Replicated.InDungeon=" .. formatDebugValue(ReplicatedStorage:GetAttribute("InDungeon")),
 				"Replicated.InTimeTrial=" .. formatDebugValue(ReplicatedStorage:GetAttribute("InTimeTrial")),
 				"Replicated.InBossRush=" .. formatDebugValue(ReplicatedStorage:GetAttribute("InBossRush")),
-				"Replicated.InCastle=" .. formatDebugValue(ReplicatedStorage:GetAttribute("InCastle")),
 				"Replicated.IsCastle=" .. formatDebugValue(ReplicatedStorage:GetAttribute("IsCastle")),
 				"EnemyClientCount=" .. tostring(getChildCount(enemyClientFolder)),
 				"EnemyServerCount=" .. tostring(getChildCount(enemyServerFolder)),

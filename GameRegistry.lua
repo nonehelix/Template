@@ -18,9 +18,25 @@ local REGISTERED_GAMES = {
 	{
 		Key = "AriseCrossover",
 		Name = "Arise Crossover",
+		PlaceIds = {
+			87039211657390,
+		},
 		Links = {
 			"https://www.roblox.com/es/games/87039211657390/ARISE-1-0",
-		}
+		},
+		Detect = function()
+			local replicatedStorage = game:GetService("ReplicatedStorage")
+			local indexer = replicatedStorage:FindFirstChild("Indexer")
+			local sharedModules = replicatedStorage:FindFirstChild("SharedModules")
+
+			return replicatedStorage:FindFirstChild("BridgeNet2") ~= nil
+				and indexer ~= nil
+				and sharedModules ~= nil
+				and indexer:FindFirstChild("ShadowTier") ~= nil
+				and indexer:FindFirstChild("DungeonMaps") ~= nil
+				and sharedModules:FindFirstChild("PetsService") ~= nil
+				and sharedModules:FindFirstChild("ExtraFunctions") ~= nil
+		end
 	},
 }
 
@@ -40,6 +56,56 @@ local function extractPlaceIdFromLink(link)
 	end
 
 	return nil
+end
+
+local function containsNumber(values, numberValue)
+	if type(values) ~= "table" or numberValue == nil then
+		return false
+	end
+
+	for _, value in ipairs(values) do
+		if tonumber(value) == numberValue then
+			return true
+		end
+	end
+
+	return false
+end
+
+local function hasRegisteredLinkPlaceId(entry, placeId)
+	for _, link in ipairs(entry.Links or {}) do
+		local linkPlaceId = extractPlaceIdFromLink(link)
+		if linkPlaceId and linkPlaceId == placeId then
+			return true
+		end
+	end
+
+	return false
+end
+
+local function runDetector(entry)
+	if type(entry.Detect) ~= "function" then
+		return false
+	end
+
+	local ok, detected = pcall(entry.Detect)
+	if not ok then
+		warn("Game detector failed for '" .. tostring(entry.Name) .. "': " .. tostring(detected))
+		return false
+	end
+
+	return detected == true
+end
+
+local function matchesCurrentGame(entry)
+	local currentPlaceId = game.PlaceId
+	local currentGameId = game.GameId
+
+	return containsNumber(entry.PlaceIds, currentPlaceId)
+		or hasRegisteredLinkPlaceId(entry, currentPlaceId)
+		or containsNumber(entry.GameIds, currentGameId)
+		or containsNumber(entry.UniverseIds, currentGameId)
+		or runDetector(entry)
 end
 
 local function describeChildren(parent)
@@ -97,14 +163,9 @@ local function resolveModule(root, entry)
 end
 
 function GameRegistry.GetCurrentGameEntry()
-	local currentPlaceId = game.PlaceId
-
 	for _, entry in ipairs(REGISTERED_GAMES) do
-		for _, link in ipairs(entry.Links or {}) do
-			local placeId = extractPlaceIdFromLink(link)
-			if placeId and placeId == currentPlaceId then
-				return entry
-			end
+		if matchesCurrentGame(entry) then
+			return entry
 		end
 	end
 
@@ -118,12 +179,12 @@ end
 function GameRegistry.LoadCurrentGameFeatures(root, Shared)
 	local entry = GameRegistry.GetCurrentGameEntry()
 	if not entry then
-		local message = "Current game is not registered for PlaceId " .. tostring(game.PlaceId)
+		local message = "Current game is not registered for PlaceId " .. tostring(game.PlaceId) .. " / GameId " .. tostring(game.GameId)
 		warn("Game-Specific features failed")
-		return false, "Current game is not registered"
+		return false, message
 	end
 
-	print("Detected Game: " .. tostring(entry.Name))
+	print("Detected Game: " .. tostring(entry.Name) .. " (" .. tostring(game.PlaceId) .. " / " .. tostring(game.GameId) .. ")")
 	Shared.CurrentGameKey = entry.Key
 
 	local moduleScript, resolveError = resolveModule(root, entry)

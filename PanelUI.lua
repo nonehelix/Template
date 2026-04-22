@@ -270,6 +270,18 @@ function Panel:GetValue(optionId)
 	return self.Config.Values[optionId]
 end
 
+function Panel:IsSavedMinimized()
+	return self.Config.Values.Minimized == true
+end
+
+function Panel:ApplySavedMinimizedState(skipSave)
+	if self:IsSavedMinimized() then
+		self:Minimize(skipSave)
+	elseif self.State.IsMinimized or (self.MainFrame and not self.MainFrame.Visible) then
+		self:Restore(skipSave)
+	end
+end
+
 function Panel:RegisterControl(optionId, controlData)
 	self.State.Controls[optionId] = controlData
 end
@@ -582,7 +594,7 @@ end
 
 function Panel:CreateGui()
 	local Theme = self:GetTheme()
-	local startsMinimized = self.Config.Values and self.Config.Values.Minimized == true
+	local startsMinimized = self:IsSavedMinimized()
 	self.State.IsMinimized = startsMinimized
 
 	local oldGui = self.PlayerGui:FindFirstChild(self.Config.GuiName or "AdminPanel")
@@ -1428,12 +1440,7 @@ function Panel:SetupRespawnApply()
 		end
 
 		self:ApplyAll()
-
-		if self:GetValue("Minimized") then
-			self:Minimize(true)
-		else
-			self:Restore(true)
-		end
+		self:ApplySavedMinimizedState(true)
 	end))
 end
 
@@ -1472,12 +1479,7 @@ function Panel:Init()
 	self:SetupRespawnApply()
 	self:SetupOutsideClick()
 	self:ApplyAll()
-
-	if self:GetValue("Minimized") then
-		self:Minimize(true)
-	else
-		self:Restore(true)
-	end
+	self:ApplySavedMinimizedState(true)
 
 	print("Panel loaded succesfully")
 end

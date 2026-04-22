@@ -557,11 +557,22 @@ return {
 			return "total=" .. total .. ", matching=" .. matching .. ", alive=" .. alive .. ", rejects={" .. table.concat(reasonParts, ", ") .. "}"
 		end
 
-		local function isNormalDungeonInstance()
+		local function isDungeonActive()
 			return player:GetAttribute("InDungeon") == true
-				and player:GetAttribute("InTimeTrial") ~= true
-				and player:GetAttribute("InBossRush") ~= true
-				and ReplicatedStorage:GetAttribute("IsCastle") ~= true
+				or ReplicatedStorage:GetAttribute("InDungeon") == true
+				or ReplicatedStorage:GetAttribute("Dungeon") == true
+		end
+
+		local function isExcludedDungeonMode()
+			return player:GetAttribute("InTimeTrial") == true
+				or ReplicatedStorage:GetAttribute("InTimeTrial") == true
+				or player:GetAttribute("InBossRush") == true
+				or ReplicatedStorage:GetAttribute("InBossRush") == true
+				or ReplicatedStorage:GetAttribute("IsCastle") == true
+		end
+
+		local function isNormalDungeonInstance()
+			return isDungeonActive() and not isExcludedDungeonMode()
 		end
 
 		local knownEnemyNameCache = nil
@@ -888,6 +899,8 @@ return {
 
 			return table.concat({
 				"NormalDungeon=" .. tostring(isNormalDungeonInstance()),
+				"DungeonActive=" .. tostring(isDungeonActive()),
+				"ExcludedDungeonMode=" .. tostring(isExcludedDungeonMode()),
 				"Player.InDungeon=" .. formatDebugValue(player:GetAttribute("InDungeon")),
 				"Player.InTimeTrial=" .. formatDebugValue(player:GetAttribute("InTimeTrial")),
 				"Player.InBossRush=" .. formatDebugValue(player:GetAttribute("InBossRush")),

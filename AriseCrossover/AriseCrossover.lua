@@ -19,6 +19,7 @@ return {
 		-- HELPERS
 		--==================================================
 		local NO_ENEMY_OPTION, NO_DUNGEON_OPTION = "Select enemy", "Select dungeon"
+		local EMPTY_TABLE = {}
 		local AUTO_CLICK_POLL_DELAY, AUTO_FARM_POLL_DELAY, SHADOW_EXCHANGE_POLL_DELAY = 0.5, 0.25, 0.5
 		local DUNGEON_CREATE_DELAY, DUNGEON_INSTANCE_WAIT = 0.5, 6
 
@@ -53,13 +54,98 @@ return {
 			end
 		end
 
+		local function bindPollingToggleFeature(feature, optionId, onTick, config)
+			config = config or EMPTY_TABLE
+
+			function feature:Start(panelRef)
+				setFeaturePanelRef(self, panelRef)
+				if config.RestartOnStart then
+					self:Stop()
+					setFeaturePanelRef(self, panelRef)
+				elseif self.State.Running then
+					return
+				end
+
+				if config.BeforeStart then
+					config.BeforeStart(self, panelRef)
+				end
+
+				self.State.Running = true
+
+				local loopId = nil
+				if config.UseLoopId or self.State.LoopId ~= nil then
+					self.State.LoopId = (self.State.LoopId or 0) + 1
+					loopId = self.State.LoopId
+				end
+
+				task.spawn(function()
+					while self.State.Running do
+						if loopId ~= nil and self.State.LoopId ~= loopId then break end
+
+						local values = getPanelValues(self.State.PanelRef)
+						if not values or values[optionId] ~= true then break end
+
+						onTick(self, values)
+						task.wait(self.State.PollDelay or config.PollDelay or 0.5)
+					end
+
+					if self.State.Running and (loopId == nil or self.State.LoopId == loopId) then
+						self:Stop()
+					end
+				end)
+			end
+
+			function feature:Stop()
+				self.State.Running = false
+				if config.UseLoopId or self.State.LoopId ~= nil then
+					self.State.LoopId = (self.State.LoopId or 0) + 1
+				end
+
+				if config.BeforeStop then
+					config.BeforeStop(self)
+				end
+			end
+
+			function feature:GetHandlers()
+				local handlers = {
+					[optionId] = buildToggleHandler(self, function(panelRef) self:Start(panelRef) end),
+				}
+
+				for handlerId, handler in pairs(config.ExtraHandlers or EMPTY_TABLE) do
+					handlers[handlerId] = handler
+				end
+
+				return handlers
+			end
+
+			function feature:Cleanup()
+				self:Stop()
+				self.State.PanelRef = nil
+
+				if config.OnCleanup then
+					config.OnCleanup(self)
+				end
+			end
+		end
+
+		local settingsCache, leaderstatsCache, passesCache = nil, nil, nil
 		local function getSettings()
-			return player:WaitForChild("Settings", 10)
+			if settingsCache and settingsCache.Parent == player then return settingsCache end
+			settingsCache = player:FindFirstChild("Settings") or player:WaitForChild("Settings", 10)
+			return settingsCache
+		end
+
+		local function getLeaderstats()
+			if leaderstatsCache and leaderstatsCache.Parent == player then return leaderstatsCache end
+			leaderstatsCache = player:FindFirstChild("leaderstats") or player:WaitForChild("leaderstats", 10)
+			return leaderstatsCache
 		end
 
 		local function getPasses()
-			local leaderstats = player:WaitForChild("leaderstats", 10)
-			return leaderstats and leaderstats:WaitForChild("Passes", 10) or nil
+			if passesCache and passesCache.Parent then return passesCache end
+			local leaderstats = getLeaderstats()
+			passesCache = leaderstats and (leaderstats:FindFirstChild("Passes") or leaderstats:WaitForChild("Passes", 10)) or nil
+			return passesCache
 		end
 
 		local function setPass(passName, enabled)
@@ -300,11 +386,44 @@ return {
 			return items
 		end
 
+		local function getClosestTeleportCFrame(enemyRoot, distance)
+			local characterRoot = getCharacterRoot()
+			local enemyPosition = enemyRoot.Position
+			local radius = distance or 7
+
+			local direction = nil
+			if characterRoot then
+				local offset = characterRoot.Position - enemyPosition
+				local flatOffset = Vector3.new(offset.X, 0, offset.Z)
+				if flatOffset.Magnitude > 0.001 then
+					direction = flatOffset.Unit
+				end
+			end
+
+			if not direction then
+				local lookVector = enemyRoot.CFrame.LookVector
+				local flatLook = Vector3.new(lookVector.X, 0, lookVector.Z)
+				direction = flatLook.Magnitude > 0.001 and flatLook.Unit or Vector3.new(0, 0, -1)
+			end
+
+			local targetPosition = enemyPosition + direction * radius
+			targetPosition = Vector3.new(targetPosition.X, enemyPosition.Y, targetPosition.Z)
+
+			return CFrame.lookAt(targetPosition, Vector3.new(enemyPosition.X, targetPosition.Y, enemyPosition.Z))
+		end
+
 		local function teleportToEnemy(enemy, distance)
 			local character = player.Character
 			local enemyRoot = getEnemyRoot(enemy)
 			if not character or not enemyRoot then return end
-			character:PivotTo(enemyRoot.CFrame * CFrame.new(0, 0, distance or 7))
+			character:PivotTo(getClosestTeleportCFrame(enemyRoot, distance))
+		end
+
+		local function setFeatureTarget(feature, target)
+			if feature.State.CurrentTarget == target then return end
+
+			feature.State.CurrentTarget = target
+			if target then teleportToEnemy(target, feature.State.TeleportDistance) end
 		end
 
 		local dungeonLabelToInfo = {}
@@ -486,6 +605,26 @@ return {
 			return fireGeneralEvent(payload)
 		end
 
+		local function buildDungeonActionPayload(dungeonOwner, dungeonInfo)
+			local isTable = type(dungeonInfo) == "table"
+			local dungeon = isTable and (dungeonInfo.Dungeon or dungeonInfo.Key) or dungeonInfo
+			local dungeonMap = isTable and (dungeonInfo.DungeonMap or dungeonInfo.Map or dungeonInfo.Key) or dungeonInfo
+			local map = isTable and (dungeonInfo.Map or dungeonInfo.DungeonMap or dungeonInfo.Key) or dungeonInfo
+
+			return {
+				Dungeon = dungeonOwner ~= nil and dungeonOwner or dungeon,
+				DungeonMap = dungeonMap,
+				Map = map,
+				ID = isTable and dungeonInfo.ID or nil,
+				DungeonID = isTable and dungeonInfo.ID or nil,
+				DungeonName = isTable and dungeonInfo.Dungeon or nil,
+				MapName = isTable and dungeonInfo.MapName or nil,
+				DoubleID = isTable and dungeonInfo.DoubleID or nil,
+				World = isTable and dungeonInfo.World or nil,
+				DungeonRank = isTable and dungeonInfo.DungeonRank or nil,
+			}
+		end
+
 		--==================================================
 		-- FEATURE: AUTO CLICK
 		--==================================================
@@ -523,39 +662,17 @@ return {
 				self.State.OriginalAutoClicker = nil
 			end
 
-			function Feature:Start(panelRef)
-				setFeaturePanelRef(self, panelRef)
-				if self.State.Running then return end
-
-				self:CaptureOriginalValues()
-				self.State.Running = true
-
-				task.spawn(function()
-					while self.State.Running do
-						local values = getPanelValues(self.State.PanelRef)
-						if not values or values.AutoClick ~= true then break end
-
-						setAutoClick(true)
-						task.wait(AUTO_CLICK_POLL_DELAY)
-					end
-
-					if self.State.Running then self:Stop() end
-				end)
-			end
-
-			function Feature:Stop()
-				self.State.Running = false
-				self:RestoreOriginalValues()
-			end
-
-			function Feature:GetHandlers()
-				return {AutoClick = buildToggleHandler(self, function(panelRef) self:Start(panelRef) end)}
-			end
-
-			function Feature:Cleanup()
-				self:Stop()
-				self.State.PanelRef = nil
-			end
+			bindPollingToggleFeature(Feature, "AutoClick", function()
+				setAutoClick(true)
+			end, {
+				PollDelay = AUTO_CLICK_POLL_DELAY,
+				BeforeStart = function(self)
+					self:CaptureOriginalValues()
+				end,
+				BeforeStop = function(self)
+					self:RestoreOriginalValues()
+				end,
+			})
 		end
 
 		--==================================================
@@ -589,7 +706,7 @@ return {
 				State = {Running = false, LoopId = 0, PanelRef = nil, PollDelay = AUTO_FARM_POLL_DELAY, TeleportDistance = 7, CurrentTarget = nil},
 				Options = {
 					{ Id = "AutoFarmEnemy", Type = "select", Label = "Enemy", Description = "Select enemy to farm", Items = getAutoFarmEnemyItems },
-					{ Id = "AutoFarm", Type = "toggle", Label = "Auto Farm", Description = "Teleports to each selected enemy once" },
+					{ Id = "AutoFarm", Type = "toggle", Label = "Auto Farm", Description = "Teleports to the closest selected enemy and retargets on death" },
 				}
 			})
 
@@ -604,10 +721,7 @@ return {
 			end
 
 			function Feature:SetTarget(target)
-				if self.State.CurrentTarget == target then return end
-
-				self.State.CurrentTarget = target
-				if target then teleportToEnemy(target, self.State.TeleportDistance) end
+				setFeatureTarget(self, target)
 			end
 
 			function Feature:Tick(values)
@@ -620,45 +734,18 @@ return {
 				end
 			end
 
-			function Feature:Start(panelRef)
-				setFeaturePanelRef(self, panelRef)
-				self:Stop()
-				setFeaturePanelRef(self, panelRef)
-
-				self.State.Running = true
-				self.State.LoopId = self.State.LoopId + 1
-				local loopId = self.State.LoopId
-
-				task.spawn(function()
-					while self.State.Running and self.State.LoopId == loopId do
-						local values = getPanelValues(self.State.PanelRef)
-						if not values or values.AutoFarm ~= true then break end
-
-						self:Tick(values)
-						task.wait(self.State.PollDelay)
-					end
-
-					if self.State.Running and self.State.LoopId == loopId then self:Stop() end
-				end)
-			end
-
-			function Feature:Stop()
-				self.State.Running = false
-				self.State.LoopId = self.State.LoopId + 1
-				self.State.CurrentTarget = nil
-			end
-
-			function Feature:GetHandlers()
-				return {
-					AutoFarm = buildToggleHandler(self, function(panelRef) self:Start(panelRef) end),
-					AutoFarmEnemy = buildRestartHandler(self, "AutoFarm"),
-				}
-			end
-
-			function Feature:Cleanup()
-				self:Stop()
-				self.State.PanelRef = nil
-			end
+			bindPollingToggleFeature(Feature, "AutoFarm", function(self, values)
+				self:Tick(values)
+			end, {
+				RestartOnStart = true,
+				UseLoopId = true,
+				BeforeStop = function(self)
+					self.State.CurrentTarget = nil
+				end,
+				ExtraHandlers = {
+					AutoFarmEnemy = buildRestartHandler(Feature, "AutoFarm"),
+				},
+			})
 		end
 
 		--==================================================
@@ -670,7 +757,7 @@ return {
 				Defaults = {AutoDungeon = false},
 				State = {Running = false, LoopId = 0, PanelRef = nil, PollDelay = AUTO_FARM_POLL_DELAY, TeleportDistance = 7, CurrentTarget = nil},
 				Options = {
-					{ Id = "AutoDungeon", Type = "toggle", Label = "Auto Dungeon", Description = "Teleports through dungeon enemies only inside an active dungeon instance" },
+					{ Id = "AutoDungeon", Type = "toggle", Label = "Auto Dungeon", Description = "Teleports to the closest alive enemy only inside an active dungeon instance" },
 				}
 			})
 
@@ -679,10 +766,7 @@ return {
 			end
 
 			function Feature:SetTarget(target)
-				if self.State.CurrentTarget == target then return end
-
-				self.State.CurrentTarget = target
-				if target then teleportToEnemy(target, self.State.TeleportDistance) end
+				setFeatureTarget(self, target)
 			end
 
 			function Feature:Tick()
@@ -697,44 +781,15 @@ return {
 				end
 			end
 
-			function Feature:Start(panelRef)
-				setFeaturePanelRef(self, panelRef)
-				self:Stop()
-				setFeaturePanelRef(self, panelRef)
-
-				self.State.Running = true
-				self.State.LoopId = self.State.LoopId + 1
-				local loopId = self.State.LoopId
-
-				task.spawn(function()
-					while self.State.Running and self.State.LoopId == loopId do
-						local values = getPanelValues(self.State.PanelRef)
-						if not values or values.AutoDungeon ~= true then break end
-
-						self:Tick()
-						task.wait(self.State.PollDelay)
-					end
-
-					if self.State.Running and self.State.LoopId == loopId then self:Stop() end
-				end)
-			end
-
-			function Feature:Stop()
-				self.State.Running = false
-				self.State.LoopId = self.State.LoopId + 1
-				self.State.CurrentTarget = nil
-			end
-
-			function Feature:GetHandlers()
-				return {
-					AutoDungeon = buildToggleHandler(self, function(panelRef) self:Start(panelRef) end),
-				}
-			end
-
-			function Feature:Cleanup()
-				self:Stop()
-				self.State.PanelRef = nil
-			end
+			bindPollingToggleFeature(Feature, "AutoDungeon", function(self)
+				self:Tick()
+			end, {
+				RestartOnStart = true,
+				UseLoopId = true,
+				BeforeStop = function(self)
+					self.State.CurrentTarget = nil
+				end,
+			})
 		end
 
 		--==================================================
@@ -752,40 +807,11 @@ return {
 			})
 
 			function Feature:CreateDungeon(dungeonInfo)
-				local dungeon = type(dungeonInfo) == "table" and (dungeonInfo.Dungeon or dungeonInfo.Key) or dungeonInfo
-				local dungeonMap = type(dungeonInfo) == "table" and (dungeonInfo.DungeonMap or dungeonInfo.Map or dungeonInfo.Key) or dungeonInfo
-				local map = type(dungeonInfo) == "table" and (dungeonInfo.Map or dungeonInfo.DungeonMap or dungeonInfo.Key) or dungeonInfo
-
-				return sendDungeonAction("Create", {
-					Dungeon = dungeon,
-					DungeonMap = dungeonMap,
-					Map = map,
-					ID = type(dungeonInfo) == "table" and dungeonInfo.ID or nil,
-					DungeonID = type(dungeonInfo) == "table" and dungeonInfo.ID or nil,
-					DungeonName = type(dungeonInfo) == "table" and dungeonInfo.Dungeon or nil,
-					MapName = type(dungeonInfo) == "table" and dungeonInfo.MapName or nil,
-					DoubleID = type(dungeonInfo) == "table" and dungeonInfo.DoubleID or nil,
-					World = type(dungeonInfo) == "table" and dungeonInfo.World or nil,
-					DungeonRank = type(dungeonInfo) == "table" and dungeonInfo.DungeonRank or nil,
-				})
+				return sendDungeonAction("Create", buildDungeonActionPayload(nil, dungeonInfo))
 			end
 
 			function Feature:StartDungeon(dungeonInfo)
-				local dungeonMap = type(dungeonInfo) == "table" and (dungeonInfo.DungeonMap or dungeonInfo.Map or dungeonInfo.Key) or dungeonInfo
-				local map = type(dungeonInfo) == "table" and (dungeonInfo.Map or dungeonInfo.DungeonMap or dungeonInfo.Key) or dungeonInfo
-
-				return sendDungeonAction("Start", {
-					Dungeon = player.UserId,
-					DungeonMap = dungeonMap,
-					Map = map,
-					ID = type(dungeonInfo) == "table" and dungeonInfo.ID or nil,
-					DungeonID = type(dungeonInfo) == "table" and dungeonInfo.ID or nil,
-					DungeonName = type(dungeonInfo) == "table" and dungeonInfo.Dungeon or nil,
-					MapName = type(dungeonInfo) == "table" and dungeonInfo.MapName or nil,
-					DoubleID = type(dungeonInfo) == "table" and dungeonInfo.DoubleID or nil,
-					World = type(dungeonInfo) == "table" and dungeonInfo.World or nil,
-					DungeonRank = type(dungeonInfo) == "table" and dungeonInfo.DungeonRank or nil,
-				})
+				return sendDungeonAction("Start", buildDungeonActionPayload(player.UserId, dungeonInfo))
 			end
 
 			function Feature:Run(panelRef)
@@ -798,17 +824,18 @@ return {
 				self.State.Starting = true
 
 				task.spawn(function()
-					local ownDungeon = getOwnDungeonInfo()
-					if not ownDungeon then
-						self:CreateDungeon(dungeonInfo)
-						task.wait(DUNGEON_CREATE_DELAY)
-					end
+					pcall(function()
+						local ownDungeon = getOwnDungeonInfo()
+						if not ownDungeon then
+							self:CreateDungeon(dungeonInfo)
+							task.wait(DUNGEON_CREATE_DELAY)
+						end
 
-					ownDungeon = getOwnDungeonInfo() or waitForOwnDungeonInfo(DUNGEON_INSTANCE_WAIT)
-					if ownDungeon then
-						self:StartDungeon(dungeonInfo)
-					end
-
+						ownDungeon = getOwnDungeonInfo() or waitForOwnDungeonInfo(DUNGEON_INSTANCE_WAIT)
+						if ownDungeon then
+							self:StartDungeon(dungeonInfo)
+						end
+					end)
 					self.State.Starting = false
 				end)
 			end
@@ -869,43 +896,19 @@ return {
 				self.State.OriginalButtonVisible = nil
 			end
 
-			function Feature:Start(panelRef)
-				setFeaturePanelRef(self, panelRef)
-				self:Stop()
-				setFeaturePanelRef(self, panelRef)
-				self:CaptureOriginalValues()
-
-				self.State.Running = true
-				self.State.LoopId = self.State.LoopId + 1
-				local loopId = self.State.LoopId
-
-				task.spawn(function()
-					while self.State.Running and self.State.LoopId == loopId do
-						local values = getPanelValues(self.State.PanelRef)
-						if not values or values.ShadowExchange ~= true then break end
-
-						setShadowExchange(true)
-						task.wait(SHADOW_EXCHANGE_POLL_DELAY)
-					end
-
-					if self.State.Running and self.State.LoopId == loopId then self:Stop() end
-				end)
-			end
-
-			function Feature:Stop()
-				self.State.Running = false
-				self.State.LoopId = self.State.LoopId + 1
-				self:RestoreOriginalValues()
-			end
-
-			function Feature:GetHandlers()
-				return {ShadowExchange = buildToggleHandler(self, function(panelRef) self:Start(panelRef) end)}
-			end
-
-			function Feature:Cleanup()
-				self:Stop()
-				self.State.PanelRef = nil
-			end
+			bindPollingToggleFeature(Feature, "ShadowExchange", function()
+				setShadowExchange(true)
+			end, {
+				PollDelay = SHADOW_EXCHANGE_POLL_DELAY,
+				RestartOnStart = true,
+				UseLoopId = true,
+				BeforeStart = function(self)
+					self:CaptureOriginalValues()
+				end,
+				BeforeStop = function(self)
+					self:RestoreOriginalValues()
+				end,
+			})
 		end
 	end
 }

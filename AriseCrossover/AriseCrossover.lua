@@ -20,6 +20,7 @@ return {
 		--==================================================
 		local NO_ENEMY_OPTION, NO_DUNGEON_OPTION = "Select enemy", "Select dungeon"
 		local EMPTY_TABLE = {}
+		local SERVER_DEAD_TARGET_OPTIONS = {UseServerDeadAttribute = true, RequireServerEnemy = true}
 		local AUTO_CLICK_POLL_DELAY, AUTO_FARM_POLL_DELAY, SHADOW_EXCHANGE_POLL_DELAY, DEBUG_POLL_DELAY = 0.5, 0.25, 0.5, 1
 		local DUNGEON_CREATE_DELAY, DUNGEON_INSTANCE_WAIT = 0.5, 6
 
@@ -413,12 +414,23 @@ return {
 			options = options or EMPTY_TABLE
 
 			if not enemy or not enemy.Parent then return false, "missing-model" end
-			if hasDeadAttribute(enemy) then return false, "client-dead-attribute" end
 
 			local enemyRoot = getEnemyRoot(enemy)
 			if not enemyRoot then return false, "missing-root" end
 
 			local serverEnemy = getServerEnemy(enemy)
+			if options.UseServerDeadAttribute then
+				if not serverEnemy then
+					if options.RequireServerEnemy then return false, "missing-server-enemy" end
+					return true, "server-enemy-missing"
+				end
+
+				if serverEnemy:GetAttribute("Dead") == true then return false, "server-dead-true" end
+				return true, "server-dead-false"
+			end
+
+			if hasDeadAttribute(enemy) then return false, "client-dead-attribute" end
+
 			if serverEnemy then
 				if hasDeadAttribute(serverEnemy) then return false, "server-dead-attribute" end
 
@@ -492,6 +504,7 @@ return {
 				"ClientHealth=" .. tostring(getEnemyClientHealth(enemy)),
 				"ClientAttrHealth=" .. tostring(getAttributeHealth(enemy)),
 				"ServerHealth=" .. tostring(getAttributeHealth(serverEnemy)),
+				"ServerDead=" .. tostring(serverEnemy and serverEnemy:GetAttribute("Dead")),
 				"HasHealthObject=" .. tostring(getEnemyHealthObject(enemy) ~= nil),
 				"Distance=" .. (distance and string.format("%.2f", distance) or "nil"),
 				"Root=" .. (enemyRoot and formatDebugValue(enemyRoot.Position) or "nil"),
@@ -968,7 +981,7 @@ return {
 			function Feature:FindTarget(enemyName)
 				return findClosestEnemy(function(enemy)
 					return getEnemyDisplayName(enemy) == enemyName
-				end)
+				end, SERVER_DEAD_TARGET_OPTIONS)
 			end
 
 			function Feature:TargetMatches(target, enemyName)
@@ -987,15 +1000,15 @@ return {
 				end
 
 				local target = self.State.CurrentTarget
-				if not self:TargetMatches(target, enemyName) or not isEnemyAlive(target) then
+				if not self:TargetMatches(target, enemyName) or not isEnemyAlive(target, SERVER_DEAD_TARGET_OPTIONS) then
 					local selectedName = enemyName
 					local newTarget = self:FindTarget(selectedName)
 					if newTarget then
-						featureDebugLog(self, "AutoFarm", "Target selected: " .. describeEnemy(newTarget))
+						featureDebugLog(self, "AutoFarm", "Target selected: " .. describeEnemy(newTarget, SERVER_DEAD_TARGET_OPTIONS))
 					else
 						featureDebugLog(self, "AutoFarm", "No alive target for " .. tostring(selectedName) .. " | " .. getEnemyScanSummary(function(enemy)
 							return getEnemyDisplayName(enemy) == selectedName
-						end))
+						end, SERVER_DEAD_TARGET_OPTIONS))
 					end
 					self:SetTarget(newTarget)
 				end
@@ -1030,7 +1043,7 @@ return {
 			})
 
 			function Feature:FindTarget()
-				return findClosestEnemy(nil, {AllowUnknownHealth = true})
+				return findClosestEnemy(nil, SERVER_DEAD_TARGET_OPTIONS)
 			end
 
 			function Feature:SetTarget(target)
@@ -1045,12 +1058,12 @@ return {
 				end
 
 				local target = self.State.CurrentTarget
-				if not target or not target.Parent or not isEnemyAlive(target, {AllowUnknownHealth = true}) then
+				if not target or not target.Parent or not isEnemyAlive(target, SERVER_DEAD_TARGET_OPTIONS) then
 					local newTarget = self:FindTarget()
 					if newTarget then
-						featureDebugLog(self, "AutoDungeon", "Target selected: " .. describeEnemy(newTarget, {AllowUnknownHealth = true}))
+						featureDebugLog(self, "AutoDungeon", "Target selected: " .. describeEnemy(newTarget, SERVER_DEAD_TARGET_OPTIONS))
 					else
-						featureDebugLog(self, "AutoDungeon", "No alive dungeon target | " .. getEnemyScanSummary(nil, {AllowUnknownHealth = true}) .. " | " .. buildDungeonRuntimeSnapshot())
+						featureDebugLog(self, "AutoDungeon", "No alive dungeon target | " .. getEnemyScanSummary(nil, SERVER_DEAD_TARGET_OPTIONS) .. " | " .. buildDungeonRuntimeSnapshot())
 					end
 					self:SetTarget(newTarget)
 				end

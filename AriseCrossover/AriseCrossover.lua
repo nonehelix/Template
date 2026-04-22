@@ -8,7 +8,7 @@ return {
 		--==================================================
 		-- TABS
 		--==================================================
-		RegisterTabs({{Name = "Combat", Order = 20}, {Name = "Dungeon", Order = 30}})
+		RegisterTabs({{Name = "Combat", Order = 20}, {Name = "Dungeon", Order = 30}, {Name = "Debug", Order = 40}})
 
 		--==================================================
 		-- GAME REFERENCES
@@ -20,7 +20,7 @@ return {
 		--==================================================
 		local NO_ENEMY_OPTION, NO_DUNGEON_OPTION = "Select enemy", "Select dungeon"
 		local EMPTY_TABLE = {}
-		local AUTO_CLICK_POLL_DELAY, AUTO_FARM_POLL_DELAY, SHADOW_EXCHANGE_POLL_DELAY = 0.5, 0.25, 0.5
+		local AUTO_CLICK_POLL_DELAY, AUTO_FARM_POLL_DELAY, SHADOW_EXCHANGE_POLL_DELAY, DEBUG_POLL_DELAY = 0.5, 0.25, 0.5, 1
 		local DUNGEON_CREATE_DELAY, DUNGEON_INSTANCE_WAIT = 0.5, 6
 
 		local function getPanelValues(panelRef) return panelRef and panelRef.Config and panelRef.Config.Values or nil end
@@ -52,6 +52,95 @@ return {
 					feature:Start(panelRef)
 				end
 			end
+		end
+
+		local function disconnectConnection(connection)
+			if connection and connection.Connected then
+				connection:Disconnect()
+			end
+			return nil
+		end
+
+		local function bindConnectionToggleFeature(feature, optionId, onStart, config)
+			config = config or EMPTY_TABLE
+
+			function feature:Start(panelRef)
+				setFeaturePanelRef(self, panelRef)
+				if config.RestartOnStart then
+					self:Stop()
+					setFeaturePanelRef(self, panelRef)
+				elseif self.State.Running then
+					return
+				end
+
+				self.State.Running = true
+				onStart(self, panelRef)
+			end
+
+			function feature:Stop()
+				self.State.Running = false
+				if config.BeforeStop then
+					config.BeforeStop(self)
+				end
+			end
+
+			function feature:GetHandlers()
+				return {
+					[optionId] = buildToggleHandler(self, function(panelRef) self:Start(panelRef) end),
+				}
+			end
+
+			function feature:Cleanup()
+				self:Stop()
+				self.State.PanelRef = nil
+				if config.OnCleanup then
+					config.OnCleanup(self)
+				end
+			end
+		end
+
+		local function formatDebugValue(value)
+			local valueType = typeof(value)
+			if valueType == "Vector3" then
+				return string.format("(%.2f, %.2f, %.2f)", value.X, value.Y, value.Z)
+			elseif valueType == "Vector2" then
+				return string.format("(%.2f, %.2f)", value.X, value.Y)
+			elseif valueType == "CFrame" then
+				local position = value.Position
+				return string.format("CFrame(%.2f, %.2f, %.2f)", position.X, position.Y, position.Z)
+			elseif valueType == "Instance" then
+				return value:GetFullName()
+			end
+
+			return tostring(value)
+		end
+
+		local function debugLog(scope, message)
+			print("[AriseCrossover][" .. tostring(scope) .. "] " .. tostring(message))
+		end
+
+		local function buildAttributeSnapshot(instance)
+			if not instance then return "<missing>" end
+
+			local ok, attributes = pcall(function()
+				return instance:GetAttributes()
+			end)
+			if not ok or type(attributes) ~= "table" then return "<unavailable>" end
+
+			local names = {}
+			for name in pairs(attributes) do
+				names[#names + 1] = tostring(name)
+			end
+
+			table.sort(names)
+			if #names == 0 then return "<none>" end
+
+			local parts = {}
+			for _, name in ipairs(names) do
+				parts[#parts + 1] = name .. "=" .. formatDebugValue(attributes[name])
+			end
+
+			return table.concat(parts, ", ")
 		end
 
 		local function bindPollingToggleFeature(feature, optionId, onTick, config)
@@ -625,6 +714,36 @@ return {
 			}
 		end
 
+		local function getChildCount(instance)
+			if not instance then return 0 end
+			local ok, children = pcall(function()
+				return instance:GetChildren()
+			end)
+			return ok and #children or 0
+		end
+
+		local function buildDungeonRuntimeSnapshot()
+			local enemyClientFolder, enemyServerFolder = getEnemyFolders()
+			local dungeonFolder = getLiveDungeonFolder()
+			local characterRoot = getCharacterRoot()
+
+			return table.concat({
+				"Player.InDungeon=" .. formatDebugValue(player:GetAttribute("InDungeon")),
+				"Replicated.Dungeon=" .. formatDebugValue(ReplicatedStorage:GetAttribute("Dungeon")),
+				"EnemyClientCount=" .. tostring(getChildCount(enemyClientFolder)),
+				"EnemyServerCount=" .. tostring(getChildCount(enemyServerFolder)),
+				"DungeonEntries=" .. tostring(getChildCount(dungeonFolder)),
+				"CharacterRoot=" .. (characterRoot and formatDebugValue(characterRoot.Position) or "nil"),
+			}, " | ")
+		end
+
+		local function dumpDebugSnapshot()
+			debugLog("Snapshot", "PlayerAttrs: " .. buildAttributeSnapshot(player))
+			debugLog("Snapshot", "ReplicatedAttrs: " .. buildAttributeSnapshot(ReplicatedStorage))
+			debugLog("Snapshot", "DungeonState: " .. buildDungeonRuntimeSnapshot())
+			debugLog("Snapshot", "AvailableDungeons: " .. tostring(#getLiveDungeonEntries()))
+		end
+
 		--==================================================
 		-- FEATURE: AUTO CLICK
 		--==================================================
@@ -909,6 +1028,109 @@ return {
 					self:RestoreOriginalValues()
 				end,
 			})
+		end
+
+		--==================================================
+		-- FEATURE: DEBUG PLAYER ATTRIBUTES
+		--==================================================
+		do
+			local Feature = RegisterFeature({
+				Key = "DebugPlayerAttributes", Tab = "Debug", Section = "Attributes", Order = 10,
+				Defaults = {DebugPlayerAttributes = false},
+				State = {Running = false, PanelRef = nil, AttributeConnection = nil},
+				Options = {
+					{ Id = "DebugPlayerAttributes", Type = "toggle", Label = "Monitor Player Attributes", Description = "Logs LocalPlayer attribute changes to console" },
+				}
+			})
+
+			bindConnectionToggleFeature(Feature, "DebugPlayerAttributes", function(self)
+				debugLog("PlayerAttrs", "Initial: " .. buildAttributeSnapshot(player))
+				self.State.AttributeConnection = player.AttributeChanged:Connect(function(attributeName)
+					if not self.State.Running then return end
+					debugLog("PlayerAttrs", tostring(attributeName) .. "=" .. formatDebugValue(player:GetAttribute(attributeName)))
+				end)
+			end, {
+				RestartOnStart = true,
+				BeforeStop = function(self)
+					self.State.AttributeConnection = disconnectConnection(self.State.AttributeConnection)
+				end,
+			})
+		end
+
+		--==================================================
+		-- FEATURE: DEBUG REPLICATED ATTRIBUTES
+		--==================================================
+		do
+			local Feature = RegisterFeature({
+				Key = "DebugReplicatedAttributes", Tab = "Debug", Section = "Attributes", Order = 20,
+				Defaults = {DebugReplicatedAttributes = false},
+				State = {Running = false, PanelRef = nil, AttributeConnection = nil},
+				Options = {
+					{ Id = "DebugReplicatedAttributes", Type = "toggle", Label = "Monitor Replicated Attributes", Description = "Logs ReplicatedStorage attribute changes to console" },
+				}
+			})
+
+			bindConnectionToggleFeature(Feature, "DebugReplicatedAttributes", function(self)
+				debugLog("ReplicatedAttrs", "Initial: " .. buildAttributeSnapshot(ReplicatedStorage))
+				self.State.AttributeConnection = ReplicatedStorage.AttributeChanged:Connect(function(attributeName)
+					if not self.State.Running then return end
+					debugLog("ReplicatedAttrs", tostring(attributeName) .. "=" .. formatDebugValue(ReplicatedStorage:GetAttribute(attributeName)))
+				end)
+			end, {
+				RestartOnStart = true,
+				BeforeStop = function(self)
+					self.State.AttributeConnection = disconnectConnection(self.State.AttributeConnection)
+				end,
+			})
+		end
+
+		--==================================================
+		-- FEATURE: DEBUG DUNGEON STATE
+		--==================================================
+		do
+			local Feature = RegisterFeature({
+				Key = "DebugDungeonState", Tab = "Debug", Section = "Dungeon", Order = 30,
+				Defaults = {DebugDungeonState = false},
+				State = {Running = false, LoopId = 0, PanelRef = nil, PollDelay = DEBUG_POLL_DELAY, LastSnapshot = nil},
+				Options = {
+					{ Id = "DebugDungeonState", Type = "toggle", Label = "Monitor Dungeon State", Description = "Logs dungeon flags and enemy counts when they change" },
+				}
+			})
+
+			bindPollingToggleFeature(Feature, "DebugDungeonState", function(self)
+				local snapshot = buildDungeonRuntimeSnapshot()
+				if self.State.LastSnapshot ~= snapshot then
+					self.State.LastSnapshot = snapshot
+					debugLog("DungeonState", snapshot)
+				end
+			end, {
+				RestartOnStart = true,
+				UseLoopId = true,
+				BeforeStop = function(self)
+					self.State.LastSnapshot = nil
+				end,
+			})
+		end
+
+		--==================================================
+		-- FEATURE: DEBUG SNAPSHOT
+		--==================================================
+		do
+			local Feature = RegisterFeature({
+				Key = "DebugSnapshot", Tab = "Debug", Section = "Tools", Order = 40,
+				Defaults = {},
+				Options = {
+					{ Id = "DumpDebugSnapshot", Type = "button", Label = "Dump Snapshot", Description = "Prints current player, replicated, and dungeon state to console", ButtonText = "Dump" },
+				}
+			})
+
+			function Feature:GetHandlers()
+				return {
+					DumpDebugSnapshot = function()
+						dumpDebugSnapshot()
+					end,
+				}
+			end
 		end
 	end
 }

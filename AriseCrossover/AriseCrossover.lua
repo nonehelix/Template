@@ -1,7 +1,7 @@
 return {
 	Load = function(Shared)
 		local Workspace, RegisterFeature, RegisterTabs = Shared.Workspace or game:GetService("Workspace"), Shared.RegisterFeature, Shared.RegisterTabs
-		local Players, ReplicatedStorage = game:GetService("Players"), game:GetService("ReplicatedStorage")
+		local Players, ReplicatedStorage, CollectionService = game:GetService("Players"), game:GetService("ReplicatedStorage"), game:GetService("CollectionService")
 
 		local player = Players.LocalPlayer
 
@@ -21,7 +21,6 @@ return {
 		local NO_ENEMY_OPTION, NO_DUNGEON_OPTION = "Select enemy", "Select dungeon"
 		local EMPTY_TABLE = {}
 		local SERVER_DEAD_TARGET_OPTIONS = {UseServerDeadAttribute = true, RequireServerEnemy = true}
-		local DUNGEON_DEAD_TARGET_OPTIONS = {UseServerDeadAttribute = true}
 		local AUTO_CLICK_POLL_DELAY, AUTO_FARM_POLL_DELAY, SHADOW_EXCHANGE_POLL_DELAY, DEBUG_POLL_DELAY = 0.5, 0.25, 0.5, 1
 		local DUNGEON_CREATE_DELAY, DUNGEON_INSTANCE_WAIT = 0.5, 6
 
@@ -372,15 +371,14 @@ return {
 			return enemy and enemy.Name or nil
 		end
 
-		local function getEnemyClientHealth(enemy)
-			local main = getEnemyHealthBarMain(enemy)
-			local amount = main and main:FindFirstChild("Amount")
-			return parseHealthNumber(readValueObject(amount))
-		end
-
 		local function getEnemyHealthObject(enemy)
 			local main = getEnemyHealthBarMain(enemy)
-			return main and main:FindFirstChild("Amount") or nil
+			local bar = main and main:FindFirstChild("Bar")
+			return (bar and bar:FindFirstChild("Amount")) or (main and main:FindFirstChild("Amount")) or nil
+		end
+
+		local function getEnemyClientHealth(enemy)
+			return parseHealthNumber(readValueObject(getEnemyHealthObject(enemy)))
 		end
 
 		local function hasDeadAttribute(instance)
@@ -409,6 +407,12 @@ return {
 		local function getServerEnemy(enemy)
 			local _, serverFolder = getEnemyFolders()
 			if not enemy or not serverFolder then return nil end
+
+			for _, taggedEnemy in ipairs(CollectionService:GetTagged("EnemyServer")) do
+				if taggedEnemy.Name == enemy.Name and taggedEnemy:IsDescendantOf(serverFolder) then
+					return taggedEnemy
+				end
+			end
 
 			return serverFolder:FindFirstChild(enemy.Name) or serverFolder:FindFirstChild(enemy.Name, true)
 		end
@@ -553,8 +557,20 @@ return {
 			return "total=" .. total .. ", matching=" .. matching .. ", alive=" .. alive .. ", rejects={" .. table.concat(reasonParts, ", ") .. "}"
 		end
 
-		local function isDungeonInstance()
-			return player:GetAttribute("InDungeon") == true
+		local function getModeFlag(attributeName)
+			return player:GetAttribute(attributeName) == true or ReplicatedStorage:GetAttribute(attributeName) == true
+		end
+
+		local function isExcludedDungeonMode()
+			return getModeFlag("InTimeTrial")
+				or getModeFlag("InBossRush")
+				or getModeFlag("InCastle")
+				or ReplicatedStorage:GetAttribute("IsCastle") == true
+		end
+
+		local function isNormalDungeonInstance()
+			return getModeFlag("InDungeon")
+				and not isExcludedDungeonMode()
 		end
 
 		local knownEnemyNameCache = nil
@@ -880,8 +896,17 @@ return {
 			local characterRoot = getCharacterRoot()
 
 			return table.concat({
+				"NormalDungeon=" .. tostring(isNormalDungeonInstance()),
 				"Player.InDungeon=" .. formatDebugValue(player:GetAttribute("InDungeon")),
+				"Player.InTimeTrial=" .. formatDebugValue(player:GetAttribute("InTimeTrial")),
+				"Player.InBossRush=" .. formatDebugValue(player:GetAttribute("InBossRush")),
+				"Player.InCastle=" .. formatDebugValue(player:GetAttribute("InCastle")),
 				"Replicated.Dungeon=" .. formatDebugValue(ReplicatedStorage:GetAttribute("Dungeon")),
+				"Replicated.InDungeon=" .. formatDebugValue(ReplicatedStorage:GetAttribute("InDungeon")),
+				"Replicated.InTimeTrial=" .. formatDebugValue(ReplicatedStorage:GetAttribute("InTimeTrial")),
+				"Replicated.InBossRush=" .. formatDebugValue(ReplicatedStorage:GetAttribute("InBossRush")),
+				"Replicated.InCastle=" .. formatDebugValue(ReplicatedStorage:GetAttribute("InCastle")),
+				"Replicated.IsCastle=" .. formatDebugValue(ReplicatedStorage:GetAttribute("IsCastle")),
 				"EnemyClientCount=" .. tostring(getChildCount(enemyClientFolder)),
 				"EnemyServerCount=" .. tostring(getChildCount(enemyServerFolder)),
 				"DungeonEntries=" .. tostring(getChildCount(dungeonFolder)),
@@ -1046,7 +1071,7 @@ return {
 			})
 
 			function Feature:FindTarget()
-				return findClosestEnemy(nil, DUNGEON_DEAD_TARGET_OPTIONS)
+				return findClosestEnemy(nil, SERVER_DEAD_TARGET_OPTIONS)
 			end
 
 			function Feature:SetTarget(target)
@@ -1054,19 +1079,19 @@ return {
 			end
 
 			function Feature:Tick()
-				if not isDungeonInstance() then
+				if not isNormalDungeonInstance() then
 					self.State.CurrentTarget = nil
-					featureDebugLog(self, "AutoDungeon", "Waiting for active dungeon instance | " .. buildDungeonRuntimeSnapshot())
+					featureDebugLog(self, "AutoDungeon", "Waiting for normal dungeon instance | " .. buildDungeonRuntimeSnapshot())
 					return
 				end
 
 				local target = self.State.CurrentTarget
-				if not target or not target.Parent or not isEnemyAlive(target, DUNGEON_DEAD_TARGET_OPTIONS) then
+				if not target or not target.Parent or not isEnemyAlive(target, SERVER_DEAD_TARGET_OPTIONS) then
 					local newTarget = self:FindTarget()
 					if newTarget then
-						featureDebugLog(self, "AutoDungeon", "Target selected: " .. describeEnemy(newTarget, DUNGEON_DEAD_TARGET_OPTIONS))
+						featureDebugLog(self, "AutoDungeon", "Target selected: " .. describeEnemy(newTarget, SERVER_DEAD_TARGET_OPTIONS))
 					else
-						featureDebugLog(self, "AutoDungeon", "No alive dungeon target | " .. getEnemyScanSummary(nil, DUNGEON_DEAD_TARGET_OPTIONS) .. " | " .. buildDungeonRuntimeSnapshot())
+						featureDebugLog(self, "AutoDungeon", "No alive dungeon target | " .. getEnemyScanSummary(nil, SERVER_DEAD_TARGET_OPTIONS) .. " | " .. buildDungeonRuntimeSnapshot())
 					end
 					self:SetTarget(newTarget)
 				end

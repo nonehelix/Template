@@ -582,6 +582,8 @@ end
 
 function Panel:CreateGui()
 	local Theme = self:GetTheme()
+	local startsMinimized = self.Config.Values and self.Config.Values.Minimized == true
+	self.State.IsMinimized = startsMinimized
 
 	local oldGui = self.PlayerGui:FindFirstChild(self.Config.GuiName or "AdminPanel")
 	if oldGui then
@@ -612,7 +614,7 @@ function Panel:CreateGui()
 	openButton.BackgroundColor3 = Color3.fromRGB(70, 74, 84)
 	openButton.BorderSizePixel = 0
 	openButton.Text = ""
-	openButton.Visible = false
+	openButton.Visible = startsMinimized
 	openButton.ZIndex = 55
 	openButton.AutoButtonColor = false
 	openButton.Parent = screenGui
@@ -651,6 +653,7 @@ function Panel:CreateGui()
 	mainFrame.Position = self.Config.WindowPosition or UDim2.new(0.5, -380, 0.5, -230)
 	mainFrame.BackgroundColor3 = Theme.Window
 	mainFrame.BorderSizePixel = 0
+	mainFrame.Visible = not startsMinimized
 	mainFrame.Parent = screenGui
 	createCorner(mainFrame, 14)
 	createStroke(mainFrame, Theme.Stroke, 1, 0.2)
@@ -1475,6 +1478,8 @@ function Panel:Init()
 	else
 		self:Restore(true)
 	end
+
+	print("Panel loaded succesfully")
 end
 
 return Panel

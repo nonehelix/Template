@@ -125,7 +125,7 @@ return {
 
 		local function getEnemyClientHealth(enemy)
 			local main = getEnemyHealthBarMain(enemy)
-			local amount = main and (main:FindFirstChild("Amount"))
+			local amount = main and main:FindFirstChild("Amount")
 			return parseHealthNumber(readValueObject(amount))
 		end
 
@@ -223,76 +223,6 @@ return {
 			end
 
 			return items
-		end
-
-		local petEventBridge = nil
-		local petEventBridgeLoaded = false
-
-		local function getPetEventBridge()
-			if petEventBridgeLoaded then return petEventBridge end
-
-			local bridgeModule = ReplicatedStorage:FindFirstChild("BridgeNet2")
-			if not bridgeModule then return nil end
-
-			local ok, bridgeNet = pcall(require, bridgeModule)
-			if not ok or type(bridgeNet) ~= "table" or type(bridgeNet.ReferenceBridge) ~= "function" then
-				return nil
-			end
-
-			local bridgeOk, bridge = pcall(function()
-				return bridgeNet.ReferenceBridge("PET_EVENT")
-			end)
-
-			if bridgeOk then
-				petEventBridge = bridge
-				petEventBridgeLoaded = true
-			end
-
-			return petEventBridge
-		end
-
-		local function getEquippedPetPositions(enemy)
-			local root = getCharacterRoot()
-			if not root then return {} end
-
-			local leaderstats = player:FindFirstChild("leaderstats")
-			local equips = leaderstats and leaderstats:FindFirstChild("Equips")
-			local pets = equips and equips:FindFirstChild("Pets")
-			if not pets then return {} end
-
-			local inventory = leaderstats and leaderstats:FindFirstChild("Inventory")
-			local inventoryPets = inventory and inventory:FindFirstChild("Pets")
-			local positions = {}
-
-			for _, petUid in pairs(pets:GetAttributes()) do
-				if petUid ~= false and petUid ~= nil then
-					local petUidText = tostring(petUid)
-					local petFolder = inventoryPets and inventoryPets:FindFirstChild(petUidText)
-
-					if not enemy or not petFolder or petFolder:GetAttribute("Target") ~= enemy.Name then
-						positions[petUidText] = root.Position
-					end
-				end
-			end
-
-			return positions
-		end
-
-		local function attackEnemy(enemy)
-			local bridge = getPetEventBridge()
-			if not bridge or not enemy then return end
-
-			local petPositions = getEquippedPetPositions(enemy)
-			if next(petPositions) == nil then return end
-
-			pcall(function()
-				bridge:Fire({
-					Event = "Attack",
-					Enemy = enemy.Name,
-					PetPos = petPositions,
-					AttackType = "All",
-				})
-			end)
 		end
 
 		local function teleportToEnemy(enemy, distance)
@@ -432,15 +362,13 @@ return {
 					Running = false,
 					LoopId = 0,
 					PollDelay = 0.25,
-					AttackDelay = 0.35,
 					TeleportDistance = 7,
 					CurrentTarget = nil,
-					LastAttackAt = 0,
 				},
 
 				Options = {
 					{ Id = "AutoFarmEnemy", Type = "select", Label = "Enemy", Description = "Select enemy to farm", Items = getAutoFarmEnemyItems },
-					{ Id = "AutoFarm", Type = "toggle", Label = "Auto Farm", Description = "Teleports to selected enemies and attacks them" },
+					{ Id = "AutoFarm", Type = "toggle", Label = "Auto Farm", Description = "Teleports to each selected enemy once" },
 				}
 			})
 
@@ -472,24 +400,20 @@ return {
 				return target and target.Parent and getEnemyDisplayName(target) == enemyName
 			end
 
+			function Feature:SetTarget(target)
+				if self.State.CurrentTarget == target then return end
+
+				self.State.CurrentTarget = target
+				if target then teleportToEnemy(target, self.State.TeleportDistance) end
+			end
+
 			function Feature:Tick(values)
 				local enemyName = values and values.AutoFarmEnemy
 				if enemyName == nil or enemyName == "" or enemyName == NO_ENEMY_OPTION then return end
 
 				local target = self.State.CurrentTarget
 				if not self:TargetMatches(target, enemyName) or not isEnemyAlive(target) then
-					target = self:FindTarget(enemyName)
-					self.State.CurrentTarget = target
-				end
-
-				if not target then return end
-
-				teleportToEnemy(target, self.State.TeleportDistance)
-
-				local now = os.clock()
-				if now - self.State.LastAttackAt >= self.State.AttackDelay then
-					self.State.LastAttackAt = now
-					attackEnemy(target)
+					self:SetTarget(self:FindTarget(enemyName))
 				end
 			end
 
@@ -498,7 +422,6 @@ return {
 
 				self.State.Running = true
 				self.State.LoopId = self.State.LoopId + 1
-				self.State.LastAttackAt = 0
 				local id = self.State.LoopId
 
 				task.spawn(function()

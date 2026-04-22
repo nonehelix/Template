@@ -119,6 +119,26 @@ return {
 			print("[AriseCrossover][" .. tostring(scope) .. "] " .. tostring(message))
 		end
 
+		local DebugFlags = {
+			Farm = false,
+		}
+
+		local function farmDebugLog(scope, message)
+			if DebugFlags.Farm then
+				debugLog(scope, message)
+			end
+		end
+
+		local function featureDebugLog(feature, scope, message)
+			if not DebugFlags.Farm then return end
+			if feature and feature.State then
+				if feature.State.LastDebugMessage == message then return end
+				feature.State.LastDebugMessage = message
+			end
+
+			farmDebugLog(scope, message)
+		end
+
 		local function buildAttributeSnapshot(instance)
 			if not instance then return "<missing>" end
 
@@ -389,30 +409,45 @@ return {
 			return enemy and serverFolder and serverFolder:FindFirstChild(enemy.Name) or nil
 		end
 
-		local function isEnemyAlive(enemy)
-			if not enemy or not enemy.Parent then return false end
-			if hasDeadAttribute(enemy) then return false end
-			if not getEnemyRoot(enemy) then return false end
+		local function getEnemyAliveState(enemy, options)
+			options = options or EMPTY_TABLE
+
+			if not enemy or not enemy.Parent then return false, "missing-model" end
+			if hasDeadAttribute(enemy) then return false, "client-dead-attribute" end
+
+			local enemyRoot = getEnemyRoot(enemy)
+			if not enemyRoot then return false, "missing-root" end
 
 			local serverEnemy = getServerEnemy(enemy)
 			if serverEnemy then
-				if hasDeadAttribute(serverEnemy) then return false end
+				if hasDeadAttribute(serverEnemy) then return false, "server-dead-attribute" end
 
 				local serverHealth = getAttributeHealth(serverEnemy)
-				if serverHealth ~= nil and serverHealth <= 0 then return false end
+				if serverHealth ~= nil and serverHealth <= 0 then return false, "server-health-zero" end
+				if serverHealth ~= nil and serverHealth > 0 then return true, "server-health-positive" end
 			end
 
 			local clientAttributeHealth = getAttributeHealth(enemy)
-			if clientAttributeHealth ~= nil and clientAttributeHealth <= 0 then return false end
+			if clientAttributeHealth ~= nil and clientAttributeHealth <= 0 then return false, "client-health-zero" end
+			if clientAttributeHealth ~= nil and clientAttributeHealth > 0 then return true, "client-health-positive" end
 
 			local healthObject = getEnemyHealthObject(enemy)
-			if not healthObject then return false end
-
 			local clientHealth = getEnemyClientHealth(enemy)
-			return clientHealth ~= nil and clientHealth > 0
+			if clientHealth ~= nil and clientHealth <= 0 then return false, "client-healthbar-zero" end
+			if clientHealth ~= nil and clientHealth > 0 then return true, "client-healthbar-positive" end
+			if healthObject then return false, "client-healthbar-unreadable" end
+
+			if options.AllowUnknownHealth then return true, "unknown-health-allowed" end
+			return false, "missing-healthbar"
 		end
 
-		local function findClosestEnemy(matchFn)
+		local function isEnemyAlive(enemy, options)
+			local alive = getEnemyAliveState(enemy, options)
+			return alive == true
+		end
+
+		local function findClosestEnemy(matchFn, options)
+			options = options or EMPTY_TABLE
 			local enemyFolder = getEnemyFolders()
 			if not enemyFolder then return nil end
 
@@ -421,7 +456,86 @@ return {
 			local closestDistance = nil
 
 			for _, enemy in ipairs(enemyFolder:GetChildren()) do
-				if (matchFn == nil or matchFn(enemy)) and isEnemyAlive(enemy) then
+				if matchFn == nil or matchFn(enemy) then
+					local alive = options.IgnoreAlive == true or isEnemyAlive(enemy, options)
+					if alive then
+						local enemyRoot = getEnemyRoot(enemy)
+						if enemyRoot then
+							local distance = characterRoot and (characterRoot.Position - enemyRoot.Position).Magnitude or 0
+							if closestDistance == nil or distance < closestDistance then
+								closestEnemy = enemy
+								closestDistance = distance
+							end
+						end
+					end
+				end
+			end
+
+			return closestEnemy, closestDistance
+		end
+
+		local function describeEnemy(enemy, options)
+			if not enemy then return "nil" end
+
+			options = options or EMPTY_TABLE
+			local alive, reason = getEnemyAliveState(enemy, options)
+			local serverEnemy = getServerEnemy(enemy)
+			local enemyRoot = getEnemyRoot(enemy)
+			local characterRoot = getCharacterRoot()
+			local distance = characterRoot and enemyRoot and (characterRoot.Position - enemyRoot.Position).Magnitude or nil
+
+			local parts = {
+				"Name=" .. tostring(getEnemyDisplayName(enemy)),
+				"Model=" .. tostring(enemy.Name),
+				"Alive=" .. tostring(alive),
+				"Reason=" .. tostring(reason),
+				"ClientHealth=" .. tostring(getEnemyClientHealth(enemy)),
+				"ClientAttrHealth=" .. tostring(getAttributeHealth(enemy)),
+				"ServerHealth=" .. tostring(getAttributeHealth(serverEnemy)),
+				"HasHealthObject=" .. tostring(getEnemyHealthObject(enemy) ~= nil),
+				"Distance=" .. (distance and string.format("%.2f", distance) or "nil"),
+				"Root=" .. (enemyRoot and formatDebugValue(enemyRoot.Position) or "nil"),
+				"Path=" .. enemy:GetFullName(),
+			}
+
+			if options.IncludeAttributes then
+				parts[#parts + 1] = "Attrs={" .. buildAttributeSnapshot(enemy) .. "}"
+				if serverEnemy then
+					parts[#parts + 1] = "ServerAttrs={" .. buildAttributeSnapshot(serverEnemy) .. "}"
+				end
+			end
+
+			return table.concat(parts, " | ")
+		end
+
+		local function getEnemyScanSummary(matchFn, options)
+			options = options or EMPTY_TABLE
+			local enemyFolder = getEnemyFolders()
+			if not enemyFolder then return "enemy-folder-missing" end
+
+			local total, matching, alive = 0, 0, 0
+			local reasons = {}
+			for _, enemy in ipairs(enemyFolder:GetChildren()) do
+				total = total + 1
+				if matchFn == nil or matchFn(enemy) then
+					matching = matching + 1
+					local isAlive, reason = getEnemyAliveState(enemy, options)
+					if isAlive then
+						alive = alive + 1
+					else
+						reasons[reason] = (reasons[reason] or 0) + 1
+					end
+				end
+			end
+
+			local reasonParts = {}
+			for reason, count in pairs(reasons) do
+				reasonParts[#reasonParts + 1] = tostring(reason) .. "=" .. tostring(count)
+			end
+			table.sort(reasonParts)
+
+			return "total=" .. total .. ", matching=" .. matching .. ", alive=" .. alive .. ", rejects={" .. table.concat(reasonParts, ", ") .. "}"
+		end
 					local enemyRoot = getEnemyRoot(enemy)
 					if enemyRoot then
 						local distance = characterRoot and (characterRoot.Position - enemyRoot.Position).Magnitude or 0
@@ -880,11 +994,23 @@ return {
 
 			function Feature:Tick(values)
 				local enemyName = values and values.AutoFarmEnemy
-				if enemyName == nil or enemyName == "" or enemyName == NO_ENEMY_OPTION then return end
+				if enemyName == nil or enemyName == "" or enemyName == NO_ENEMY_OPTION then
+					featureDebugLog(self, "AutoFarm", "Waiting for enemy selection")
+					return
+				end
 
 				local target = self.State.CurrentTarget
 				if not self:TargetMatches(target, enemyName) or not isEnemyAlive(target) then
-					self:SetTarget(self:FindTarget(enemyName))
+					local selectedName = enemyName
+					local newTarget = self:FindTarget(selectedName)
+					if newTarget then
+						featureDebugLog(self, "AutoFarm", "Target selected: " .. describeEnemy(newTarget))
+					else
+						featureDebugLog(self, "AutoFarm", "No alive target for " .. tostring(selectedName) .. " | " .. getEnemyScanSummary(function(enemy)
+							return getEnemyDisplayName(enemy) == selectedName
+						end))
+					end
+					self:SetTarget(newTarget)
 				end
 			end
 
@@ -895,6 +1021,7 @@ return {
 				UseLoopId = true,
 				BeforeStop = function(self)
 					self.State.CurrentTarget = nil
+					self.State.LastDebugMessage = nil
 				end,
 				ExtraHandlers = {
 					AutoFarmEnemy = buildRestartHandler(Feature, "AutoFarm"),
@@ -916,7 +1043,7 @@ return {
 			})
 
 			function Feature:FindTarget()
-				return findClosestEnemy()
+				return findClosestEnemy(nil, {AllowUnknownHealth = true})
 			end
 
 			function Feature:SetTarget(target)
@@ -926,12 +1053,19 @@ return {
 			function Feature:Tick()
 				if not isDungeonInstance() then
 					self.State.CurrentTarget = nil
+					featureDebugLog(self, "AutoDungeon", "Waiting for active dungeon instance | " .. buildDungeonRuntimeSnapshot())
 					return
 				end
 
 				local target = self.State.CurrentTarget
-				if not target or not target.Parent or not isEnemyAlive(target) then
-					self:SetTarget(self:FindTarget())
+				if not target or not target.Parent or not isEnemyAlive(target, {AllowUnknownHealth = true}) then
+					local newTarget = self:FindTarget()
+					if newTarget then
+						featureDebugLog(self, "AutoDungeon", "Target selected: " .. describeEnemy(newTarget, {AllowUnknownHealth = true}))
+					else
+						featureDebugLog(self, "AutoDungeon", "No alive dungeon target | " .. getEnemyScanSummary(nil, {AllowUnknownHealth = true}) .. " | " .. buildDungeonRuntimeSnapshot())
+					end
+					self:SetTarget(newTarget)
 				end
 			end
 
@@ -942,6 +1076,7 @@ return {
 				UseLoopId = true,
 				BeforeStop = function(self)
 					self.State.CurrentTarget = nil
+					self.State.LastDebugMessage = nil
 				end,
 			})
 		end
@@ -1137,6 +1272,64 @@ return {
 				if self.State.LastSnapshot ~= snapshot then
 					self.State.LastSnapshot = snapshot
 					debugLog("DungeonState", snapshot)
+				end
+			end, {
+				RestartOnStart = true,
+				UseLoopId = true,
+				BeforeStop = function(self)
+					self.State.LastSnapshot = nil
+				end,
+			})
+		end
+
+		--==================================================
+		-- FEATURE: DEBUG FARM TARGETING
+		--==================================================
+		do
+			local Feature = RegisterFeature({
+				Key = "DebugFarmTargeting", Tab = "Debug", Section = "Farm", Order = 40,
+				Defaults = {DebugFarmTargeting = false},
+				State = {PanelRef = nil},
+				Options = {
+					{ Id = "DebugFarmTargeting", Type = "toggle", Label = "Debug Farm Targeting", Description = "Logs Auto Farm and Auto Dungeon target decisions" },
+				}
+			})
+
+			function Feature:GetHandlers()
+				return {
+					DebugFarmTargeting = function(value, _, panelRef)
+						setFeaturePanelRef(self, panelRef)
+						DebugFlags.Farm = value == true
+						debugLog("FarmDebug", "Farm targeting debug " .. (DebugFlags.Farm and "enabled" or "disabled"))
+					end,
+				}
+			end
+
+			function Feature:Cleanup()
+				DebugFlags.Farm = false
+				self.State.PanelRef = nil
+			end
+		end
+
+		--==================================================
+		-- FEATURE: DEBUG CLOSEST ENEMY
+		--==================================================
+		do
+			local Feature = RegisterFeature({
+				Key = "DebugClosestEnemy", Tab = "Debug", Section = "Farm", Order = 50,
+				Defaults = {DebugClosestEnemy = false},
+				State = {Running = false, LoopId = 0, PanelRef = nil, PollDelay = DEBUG_POLL_DELAY, LastSnapshot = nil},
+				Options = {
+					{ Id = "DebugClosestEnemy", Type = "toggle", Label = "Monitor Closest Enemy", Description = "Logs closest enemy attributes, health, distance, and path when it changes" },
+				}
+			})
+
+			bindPollingToggleFeature(Feature, "DebugClosestEnemy", function(self)
+				local enemy = findClosestEnemy(nil, {IgnoreAlive = true})
+				local snapshot = enemy and describeEnemy(enemy, {AllowUnknownHealth = true, IncludeAttributes = true}) or "nil"
+				if self.State.LastSnapshot ~= snapshot then
+					self.State.LastSnapshot = snapshot
+					debugLog("ClosestEnemy", snapshot)
 				end
 			end, {
 				RestartOnStart = true,

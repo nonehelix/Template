@@ -1,12 +1,9 @@
 return {
 	Load = function(Shared)
-		local RegisterFeature, RegisterTabs = Shared.RegisterFeature, Shared.RegisterTabs
-		local Players = game:GetService("Players")
-		local ReplicatedStorage = game:GetService("ReplicatedStorage")
-		local Workspace = game:GetService("Workspace")
+		local Workspace, RegisterFeature, RegisterTabs = Shared.Workspace or game:GetService("Workspace"), Shared.RegisterFeature, Shared.RegisterTabs
+		local Players, ReplicatedStorage = game:GetService("Players"), game:GetService("ReplicatedStorage")
+
 		local player = Players.LocalPlayer
-		local NO_ENEMY_OPTION = "Select enemy"
-		local NO_DUNGEON_OPTION = "Select dungeon"
 
 		--==================================================
 		-- TABS
@@ -14,8 +11,48 @@ return {
 		RegisterTabs({{Name = "Combat", Order = 20}, {Name = "Dungeon", Order = 30}})
 
 		--==================================================
+		-- GAME REFERENCES
+		--==================================================
+		local Indexer = ReplicatedStorage:FindFirstChild("Indexer")
+
+		--==================================================
 		-- HELPERS
 		--==================================================
+		local NO_ENEMY_OPTION, NO_DUNGEON_OPTION = "Select enemy", "Select dungeon"
+		local AUTO_CLICK_POLL_DELAY, AUTO_FARM_POLL_DELAY, SHADOW_EXCHANGE_POLL_DELAY = 0.5, 0.25, 0.5
+		local DUNGEON_CREATE_DELAY, DUNGEON_INSTANCE_WAIT, AVAILABLE_DUNGEON_CACHE_TTL = 0.5, 6, 960
+
+		local function getPanelValues(panelRef) return panelRef and panelRef.Config and panelRef.Config.Values or nil end
+
+		local function setFeaturePanelRef(feature, panelRef)
+			feature.State.PanelRef = panelRef
+			return getPanelValues(panelRef)
+		end
+
+		local function buildToggleHandler(feature, onEnabled)
+			return function(value, _, panelRef)
+				setFeaturePanelRef(feature, panelRef)
+				if value then
+					onEnabled(panelRef)
+				else
+					feature:Stop()
+				end
+			end
+		end
+
+		local function buildPanelRefHandler(feature)
+			return function(_, _, panelRef) setFeaturePanelRef(feature, panelRef) end
+		end
+
+		local function buildRestartHandler(feature, enabledKey)
+			return function(_, values, panelRef)
+				setFeaturePanelRef(feature, panelRef)
+				if values and values[enabledKey] then
+					feature:Start(panelRef)
+				end
+			end
+		end
+
 		local function getSettings()
 			return player:WaitForChild("Settings", 10)
 		end
@@ -33,29 +70,13 @@ return {
 		local function setAutoAttack(enabled)
 			local settings = getSettings()
 			if settings then settings:SetAttribute("AutoAttack", enabled == true) end
-
 			setPass("AutoAttack", enabled)
 		end
 
 		local function setAutoClick(enabled)
 			local settings = getSettings()
 			if settings then settings:SetAttribute("AutoClick", enabled == true) end
-
 			setPass("AutoClicker", enabled)
-		end
-
-		local function getShadowExchangeButton()
-			local playerGui = player:FindFirstChild("PlayerGui")
-			local hud = playerGui and playerGui:FindFirstChild("Hud")
-			local leftContainer = hud and hud:FindFirstChild("LeftContainer")
-			return leftContainer and leftContainer:FindFirstChild("ShadowExchange") or nil
-		end
-
-		local function setShadowExchange(enabled)
-			setPass("ShadowExchange", enabled)
-
-			local button = getShadowExchangeButton()
-			if button then button.Visible = enabled == true end
 		end
 
 		local bridgeCache = {}
@@ -67,9 +88,7 @@ return {
 			if not bridgeModule then return nil end
 
 			local ok, bridgeNet = pcall(require, bridgeModule)
-			if not ok or type(bridgeNet) ~= "table" or type(bridgeNet.ReferenceBridge) ~= "function" then
-				return nil
-			end
+			if not ok or type(bridgeNet) ~= "table" or type(bridgeNet.ReferenceBridge) ~= "function" then return nil end
 
 			local bridgeOk, bridge = pcall(function()
 				return bridgeNet.ReferenceBridge(bridgeName)
@@ -94,21 +113,33 @@ return {
 			return ok
 		end
 
-		local function getEnemyRoot(enemy)
-			if not enemy then return nil end
-			return enemy.PrimaryPart or enemy:FindFirstChild("HumanoidRootPart") or enemy:FindFirstChildWhichIsA("BasePart", true)
+		local function getShadowExchangeButton()
+			local playerGui = player:FindFirstChild("PlayerGui")
+			local hud = playerGui and playerGui:FindFirstChild("Hud")
+			local leftContainer = hud and hud:FindFirstChild("LeftContainer")
+			return leftContainer and leftContainer:FindFirstChild("ShadowExchange") or nil
 		end
 
-		local function getEnemyClientFolder()
-			local main = Workspace:FindFirstChild("__Main")
-			local enemies = main and main:FindFirstChild("__Enemies")
-			return enemies and enemies:FindFirstChild("Client") or nil
+		local function setShadowExchange(enabled)
+			setPass("ShadowExchange", enabled)
+
+			local button = getShadowExchangeButton()
+			if button then button.Visible = enabled == true end
 		end
 
-		local function getEnemyServerFolder()
-			local main = Workspace:FindFirstChild("__Main")
-			local enemies = main and main:FindFirstChild("__Enemies")
-			return enemies and enemies:FindFirstChild("Server") or nil
+		local function readValueObject(valueObject)
+			if not valueObject then return nil end
+			if valueObject:IsA("TextLabel") or valueObject:IsA("TextButton") or valueObject:IsA("TextBox") then return valueObject.Text end
+			if valueObject:IsA("StringValue") or valueObject:IsA("NumberValue") or valueObject:IsA("IntValue") then return valueObject.Value end
+			return valueObject:GetAttribute("Text") or valueObject:GetAttribute("Value")
+		end
+
+		local function parseHealthNumber(value)
+			if value == nil then return nil end
+
+			local text = tostring(value):gsub(",", "")
+			local numberText = text:match("%-?%d+%.?%d*")
+			return numberText and tonumber(numberText) or nil
 		end
 
 		local function getCharacterRoot()
@@ -116,18 +147,15 @@ return {
 			return character and character:FindFirstChild("HumanoidRootPart") or nil
 		end
 
-		local function readValueObject(valueObject)
-			if not valueObject then return nil end
+		local function getEnemyRoot(enemy)
+			if not enemy then return nil end
+			return enemy.PrimaryPart or enemy:FindFirstChild("HumanoidRootPart") or enemy:FindFirstChildWhichIsA("BasePart", true)
+		end
 
-			if valueObject:IsA("TextLabel") or valueObject:IsA("TextButton") or valueObject:IsA("TextBox") then
-				return valueObject.Text
-			end
-
-			if valueObject:IsA("StringValue") or valueObject:IsA("NumberValue") or valueObject:IsA("IntValue") then
-				return valueObject.Value
-			end
-
-			return valueObject:GetAttribute("Text") or valueObject:GetAttribute("Value")
+		local function getEnemyFolders()
+			local main = Workspace:FindFirstChild("__Main")
+			local enemies = main and main:FindFirstChild("__Enemies")
+			return enemies and enemies:FindFirstChild("Client") or nil, enemies and enemies:FindFirstChild("Server") or nil
 		end
 
 		local function getEnemyHealthBarMain(enemy)
@@ -139,25 +167,12 @@ return {
 			local main = getEnemyHealthBarMain(enemy)
 			local title = main and main:FindFirstChild("Title")
 			local titleText = readValueObject(title)
-
-			if titleText and tostring(titleText) ~= "" then
-				return tostring(titleText)
-			end
+			if titleText and tostring(titleText) ~= "" then return tostring(titleText) end
 
 			local attributeName = enemy and enemy:GetAttribute("Name")
-			if attributeName and tostring(attributeName) ~= "" then
-				return tostring(attributeName)
-			end
+			if attributeName and tostring(attributeName) ~= "" then return tostring(attributeName) end
 
 			return enemy and enemy.Name or nil
-		end
-
-		local function parseHealthNumber(value)
-			if value == nil then return nil end
-
-			local text = tostring(value):gsub(",", "")
-			local numberText = text:match("%-?%d+%.?%d*")
-			return numberText and tonumber(numberText) or nil
 		end
 
 		local function getEnemyClientHealth(enemy)
@@ -167,7 +182,7 @@ return {
 		end
 
 		local function getServerEnemy(enemy)
-			local serverFolder = getEnemyServerFolder()
+			local _, serverFolder = getEnemyFolders()
 			return enemy and serverFolder and serverFolder:FindFirstChild(enemy.Name) or nil
 		end
 
@@ -193,12 +208,11 @@ return {
 			if knownEnemyNameCache then return knownEnemyNameCache end
 
 			local names = {}
-			local indexer = ReplicatedStorage:FindFirstChild("Indexer")
 			local infoModule = nil
 
-			if indexer then
+			if Indexer then
 				for _, moduleName in ipairs({"EnemiesInfo", "EnemyInfo", "Enemies", "MobsInfo"}) do
-					local candidate = indexer:FindFirstChild(moduleName)
+					local candidate = Indexer:FindFirstChild(moduleName)
 					if candidate and candidate:IsA("ModuleScript") then
 						infoModule = candidate
 						break
@@ -206,14 +220,10 @@ return {
 				end
 			end
 
-			if not infoModule then
-				return names
-			end
+			if not infoModule then return names end
 
 			local ok, enemyInfo = pcall(require, infoModule)
-			if not ok or type(enemyInfo) ~= "table" then
-				return names
-			end
+			if not ok or type(enemyInfo) ~= "table" then return names end
 
 			local seen = {}
 			for _, info in pairs(enemyInfo) do
@@ -231,7 +241,7 @@ return {
 		local function getAutoFarmEnemyItems()
 			local items = {NO_ENEMY_OPTION}
 			local seen = {[NO_ENEMY_OPTION] = true}
-			local enemyFolder = getEnemyClientFolder()
+			local enemyFolder = getEnemyFolders()
 
 			if enemyFolder then
 				for _, enemy in ipairs(enemyFolder:GetChildren()) do
@@ -266,21 +276,20 @@ return {
 			local character = player.Character
 			local enemyRoot = getEnemyRoot(enemy)
 			if not character or not enemyRoot then return end
-
 			character:PivotTo(enemyRoot.CFrame * CFrame.new(0, 0, distance or 7))
 		end
 
 		local dungeonMapsCache = nil
+		local dungeonKeyAliasesCache = nil
 		local dungeonLabelToKey = {}
+		local availableDungeonKeys = {}
+		local availableDungeonUpdatedAt = 0
 
 		local function getDungeonMaps()
 			if dungeonMapsCache then return dungeonMapsCache end
 
-			local indexer = ReplicatedStorage:FindFirstChild("Indexer")
-			local dungeonMapsModule = indexer and indexer:FindFirstChild("DungeonMaps")
-			if not dungeonMapsModule or not dungeonMapsModule:IsA("ModuleScript") then
-				return {}
-			end
+			local dungeonMapsModule = Indexer and Indexer:FindFirstChild("DungeonMaps")
+			if not dungeonMapsModule or not dungeonMapsModule:IsA("ModuleScript") then return {} end
 
 			local ok, dungeonMaps = pcall(require, dungeonMapsModule)
 			if ok and type(dungeonMaps) == "table" then
@@ -293,19 +302,220 @@ return {
 
 		local function getDungeonDisplayName(dungeonKey, dungeonInfo)
 			local name = type(dungeonInfo) == "table" and dungeonInfo.Name or nil
-			if type(name) == "string" and name ~= "" then
-				return name
+			return type(name) == "string" and name ~= "" and name or tostring(dungeonKey)
+		end
+
+		local function addDungeonAlias(aliases, alias, dungeonKey)
+			if alias == nil or dungeonKey == nil then return end
+
+			local text = tostring(alias)
+			if text == "" then return end
+
+			aliases[text] = tostring(dungeonKey)
+			aliases[string.lower(text)] = tostring(dungeonKey)
+		end
+
+		local function getDungeonKeyAliases()
+			if dungeonKeyAliasesCache then return dungeonKeyAliasesCache end
+
+			local aliases = {}
+			for dungeonKey, dungeonInfo in pairs(getDungeonMaps()) do
+				addDungeonAlias(aliases, dungeonKey, dungeonKey)
+				addDungeonAlias(aliases, getDungeonDisplayName(dungeonKey, dungeonInfo), dungeonKey)
+
+				if type(dungeonInfo) == "table" then
+					for _, field in ipairs({"Id", "ID", "Key", "Map", "Dungeon", "DungeonMap"}) do
+						addDungeonAlias(aliases, dungeonInfo[field], dungeonKey)
+					end
+				end
 			end
 
-			return tostring(dungeonKey)
+			dungeonKeyAliasesCache = aliases
+			return aliases
+		end
+
+		local function resolveDungeonKey(value)
+			if value == nil then return nil end
+
+			local valueType = type(value)
+			if valueType ~= "string" and valueType ~= "number" then return nil end
+
+			local text = tostring(value)
+			local aliases = getDungeonKeyAliases()
+			return aliases[text] or aliases[string.lower(text)]
+		end
+
+		local function addAvailableDungeonKey(keys, seen, dungeonKey)
+			dungeonKey = resolveDungeonKey(dungeonKey)
+			if not dungeonKey or seen[dungeonKey] then return end
+
+			seen[dungeonKey] = true
+			keys[#keys + 1] = dungeonKey
+		end
+
+		local function dungeonInfoLooksAvailable(info)
+			if type(info) ~= "table" then return info ~= false and info ~= nil end
+			if info.Available ~= nil then return info.Available == true end
+			if info.Enabled ~= nil then return info.Enabled == true end
+			if info.Active ~= nil then return info.Active == true end
+			if info.Locked == true or info.Disabled == true or info.Completed == true then return false end
+			return true
+		end
+
+		local function collectAvailableDungeonKeys(value, keys, seen, depth)
+			depth = depth or 0
+			if depth > 6 or value == nil then return end
+
+			local directKey = resolveDungeonKey(value)
+			if directKey then
+				addAvailableDungeonKey(keys, seen, directKey)
+				return
+			end
+
+			if type(value) ~= "table" then return end
+
+			for _, field in ipairs({"DungeonMap", "Dungeon", "Map", "Key", "Id", "ID", "Name"}) do
+				addAvailableDungeonKey(keys, seen, value[field])
+			end
+
+			for childKey, childValue in pairs(value) do
+				if dungeonInfoLooksAvailable(childValue) then
+					addAvailableDungeonKey(keys, seen, childKey)
+					collectAvailableDungeonKeys(childValue, keys, seen, depth + 1)
+				end
+			end
+		end
+
+		local function sortDungeonKeys(keys)
+			local dungeonMaps = getDungeonMaps()
+			table.sort(keys, function(a, b)
+				local infoA, infoB = dungeonMaps[a], dungeonMaps[b]
+				local orderA = type(infoA) == "table" and tonumber(infoA.Order) or nil
+				local orderB = type(infoB) == "table" and tonumber(infoB.Order) or nil
+
+				if orderA ~= nil and orderB ~= nil and orderA ~= orderB then return orderA < orderB end
+				if orderA ~= nil and orderB == nil then return true end
+				if orderA == nil and orderB ~= nil then return false end
+				return getDungeonDisplayName(a, infoA) < getDungeonDisplayName(b, infoB)
+			end)
+		end
+
+		local function setAvailableDungeonsFromInfo(info)
+			local keys, seen = {}, {}
+			collectAvailableDungeonKeys(info, keys, seen)
+			sortDungeonKeys(keys)
+
+			availableDungeonKeys = keys
+			availableDungeonUpdatedAt = os.clock()
+			return keys
+		end
+
+		local function readInstanceValue(instance)
+			if not instance then return nil end
+			if instance:IsA("StringValue") or instance:IsA("NumberValue") or instance:IsA("IntValue") then return instance.Value end
+			return nil
+		end
+
+		local function collectAvailableDungeonsFromInstance(instance, keys, seen, depth)
+			depth = depth or 0
+			if not instance or depth > 5 then return end
+
+			addAvailableDungeonKey(keys, seen, readInstanceValue(instance))
+
+			for attrName, attrValue in pairs(instance:GetAttributes()) do
+				if string.find(string.lower(tostring(attrName)), "dungeon", 1, true) then
+					addAvailableDungeonKey(keys, seen, attrName)
+				end
+
+				addAvailableDungeonKey(keys, seen, attrValue)
+			end
+
+			for _, child in ipairs(instance:GetChildren()) do
+				local childName = tostring(child.Name)
+				if childName ~= "__Dungeons" and childName ~= "__DungeonItens" then
+					addAvailableDungeonKey(keys, seen, childName)
+					collectAvailableDungeonsFromInstance(child, keys, seen, depth + 1)
+				end
+			end
+		end
+
+		local function collectAvailableDungeonsFromReplicatedInfo(keys, seen)
+			local infos = ReplicatedStorage:FindFirstChild("__Infos")
+			if not infos then return end
+
+			for _, childName in ipairs({"__AvailableDungeons", "__CurrentDungeons", "__DungeonRotation", "__DungeonMaps", "AvailableDungeons", "CurrentDungeons", "DungeonRotation"}) do
+				local child = infos:FindFirstChild(childName)
+				if child then
+					collectAvailableDungeonsFromInstance(child, keys, seen)
+				end
+			end
+
+			for attrName, attrValue in pairs(infos:GetAttributes()) do
+				if string.find(string.lower(tostring(attrName)), "dungeon", 1, true) then
+					addAvailableDungeonKey(keys, seen, attrName)
+					addAvailableDungeonKey(keys, seen, attrValue)
+				end
+			end
+		end
+
+		local function isVisibleGuiObject(guiObject)
+			local current = guiObject
+			while current do
+				if current:IsA("GuiObject") and current.Visible == false then return false end
+				if current:IsA("ScreenGui") and current.Enabled == false then return false end
+				current = current.Parent
+			end
+
+			return true
+		end
+
+		local function hasDungeonGuiAncestor(guiObject, playerGui)
+			local current = guiObject
+			while current and current ~= playerGui do
+				if string.find(string.lower(tostring(current.Name)), "dungeon", 1, true) then return true end
+				current = current.Parent
+			end
+
+			return false
+		end
+
+		local function collectAvailableDungeonsFromGui(keys, seen)
+			local playerGui = player:FindFirstChild("PlayerGui")
+			if not playerGui then return end
+
+			for _, descendant in ipairs(playerGui:GetDescendants()) do
+				if (descendant:IsA("TextLabel") or descendant:IsA("TextButton")) and hasDungeonGuiAncestor(descendant, playerGui) and isVisibleGuiObject(descendant) then
+					local text = descendant.Text
+					addAvailableDungeonKey(keys, seen, text)
+				end
+			end
+		end
+
+		local function getAvailableDungeonKeys()
+			local keys, seen = {}, {}
+			local cacheIsFresh = availableDungeonUpdatedAt > 0 and os.clock() - availableDungeonUpdatedAt <= AVAILABLE_DUNGEON_CACHE_TTL
+
+			if cacheIsFresh then
+				for _, dungeonKey in ipairs(availableDungeonKeys) do
+					addAvailableDungeonKey(keys, seen, dungeonKey)
+				end
+			end
+
+			if #keys == 0 then
+				collectAvailableDungeonsFromReplicatedInfo(keys, seen)
+				collectAvailableDungeonsFromGui(keys, seen)
+				sortDungeonKeys(keys)
+			end
+
+			return keys
 		end
 
 		local function getDungeonItems()
 			local items = {NO_DUNGEON_OPTION}
-			local sortable = {}
 			dungeonLabelToKey = {}
 
-			for dungeonKey, dungeonInfo in pairs(getDungeonMaps()) do
+			for _, dungeonKey in ipairs(getAvailableDungeonKeys()) do
+				local dungeonInfo = getDungeonMaps()[dungeonKey]
 				local label = getDungeonDisplayName(dungeonKey, dungeonInfo)
 				local uniqueLabel = label
 				local index = 2
@@ -316,46 +526,26 @@ return {
 				end
 
 				dungeonLabelToKey[uniqueLabel] = tostring(dungeonKey)
-				sortable[#sortable + 1] = {
-					Label = uniqueLabel,
-					Order = type(dungeonInfo) == "table" and tonumber(dungeonInfo.Order) or nil,
-				}
-			end
-
-			table.sort(sortable, function(a, b)
-				if a.Order ~= nil and b.Order ~= nil and a.Order ~= b.Order then
-					return a.Order < b.Order
-				end
-
-				if a.Order ~= nil and b.Order == nil then return true end
-				if a.Order == nil and b.Order ~= nil then return false end
-				return a.Label < b.Label
-			end)
-
-			for _, item in ipairs(sortable) do
-				items[#items + 1] = item.Label
+				items[#items + 1] = uniqueLabel
 			end
 
 			return items
 		end
 
 		local function getSelectedDungeonKey(selectedDungeon)
-			if selectedDungeon == nil or selectedDungeon == "" or selectedDungeon == NO_DUNGEON_OPTION then
-				return nil
-			end
+			if selectedDungeon == nil or selectedDungeon == "" or selectedDungeon == NO_DUNGEON_OPTION then return nil end
 
 			local mappedKey = dungeonLabelToKey[selectedDungeon]
 			if mappedKey then return mappedKey end
 
 			getDungeonItems()
-			return dungeonLabelToKey[selectedDungeon] or selectedDungeon
+			return dungeonLabelToKey[selectedDungeon]
 		end
 
 		local function getOwnDungeonInfo()
 			local infos = ReplicatedStorage:FindFirstChild("__Infos")
 			local dungeons = infos and infos:FindFirstChild("__Dungeons")
-			local dungeon = dungeons and dungeons:FindFirstChild(tostring(player.UserId))
-			return dungeon
+			return dungeons and dungeons:FindFirstChild(tostring(player.UserId)) or nil
 		end
 
 		local function waitForOwnDungeonInfo(timeout)
@@ -365,16 +555,13 @@ return {
 				local dungeon = getOwnDungeonInfo()
 				if dungeon then return dungeon end
 				task.wait(0.25)
-			until os.clock() - startedAt >= (timeout or 5)
+			until os.clock() - startedAt >= (timeout or DUNGEON_INSTANCE_WAIT)
 
 			return nil
 		end
 
 		local function sendDungeonAction(action, extraPayload)
-			local payload = {
-				Event = "DungeonAction",
-				Action = action,
-			}
+			local payload = {Event = "DungeonAction", Action = action}
 
 			for key, value in pairs(extraPayload or {}) do
 				payload[key] = value
@@ -383,28 +570,23 @@ return {
 			return fireGeneralEvent(payload)
 		end
 
+		local function updateAvailableDungeonsFromEvent(payload)
+			if type(payload) ~= "table" or payload.Event ~= "OpenDungeon" then return end
+
+			local info = payload.Info or payload.Infos
+			if info ~= nil then
+				setAvailableDungeonsFromInfo(info)
+			end
+		end
+
 		--==================================================
 		-- FEATURE: AUTO CLICK
 		--==================================================
 		do
 			local Feature = RegisterFeature({
-				Key = "AutoClick",
-				Tab = "Combat",
-				Section = "Click",
-				Order = 10,
-
-				Defaults = {
-					AutoClick = false,
-				},
-
-				State = {
-					Running = false,
-					PollDelay = 0.5,
-					CapturedOriginal = false,
-					OriginalAutoClick = nil,
-					OriginalAutoClicker = nil,
-				},
-
+				Key = "AutoClick", Tab = "Combat", Section = "Click", Order = 10,
+				Defaults = {AutoClick = false},
+				State = {Running = false, PanelRef = nil, CapturedOriginal = false, OriginalAutoClick = nil, OriginalAutoClicker = nil},
 				Options = {
 					{ Id = "AutoClick", Type = "toggle", Label = "Auto Click", Description = "Auto clicks attacks" },
 				}
@@ -434,16 +616,23 @@ return {
 				self.State.OriginalAutoClicker = nil
 			end
 
-			function Feature:Start()
+			function Feature:Start(panelRef)
+				setFeaturePanelRef(self, panelRef)
 				if self.State.Running then return end
+
 				self:CaptureOriginalValues()
 				self.State.Running = true
 
 				task.spawn(function()
 					while self.State.Running do
+						local values = getPanelValues(self.State.PanelRef)
+						if not values or values.AutoClick ~= true then break end
+
 						setAutoClick(true)
-						task.wait(self.State.PollDelay)
+						task.wait(AUTO_CLICK_POLL_DELAY)
 					end
+
+					if self.State.Running then self:Stop() end
 				end)
 			end
 
@@ -453,15 +642,12 @@ return {
 			end
 
 			function Feature:GetHandlers()
-				return {
-					AutoClick = function(value)
-						if value then self:Start() else self:Stop() end
-					end,
-				}
+				return {AutoClick = buildToggleHandler(self, function(panelRef) self:Start(panelRef) end)}
 			end
 
 			function Feature:Cleanup()
 				self:Stop()
+				self.State.PanelRef = nil
 			end
 		end
 
@@ -470,15 +656,8 @@ return {
 		--==================================================
 		do
 			local Feature = RegisterFeature({
-				Key = "AutoAttack",
-				Tab = "Combat",
-				Section = "Attack",
-				Order = 20,
-
-				Defaults = {
-					AutoAttack = false,
-				},
-
+				Key = "AutoAttack", Tab = "Combat", Section = "Attack", Order = 20,
+				Defaults = {AutoAttack = false},
 				Options = {
 					{ Id = "AutoAttack", Type = "toggle", Label = "Auto Attack", Description = "Auto attacks enemies" },
 				}
@@ -498,24 +677,9 @@ return {
 		--==================================================
 		do
 			local Feature = RegisterFeature({
-				Key = "AutoFarm",
-				Tab = "Combat",
-				Section = "Farm",
-				Order = 25,
-
-				Defaults = {
-					AutoFarmEnemy = NO_ENEMY_OPTION,
-					AutoFarm = false,
-				},
-
-				State = {
-					Running = false,
-					LoopId = 0,
-					PollDelay = 0.25,
-					TeleportDistance = 7,
-					CurrentTarget = nil,
-				},
-
+				Key = "AutoFarm", Tab = "Combat", Section = "Farm", Order = 25,
+				Defaults = {AutoFarmEnemy = NO_ENEMY_OPTION, AutoFarm = false},
+				State = {Running = false, LoopId = 0, PanelRef = nil, PollDelay = AUTO_FARM_POLL_DELAY, TeleportDistance = 7, CurrentTarget = nil},
 				Options = {
 					{ Id = "AutoFarmEnemy", Type = "select", Label = "Enemy", Description = "Select enemy to farm", Items = getAutoFarmEnemyItems },
 					{ Id = "AutoFarm", Type = "toggle", Label = "Auto Farm", Description = "Teleports to each selected enemy once" },
@@ -523,7 +687,7 @@ return {
 			})
 
 			function Feature:FindTarget(enemyName)
-				local enemyFolder = getEnemyClientFolder()
+				local enemyFolder = getEnemyFolders()
 				if not enemyFolder then return nil end
 
 				local characterRoot = getCharacterRoot()
@@ -567,18 +731,25 @@ return {
 				end
 			end
 
-			function Feature:Start(values)
+			function Feature:Start(panelRef)
+				setFeaturePanelRef(self, panelRef)
 				self:Stop()
+				setFeaturePanelRef(self, panelRef)
 
 				self.State.Running = true
 				self.State.LoopId = self.State.LoopId + 1
-				local id = self.State.LoopId
+				local loopId = self.State.LoopId
 
 				task.spawn(function()
-					while self.State.Running and self.State.LoopId == id do
+					while self.State.Running and self.State.LoopId == loopId do
+						local values = getPanelValues(self.State.PanelRef)
+						if not values or values.AutoFarm ~= true then break end
+
 						self:Tick(values)
 						task.wait(self.State.PollDelay)
 					end
+
+					if self.State.Running and self.State.LoopId == loopId then self:Stop() end
 				end)
 			end
 
@@ -590,18 +761,14 @@ return {
 
 			function Feature:GetHandlers()
 				return {
-					AutoFarm = function(value, values)
-						if value then self:Start(values) else self:Stop() end
-					end,
-					AutoFarmEnemy = function(_, values)
-						self.State.CurrentTarget = nil
-						if values and values.AutoFarm then self:Start(values) end
-					end,
+					AutoFarm = buildToggleHandler(self, function(panelRef) self:Start(panelRef) end),
+					AutoFarmEnemy = buildRestartHandler(self, "AutoFarm"),
 				}
 			end
 
 			function Feature:Cleanup()
 				self:Stop()
+				self.State.PanelRef = nil
 			end
 		end
 
@@ -610,26 +777,29 @@ return {
 		--==================================================
 		do
 			local Feature = RegisterFeature({
-				Key = "DungeonStarter",
-				Tab = "Dungeon",
-				Section = "Dungeon",
-				Order = 10,
-
-				Defaults = {
-					SelectedDungeon = NO_DUNGEON_OPTION,
-				},
-
-				State = {
-					Starting = false,
-					CreateDelay = 0.5,
-					InstanceWait = 6,
-				},
-
+				Key = "DungeonStarter", Tab = "Dungeon", Section = "Dungeon", Order = 10,
+				Defaults = {SelectedDungeon = NO_DUNGEON_OPTION},
+				State = {Starting = false, PanelRef = nil, DungeonEventConnection = nil},
 				Options = {
-					{ Id = "SelectedDungeon", Type = "select", Label = "Dungeon", Description = "Detected dungeons from DungeonMaps", Items = getDungeonItems },
+					{ Id = "SelectedDungeon", Type = "select", Label = "Dungeon", Description = "Currently available dungeons", Items = getDungeonItems },
 					{ Id = "StartDungeon", Type = "button", Label = "Start Dungeon", Description = "Creates and starts selected dungeon", ButtonText = "Start" },
 				}
 			})
+
+			function Feature:Init()
+				if self.State.DungeonEventConnection then return end
+
+				local bridge = getBridge("DUNGEON_EVENT")
+				if not bridge or type(bridge.Connect) ~= "function" then return end
+
+				local ok, connection = pcall(function()
+					return bridge:Connect(updateAvailableDungeonsFromEvent)
+				end)
+
+				if ok then
+					self.State.DungeonEventConnection = connection
+				end
+			end
 
 			function Feature:CreateDungeon(dungeonKey)
 				return sendDungeonAction("Create", {
@@ -647,7 +817,8 @@ return {
 				})
 			end
 
-			function Feature:Run(values)
+			function Feature:Run(panelRef)
+				local values = setFeaturePanelRef(self, panelRef)
 				if self.State.Starting then return end
 
 				local dungeonKey = getSelectedDungeonKey(values and values.SelectedDungeon)
@@ -658,10 +829,10 @@ return {
 				task.spawn(function()
 					if not getOwnDungeonInfo() then
 						self:CreateDungeon(dungeonKey)
-						task.wait(self.State.CreateDelay)
+						task.wait(DUNGEON_CREATE_DELAY)
 					end
 
-					if getOwnDungeonInfo() or waitForOwnDungeonInfo(self.State.InstanceWait) then
+					if getOwnDungeonInfo() or waitForOwnDungeonInfo(DUNGEON_INSTANCE_WAIT) then
 						self:StartDungeon(dungeonKey)
 					end
 
@@ -671,17 +842,21 @@ return {
 
 			function Feature:GetHandlers()
 				return {
-					SelectedDungeon = function()
-						getDungeonItems()
-					end,
-					StartDungeon = function(_, values)
-						self:Run(values)
-					end,
+					SelectedDungeon = buildPanelRefHandler(self),
+					StartDungeon = function(_, _, panelRef) self:Run(panelRef) end,
 				}
 			end
 
 			function Feature:Cleanup()
 				self.State.Starting = false
+				self.State.PanelRef = nil
+
+				if self.State.DungeonEventConnection then
+					pcall(function()
+						self.State.DungeonEventConnection:Disconnect()
+					end)
+					self.State.DungeonEventConnection = nil
+				end
 			end
 		end
 
@@ -690,24 +865,9 @@ return {
 		--==================================================
 		do
 			local Feature = RegisterFeature({
-				Key = "ShadowExchange",
-				Tab = "Combat",
-				Section = "Exchange",
-				Order = 30,
-
-				Defaults = {
-					ShadowExchange = false,
-				},
-
-				State = {
-					Running = false,
-					LoopId = 0,
-					PollDelay = 0.5,
-					CapturedOriginal = false,
-					OriginalPass = nil,
-					OriginalButtonVisible = nil,
-				},
-
+				Key = "ShadowExchange", Tab = "Combat", Section = "Exchange", Order = 30,
+				Defaults = {ShadowExchange = false},
+				State = {Running = false, LoopId = 0, PanelRef = nil, CapturedOriginal = false, OriginalPass = nil, OriginalButtonVisible = nil},
 				Options = {
 					{ Id = "ShadowExchange", Type = "toggle", Label = "Shadow Exchange", Description = "Enables Shadow Exchange" },
 				}
@@ -743,19 +903,26 @@ return {
 				self.State.OriginalButtonVisible = nil
 			end
 
-			function Feature:Start()
+			function Feature:Start(panelRef)
+				setFeaturePanelRef(self, panelRef)
 				self:Stop()
+				setFeaturePanelRef(self, panelRef)
 				self:CaptureOriginalValues()
 
 				self.State.Running = true
 				self.State.LoopId = self.State.LoopId + 1
-				local id = self.State.LoopId
+				local loopId = self.State.LoopId
 
 				task.spawn(function()
-					while self.State.Running and self.State.LoopId == id do
+					while self.State.Running and self.State.LoopId == loopId do
+						local values = getPanelValues(self.State.PanelRef)
+						if not values or values.ShadowExchange ~= true then break end
+
 						setShadowExchange(true)
-						task.wait(self.State.PollDelay)
+						task.wait(SHADOW_EXCHANGE_POLL_DELAY)
 					end
+
+					if self.State.Running and self.State.LoopId == loopId then self:Stop() end
 				end)
 			end
 
@@ -766,17 +933,13 @@ return {
 			end
 
 			function Feature:GetHandlers()
-				return {
-					ShadowExchange = function(value)
-						if value then self:Start() else self:Stop() end
-					end,
-				}
+				return {ShadowExchange = buildToggleHandler(self, function(panelRef) self:Start(panelRef) end)}
 			end
 
 			function Feature:Cleanup()
 				self:Stop()
+				self.State.PanelRef = nil
 			end
 		end
-
 	end
 }

@@ -6,11 +6,12 @@ return {
 		local Workspace = game:GetService("Workspace")
 		local player = Players.LocalPlayer
 		local NO_ENEMY_OPTION = "Select enemy"
+		local NO_DUNGEON_OPTION = "Select dungeon"
 
 		--==================================================
 		-- TABS
 		--==================================================
-		RegisterTabs({{Name = "Combat", Order = 20}})
+		RegisterTabs({{Name = "Combat", Order = 20}, {Name = "Dungeon", Order = 30}})
 
 		--==================================================
 		-- HELPERS
@@ -55,6 +56,42 @@ return {
 
 			local button = getShadowExchangeButton()
 			if button then button.Visible = enabled == true end
+		end
+
+		local bridgeCache = {}
+
+		local function getBridge(bridgeName)
+			if bridgeCache[bridgeName] ~= nil then return bridgeCache[bridgeName] end
+
+			local bridgeModule = ReplicatedStorage:FindFirstChild("BridgeNet2")
+			if not bridgeModule then return nil end
+
+			local ok, bridgeNet = pcall(require, bridgeModule)
+			if not ok or type(bridgeNet) ~= "table" or type(bridgeNet.ReferenceBridge) ~= "function" then
+				return nil
+			end
+
+			local bridgeOk, bridge = pcall(function()
+				return bridgeNet.ReferenceBridge(bridgeName)
+			end)
+
+			if bridgeOk then
+				bridgeCache[bridgeName] = bridge
+				return bridge
+			end
+
+			return nil
+		end
+
+		local function fireGeneralEvent(payload)
+			local bridge = getBridge("GENERAL_EVENT")
+			if not bridge or type(payload) ~= "table" then return false end
+
+			local ok = pcall(function()
+				bridge:Fire(payload)
+			end)
+
+			return ok
 		end
 
 		local function getEnemyRoot(enemy)
@@ -231,6 +268,119 @@ return {
 			if not character or not enemyRoot then return end
 
 			character:PivotTo(enemyRoot.CFrame * CFrame.new(0, 0, distance or 7))
+		end
+
+		local dungeonMapsCache = nil
+		local dungeonLabelToKey = {}
+
+		local function getDungeonMaps()
+			if dungeonMapsCache then return dungeonMapsCache end
+
+			local indexer = ReplicatedStorage:FindFirstChild("Indexer")
+			local dungeonMapsModule = indexer and indexer:FindFirstChild("DungeonMaps")
+			if not dungeonMapsModule or not dungeonMapsModule:IsA("ModuleScript") then
+				return {}
+			end
+
+			local ok, dungeonMaps = pcall(require, dungeonMapsModule)
+			if ok and type(dungeonMaps) == "table" then
+				dungeonMapsCache = dungeonMaps
+				return dungeonMapsCache
+			end
+
+			return {}
+		end
+
+		local function getDungeonDisplayName(dungeonKey, dungeonInfo)
+			local name = type(dungeonInfo) == "table" and dungeonInfo.Name or nil
+			if type(name) == "string" and name ~= "" then
+				return name
+			end
+
+			return tostring(dungeonKey)
+		end
+
+		local function getDungeonItems()
+			local items = {NO_DUNGEON_OPTION}
+			local sortable = {}
+			dungeonLabelToKey = {}
+
+			for dungeonKey, dungeonInfo in pairs(getDungeonMaps()) do
+				local label = getDungeonDisplayName(dungeonKey, dungeonInfo)
+				local uniqueLabel = label
+				local index = 2
+
+				while dungeonLabelToKey[uniqueLabel] ~= nil do
+					uniqueLabel = label .. " (" .. tostring(index) .. ")"
+					index = index + 1
+				end
+
+				dungeonLabelToKey[uniqueLabel] = tostring(dungeonKey)
+				sortable[#sortable + 1] = {
+					Label = uniqueLabel,
+					Order = type(dungeonInfo) == "table" and tonumber(dungeonInfo.Order) or nil,
+				}
+			end
+
+			table.sort(sortable, function(a, b)
+				if a.Order ~= nil and b.Order ~= nil and a.Order ~= b.Order then
+					return a.Order < b.Order
+				end
+
+				if a.Order ~= nil and b.Order == nil then return true end
+				if a.Order == nil and b.Order ~= nil then return false end
+				return a.Label < b.Label
+			end)
+
+			for _, item in ipairs(sortable) do
+				items[#items + 1] = item.Label
+			end
+
+			return items
+		end
+
+		local function getSelectedDungeonKey(selectedDungeon)
+			if selectedDungeon == nil or selectedDungeon == "" or selectedDungeon == NO_DUNGEON_OPTION then
+				return nil
+			end
+
+			local mappedKey = dungeonLabelToKey[selectedDungeon]
+			if mappedKey then return mappedKey end
+
+			getDungeonItems()
+			return dungeonLabelToKey[selectedDungeon] or selectedDungeon
+		end
+
+		local function getOwnDungeonInfo()
+			local infos = ReplicatedStorage:FindFirstChild("__Infos")
+			local dungeons = infos and infos:FindFirstChild("__Dungeons")
+			local dungeon = dungeons and dungeons:FindFirstChild(tostring(player.UserId))
+			return dungeon
+		end
+
+		local function waitForOwnDungeonInfo(timeout)
+			local startedAt = os.clock()
+
+			repeat
+				local dungeon = getOwnDungeonInfo()
+				if dungeon then return dungeon end
+				task.wait(0.25)
+			until os.clock() - startedAt >= (timeout or 5)
+
+			return nil
+		end
+
+		local function sendDungeonAction(action, extraPayload)
+			local payload = {
+				Event = "DungeonAction",
+				Action = action,
+			}
+
+			for key, value in pairs(extraPayload or {}) do
+				payload[key] = value
+			end
+
+			return fireGeneralEvent(payload)
 		end
 
 		--==================================================
@@ -452,6 +602,86 @@ return {
 
 			function Feature:Cleanup()
 				self:Stop()
+			end
+		end
+
+		--==================================================
+		-- FEATURE: DUNGEON STARTER
+		--==================================================
+		do
+			local Feature = RegisterFeature({
+				Key = "DungeonStarter",
+				Tab = "Dungeon",
+				Section = "Dungeon",
+				Order = 10,
+
+				Defaults = {
+					SelectedDungeon = NO_DUNGEON_OPTION,
+				},
+
+				State = {
+					Starting = false,
+					CreateDelay = 0.5,
+					InstanceWait = 6,
+				},
+
+				Options = {
+					{ Id = "SelectedDungeon", Type = "select", Label = "Dungeon", Description = "Detected dungeons from DungeonMaps", Items = getDungeonItems },
+					{ Id = "StartDungeon", Type = "button", Label = "Start Dungeon", Description = "Creates and starts selected dungeon", ButtonText = "Start" },
+				}
+			})
+
+			function Feature:CreateDungeon(dungeonKey)
+				return sendDungeonAction("Create", {
+					Dungeon = dungeonKey,
+					DungeonMap = dungeonKey,
+					Map = dungeonKey,
+				})
+			end
+
+			function Feature:StartDungeon(dungeonKey)
+				return sendDungeonAction("Start", {
+					Dungeon = player.UserId,
+					DungeonMap = dungeonKey,
+					Map = dungeonKey,
+				})
+			end
+
+			function Feature:Run(values)
+				if self.State.Starting then return end
+
+				local dungeonKey = getSelectedDungeonKey(values and values.SelectedDungeon)
+				if not dungeonKey then return end
+
+				self.State.Starting = true
+
+				task.spawn(function()
+					if not getOwnDungeonInfo() then
+						self:CreateDungeon(dungeonKey)
+						task.wait(self.State.CreateDelay)
+					end
+
+					if getOwnDungeonInfo() or waitForOwnDungeonInfo(self.State.InstanceWait) then
+						self:StartDungeon(dungeonKey)
+					end
+
+					self.State.Starting = false
+				end)
+			end
+
+			function Feature:GetHandlers()
+				return {
+					SelectedDungeon = function()
+						getDungeonItems()
+					end,
+					StartDungeon = function(_, values)
+						self:Run(values)
+					end,
+				}
+			end
+
+			function Feature:Cleanup()
+				self.State.Starting = false
 			end
 		end
 

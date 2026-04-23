@@ -1517,11 +1517,14 @@ return {
 			})
 
 			function Feature:Run(panelRef)
-				setFeaturePanelRef(self, panelRef)
-				if not lastStartedDungeonInfo then return end
+				local values = setFeaturePanelRef(self, panelRef)
+				local dungeonInfo = lastStartedDungeonInfo or getSelectedDungeonInfo(values and values.SelectedDungeon)
+				if not dungeonInfo then
+					return
+				end
 
 				local started = runFeatureTask(self, "Restarting", function()
-					startDungeonInstance(lastStartedDungeonInfo)
+					startDungeonInstance(dungeonInfo)
 				end)
 
 				if started then

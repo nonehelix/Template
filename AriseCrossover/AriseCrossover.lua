@@ -1278,7 +1278,7 @@ return {
 		--==================================================
 		do
 			local Feature = RegisterFeature({
-				Key = "AutoDungeon", Tab = "Dungeon", Section = "Farm", Order = 20,
+				Key = "AutoDungeon", Tab = "Dungeon", Section = "Farm", Order = 15,
 				Defaults = {AutoDungeon = false},
 				State = newTargetingState(),
 				Options = {
@@ -1354,7 +1354,7 @@ return {
 		--==================================================
 		do
 			local Feature = RegisterFeature({
-				Key = "DungeonRestart", Tab = "Dungeon", Section = "Dungeon", Order = 15,
+				Key = "DungeonRestart", Tab = "Dungeon", Section = "Dungeon", Order = 20,
 				Defaults = {AutoRestartDungeon = false},
 				State = {Running = false, LoopId = 0, PanelRef = nil, SawDungeonEnd = false, Restarting = false},
 				Options = {

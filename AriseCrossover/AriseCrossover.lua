@@ -327,10 +327,6 @@ return {
 			return requireIndexerModule({"EnemyInfo", "EnemiesInfo", "Enemies", "MobsInfo"})
 		end
 
-		local function getMapInfoConfig()
-			return requireIndexerModule({"MapInfo", "MapsInfo"})
-		end
-
 		local function addInternalEnemyMapping(lookups, internalName, displayName)
 			internalName = tostring(internalName or "")
 			displayName = tostring(displayName or "")
@@ -583,240 +579,13 @@ return {
 			items[#items + 1] = enemyName
 		end
 
-		local ignoredMapEnemyKeys = {
-			DungeonSpawns = true,
-			Dungeons = true,
-			Image = true,
-			Name = true,
-			Order = true,
-		}
-
-		local function collectMapEnemyInternalNames(source, items, seen)
-			if type(source) ~= "table" then return end
-
-			for key, value in pairs(source) do
-				if type(value) == "string" then
-					if not seen[value] then
-						seen[value] = true
-						items[#items + 1] = value
-					end
-				elseif type(value) == "table" and not ignoredMapEnemyKeys[key] then
-					collectMapEnemyInternalNames(value, items, seen)
-				end
-			end
-		end
-
-		local function getMapEnemyInternalNames(mapInfo)
-			local items = {}
-			collectMapEnemyInternalNames(mapInfo, items, {})
-			table.sort(items)
-			return items
-		end
-
-		local function collectMapEnemyItems(mapInfo, items, seen)
-			for _, internalName in ipairs(getMapEnemyInternalNames(mapInfo)) do
-				for _, enemyName in ipairs(getEnemyDisplayNamesForInternalName(internalName)) do
-					addEnemyItem(items, seen, enemyName)
-				end
-			end
-		end
-
-		local function getCurrentWorldOrder()
-			return tonumber(ReplicatedStorage:GetAttribute("World")
-				or ReplicatedStorage:GetAttribute("CurrentWorld")
-				or ReplicatedStorage:GetAttribute("WorldId")
-				or ReplicatedStorage:GetAttribute("WorldID")
-				or player:GetAttribute("World")
-				or player:GetAttribute("CurrentWorld")
-				or player:GetAttribute("WorldId")
-				or player:GetAttribute("WorldID"))
-		end
-
-		local function getCurrentMapName()
-			local mapName = ReplicatedStorage:GetAttribute("MapName")
-				or ReplicatedStorage:GetAttribute("Map")
-				or ReplicatedStorage:GetAttribute("CurrentMap")
-				or ReplicatedStorage:GetAttribute("CurrentMapName")
-				or ReplicatedStorage:GetAttribute("WorldName")
-				or player:GetAttribute("MapName")
-				or player:GetAttribute("Map")
-				or player:GetAttribute("CurrentMap")
-				or player:GetAttribute("CurrentMapName")
-				or player:GetAttribute("WorldName")
-
-			mapName = mapName and tostring(mapName) or nil
-			return mapName ~= "" and mapName or nil
-		end
-
-		local function isMapInfoEntry(value)
-			return type(value) == "table" and (value.Name ~= nil or value.Order ~= nil or value.Dungeons ~= nil)
-		end
-
-		local function getMapInfoEntries()
-			local mapInfo = getMapInfoConfig()
-			local entries = {}
-
-			if type(mapInfo) ~= "table" then return entries end
-			if isMapInfoEntry(mapInfo) then
-				return {{Key = "MapInfo", Info = mapInfo}}
-			end
-
-			for key, info in pairs(mapInfo) do
-				if isMapInfoEntry(info) then
-					entries[#entries + 1] = {Key = key, Info = info}
-				end
-			end
-
-			table.sort(entries, function(a, b)
-				local orderA = tonumber(a.Info.Order)
-				local orderB = tonumber(b.Info.Order)
-				if orderA ~= nil and orderB ~= nil and orderA ~= orderB then return orderA < orderB end
-				return tostring(a.Info.Name or a.Key) < tostring(b.Info.Name or b.Key)
-			end)
-
-			return entries
-		end
-
-		local function getEnemyCandidateKeys(enemy)
-			local keys = {}
-			for _, value in ipairs({
-				enemy and enemy:GetAttribute("Id"),
-				enemy and enemy:GetAttribute("ID"),
-				enemy and enemy:GetAttribute("Model"),
-				enemy and enemy:GetAttribute("Name"),
-				enemy and enemy.Name,
-				getEnemyDisplayName(enemy),
-			}) do
-				value = tostring(value or "")
-				if value ~= "" then
-					keys[#keys + 1] = value
-				end
-			end
-			return keys
-		end
-
-		local function getMapEnemySets(mapInfo)
-			local internalSet = {}
-			local displaySet = {}
-
-			for _, internalName in ipairs(getMapEnemyInternalNames(mapInfo)) do
-				internalSet[tostring(internalName)] = true
-				for _, displayName in ipairs(getEnemyDisplayNamesForInternalName(internalName)) do
-					displaySet[tostring(displayName)] = true
-				end
-			end
-
-			return internalSet, displaySet
-		end
-
-		local function scoreMapInfoByServerEnemies(mapInfo)
-			local internalSet, displaySet = getMapEnemySets(mapInfo)
-			local score = 0
-
-			for _, enemy in ipairs(getServerEnemyCandidates()) do
-				for _, key in ipairs(getEnemyCandidateKeys(enemy)) do
-					if internalSet[key] or displaySet[key] then
-						score = score + 1
-						break
-					end
-				end
-			end
-
-			return score
-		end
-
-		local function getNearestDungeonSpawnDistance(mapInfo)
-			local characterRoot = getCharacterRoot()
-			local spawns = type(mapInfo) == "table" and mapInfo.DungeonSpawns or nil
-			if not characterRoot or type(spawns) ~= "table" then return nil end
-
-			local nearest = nil
-			for _, spawnCFrame in ipairs(spawns) do
-				if typeof(spawnCFrame) == "CFrame" then
-					local distance = (characterRoot.Position - spawnCFrame.Position).Magnitude
-					if nearest == nil or distance < nearest then
-						nearest = distance
-					end
-				end
-			end
-
-			return nearest
-		end
-
-		local function resolveCurrentMapInfo()
-			local entries = getMapInfoEntries()
-			if #entries == 0 then return nil end
-
-			if #entries == 1 then
-				local entry = entries[1]
-				return entry.Info
-			end
-
-			local currentOrder = getCurrentWorldOrder()
-			local currentMapName = getCurrentMapName()
-
-			for _, entry in ipairs(entries) do
-				local info = entry.Info
-				if currentOrder ~= nil and (tonumber(entry.Key) == currentOrder or tonumber(info.Order) == currentOrder or tonumber(info.World) == currentOrder) then
-					return info
-				end
-
-				if currentMapName ~= nil and (tostring(entry.Key) == currentMapName or tostring(info.Name) == currentMapName) then
-					return info
-				end
-			end
-
-			local bestByEnemies = nil
-			local bestEnemyScore = nil
-			for _, entry in ipairs(entries) do
-				local score = scoreMapInfoByServerEnemies(entry.Info)
-				if score > 0 and (bestEnemyScore == nil or score > bestEnemyScore) then
-					bestByEnemies = entry
-					bestEnemyScore = score
-				end
-			end
-			if bestByEnemies then
-				return bestByEnemies.Info
-			end
-
-			local bestBySpawn = nil
-			local bestSpawnDistance = nil
-			for _, entry in ipairs(entries) do
-				local distance = getNearestDungeonSpawnDistance(entry.Info)
-				if distance ~= nil and (bestSpawnDistance == nil or distance < bestSpawnDistance) then
-					bestBySpawn = entry
-					bestSpawnDistance = distance
-				end
-			end
-			if bestBySpawn then
-				return bestBySpawn.Info
-			end
-
-			return nil
-		end
-
-		local function getCurrentMapInfo()
-			return resolveCurrentMapInfo()
-		end
-
 		local function getAutoFarmEnemyItems()
 			local items = {ALL_OPTION}
 			local seen = {[ALL_OPTION] = true}
 
-			collectMapEnemyItems(getCurrentMapInfo(), items, seen)
-
-			if #items == 1 then
-				for _, enemyName in ipairs(getAllKnownEnemyNames()) do
-					addEnemyItem(items, seen, enemyName)
-				end
+			for _, enemyName in ipairs(getAllKnownEnemyNames()) do
+				addEnemyItem(items, seen, enemyName)
 			end
-
-			table.sort(items, function(a, b)
-				if a == b then return false end
-				if a == ALL_OPTION then return true end
-				if b == ALL_OPTION then return false end
-				return a < b
-			end)
 
 			return items
 		end
@@ -1273,7 +1042,7 @@ return {
 				Defaults = {AutoFarmEnemy = {}, AutoFarm = false},
 				State = newTargetingState(),
 				Options = {
-					{ Id = "AutoFarmEnemy", Type = "multiselect", Label = "Enemy", Description = "Select enemies to farm", Items = getAutoFarmEnemyItems, EmptyText = "Nothing selected" },
+					{ Id = "AutoFarmEnemy", Type = "multiselect", Label = "Enemy", Description = "Select enemies to farm", Items = getAutoFarmEnemyItems, EmptyText = "Nothing selected", Searchable = true },
 					{ Id = "AutoFarm", Type = "toggle", Label = "Auto Farm", Description = "Teleports to the closest selected enemy and retargets on death" },
 				}
 			})

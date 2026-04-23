@@ -1191,12 +1191,11 @@ return {
 		do
 			local Feature = RegisterFeature({
 				Key = "AutoFarm", Tab = "Auto Farm", Order = 25,
-				Defaults = {AutoFarmZone = NO_ZONE_OPTION, AutoFarmEnemy = {}, AutoFarm = false, AutoFarmDebug = false},
+				Defaults = {AutoFarmZone = NO_ZONE_OPTION, AutoFarmEnemy = {}, AutoFarm = false},
 				State = newTargetingState(),
 				Options = {
 					{ Id = "AutoFarmZone", Type = "select", Label = "Zone", Description = "Select zone enemy list", Items = getAutoFarmZoneItems },
 					{ Id = "AutoFarmEnemy", Type = "multiselect", Label = "Enemy", Description = "Select enemies to farm", Items = getAutoFarmEnemyItems, EmptyText = "Nothing selected" },
-					{ Id = "AutoFarmDebug", Type = "toggle", Label = "Target Debug", Description = "Logs Auto Farm target matching info" },
 					{ Id = "AutoFarm", Type = "toggle", Label = "Auto Farm", Description = "Teleports to the closest selected enemy and retargets on death" },
 				}
 			})
@@ -1216,60 +1215,6 @@ return {
 				end
 
 				self.State.ZoneInitialized = true
-			end
-
-			function Feature:DebugEnabled(values)
-				return values and values.AutoFarmDebug == true
-			end
-
-			function Feature:DebugOnce(values, key, message)
-				if not self:DebugEnabled(values) then
-					self.State.LastDebugKey = nil
-					return
-				end
-
-				key = tostring(key or message or "")
-				if key == "" or self.State.LastDebugKey == key then
-					return
-				end
-
-				self.State.LastDebugKey = key
-				warn("[AutoFarm] " .. tostring(message or key))
-			end
-
-			function Feature:DescribeEnemy(enemy)
-				if not enemy then
-					return "nil"
-				end
-
-				local parts = {}
-				for _, value in ipairs({
-					getResolvedEnemyDisplayName(enemy),
-					getEnemyDisplayName(enemy),
-					enemy:GetAttribute("Id"),
-					enemy:GetAttribute("ID"),
-					enemy:GetAttribute("Model"),
-					enemy:GetAttribute("Name"),
-					enemy.Name,
-				}) do
-					value = tostring(value or "")
-					if value ~= "" and not arrayContains(parts, value) then
-						parts[#parts + 1] = value
-					end
-				end
-
-				return table.concat(parts, " | ")
-			end
-
-			function Feature:GetDebugCandidateSummary(limit)
-				local items = {}
-				for index, enemy in ipairs(getServerEnemyCandidates()) do
-					items[#items + 1] = self:DescribeEnemy(enemy)
-					if index >= (limit or 8) then
-						break
-					end
-				end
-				return table.concat(items, " ; ")
 			end
 
 			function Feature:MatchesSelection(enemy, selectedEnemies)
@@ -1292,39 +1237,17 @@ return {
 				return false
 			end
 
-			function Feature:GetMatchFn(selectedEnemies)
-				if arrayContains(selectedEnemies, ALL_OPTION) then return nil end
-				return function(enemy)
-					return self:MatchesSelection(enemy, selectedEnemies)
-				end
-			end
-
-			function Feature:TargetMatches(target, selectedEnemies)
-				return target and target.Parent and self:MatchesSelection(target, selectedEnemies)
-			end
-
 			function Feature:Tick(values)
 				local selectedEnemies = normalizeSelectionArray(values and values.AutoFarmEnemy)
-				if #selectedEnemies == 0 then
-					self:DebugOnce(values, "no-selection", "No enemies selected")
-					return
-				end
+				if #selectedEnemies == 0 then return end
 
 				local target = self.State.CurrentTarget
-				if not self:TargetMatches(target, selectedEnemies) or not isTargetAlive(target) then
-					local newTarget = findClosestServerTarget(self:GetMatchFn(selectedEnemies))
-					setFeatureTarget(self, newTarget)
+				local matchFn = arrayContains(selectedEnemies, ALL_OPTION) and nil or function(enemy)
+					return self:MatchesSelection(enemy, selectedEnemies)
+				end
 
-					if newTarget then
-						local targetId = newTarget.GetDebugId and newTarget:GetDebugId() or newTarget
-						self:DebugOnce(values, "target:" .. tostring(targetId), "Target: " .. self:DescribeEnemy(newTarget))
-					else
-						self:DebugOnce(
-							values,
-							"no-target:" .. table.concat(selectedEnemies, ","),
-							"No target for [" .. table.concat(selectedEnemies, ", ") .. "] | Candidates: " .. self:GetDebugCandidateSummary(8)
-						)
-					end
+				if not (target and target.Parent and self:MatchesSelection(target, selectedEnemies)) or not isTargetAlive(target) then
+					setFeatureTarget(self, findClosestServerTarget(matchFn))
 				end
 			end
 
@@ -1335,7 +1258,6 @@ return {
 				UseLoopId = true,
 				BeforeStop = function(self)
 					setFeatureTarget(self, nil)
-					self.State.LastDebugKey = nil
 				end,
 				ExtraHandlers = {
 					AutoFarmZone = function(value, _, panelRef)

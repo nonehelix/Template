@@ -8,7 +8,7 @@ return {
 		--==================================================
 		-- TABS
 		--==================================================
-		RegisterTabs({{Name = "Combat", Order = 20}, {Name = "Dungeon", Order = 30}, {Name = "Time Trial", Order = 40}, {Name = "Teleport", Order = 50}})
+		RegisterTabs({{Name = "Combat", Order = 20}, {Name = "Auto Farm", Order = 25}, {Name = "Dungeon", Order = 30}, {Name = "Time Trial", Order = 40}, {Name = "Teleport", Order = 50}})
 
 		--==================================================
 		-- HELPERS
@@ -1196,7 +1196,7 @@ return {
 		--==================================================
 		do
 			local Feature = RegisterFeature({
-				Key = "AutoFarm", Tab = "Combat", Order = 25,
+				Key = "AutoFarm", Tab = "Auto Farm", Order = 25,
 				Defaults = {AutoFarmZone = NO_ZONE_OPTION, AutoFarmEnemy = {}, AutoFarm = false},
 				State = newTargetingState(),
 				Options = {

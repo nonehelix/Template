@@ -24,8 +24,9 @@ return {
 		local AUTO_CLICK_POLL_DELAY, AUTO_FARM_POLL_DELAY, SHADOW_EXCHANGE_POLL_DELAY, DEBUG_POLL_DELAY = 0.5, 0.25, 0.5, 1
 		local DUNGEON_CREATE_DELAY, DUNGEON_INSTANCE_WAIT = 0.5, 6
 		local TELEPORT_SPAWN_NAMES = {"Arena", "JejuEvent", "JungleEvent", "WinterEvent", "XmasWorld"}
+		local GUILD_HALL_LOCATION = "Guild Hall"
 		local TELEPORT_STATIC_LOCATIONS = {
-			["Guild Hall"] = CFrame.new(9557.8457, -204.696213, 106.217346),
+			[GUILD_HALL_LOCATION] = CFrame.new(9557.8457, -204.696213, 106.217346, 1, 0, 0, 0, 1, 0, 0, 0, 1) * CFrame.Angles(0, math.pi, 0),
 		}
 
 		local function newTargetingState()
@@ -784,6 +785,28 @@ return {
 			return getTeleportSpawnCFrame(getSelectedTeleportSpawn(selectedLocation))
 		end
 
+		local function teleportToSavedLocation(selectedLocation)
+			local cframe = getTeleportLocationCFrame(selectedLocation)
+			local character = player.Character
+			if not character or not cframe then return false end
+
+			local inGuild = selectedLocation == GUILD_HALL_LOCATION
+			character:SetAttribute("InTp", true)
+			if inGuild then
+				character:SetAttribute("InGuild", true)
+				task.defer(function()
+					fireGeneralEvent({Event = "MountAction", Action = "Dismount"})
+				end)
+			end
+
+			task.wait(0.25)
+			character:PivotTo(cframe)
+			task.wait(0.5)
+			character:SetAttribute("InGuild", inGuild)
+			character:SetAttribute("InTp", false)
+			return true
+		end
+
 		local dungeonLabelToInfo = {}
 
 		local function getLiveDungeonFolder()
@@ -1347,7 +1370,7 @@ return {
 			local Feature = RegisterFeature({
 				Key = "SpawnTeleport", Tab = "Teleport", Section = "Spawns", Order = 10,
 				Defaults = {SelectedTeleportLocation = NO_TELEPORT_OPTION},
-				State = {PanelRef = nil},
+				State = {PanelRef = nil, Teleporting = false},
 				Options = {
 					{ Id = "SelectedTeleportLocation", Type = "select", Label = "Location", Description = "Select a spawn location", Items = getTeleportSpawnItems },
 					{ Id = "TeleportToLocation", Type = "button", Label = "Teleport", Description = "Teleports to the selected location", ButtonText = "Teleport" },
@@ -1356,11 +1379,16 @@ return {
 
 			function Feature:Run(panelRef)
 				local values = setFeaturePanelRef(self, panelRef)
-				local cframe = getTeleportLocationCFrame(values and values.SelectedTeleportLocation)
-				local character = player.Character
-				if not character or not cframe then return end
+				local selectedLocation = values and values.SelectedTeleportLocation
+				if self.State.Teleporting or selectedLocation == nil or selectedLocation == NO_TELEPORT_OPTION then return end
 
-				character:PivotTo(cframe)
+				self.State.Teleporting = true
+				task.spawn(function()
+					pcall(function()
+						teleportToSavedLocation(selectedLocation)
+					end)
+					self.State.Teleporting = false
+				end)
 			end
 
 			function Feature:GetHandlers()
@@ -1372,6 +1400,7 @@ return {
 
 			function Feature:Cleanup()
 				self.State.PanelRef = nil
+				self.State.Teleporting = false
 			end
 		end
 

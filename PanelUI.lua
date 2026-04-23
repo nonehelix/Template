@@ -125,6 +125,20 @@ local function formatMultiSelectLabel(values, emptyText)
 	return text
 end
 
+local function shouldSearchDropdown(option, itemCount)
+	if option.Searchable ~= nil then
+		return option.Searchable == true
+	end
+
+	return (itemCount or 0) > 20
+end
+
+local function matchesSearchText(text, query)
+	query = string.lower(tostring(query or ""))
+	if query == "" then return true end
+	return string.find(string.lower(tostring(text or "")), query, 1, true) ~= nil
+end
+
 local function clampNumber(value, minValue, maxValue)
 	value = tonumber(value)
 	if value == nil then
@@ -1063,7 +1077,7 @@ function Panel:CreateButton(row, option)
 	})
 end
 
-function Panel:CreateDropdownBase(button, itemCount)
+function Panel:CreateDropdownBase(button, itemCount, searchable)
 	local Theme = self:GetTheme()
 	local dropdownBag = NewCleanupBag()
 
@@ -1082,8 +1096,9 @@ function Panel:CreateDropdownBase(button, itemCount)
 	local viewport = self.Workspace.CurrentCamera and self.Workspace.CurrentCamera.ViewportSize or Vector2.new(1920, 1080)
 
 	local maxVisible = math.min(itemCount, 6)
-	local dropdownHeight = math.max(34, maxVisible * 30 + 8)
-	local dropdownWidth = buttonSize.X
+	local searchHeight = searchable and 36 or 0
+	local dropdownHeight = math.max(34 + searchHeight, maxVisible * 30 + 8 + searchHeight)
+	local dropdownWidth = searchable and math.max(buttonSize.X, 220) or buttonSize.X
 
 	local x = buttonPos.X
 	local y = buttonPos.Y + buttonSize.Y + 4
@@ -1099,13 +1114,34 @@ function Panel:CreateDropdownBase(button, itemCount)
 	dropdown.Size = UDim2.new(0, dropdownWidth, 0, dropdownHeight)
 	dropdown.Position = UDim2.new(0, x, 0, y)
 
+	local searchBox = nil
+	if searchable then
+		searchBox = Instance.new("TextBox")
+		searchBox.Size = UDim2.new(1, -8, 0, 28)
+		searchBox.Position = UDim2.new(0, 4, 0, 4)
+		searchBox.BackgroundColor3 = Theme.Input
+		searchBox.BorderSizePixel = 0
+		searchBox.ClearTextOnFocus = false
+		searchBox.PlaceholderText = "Search..."
+		searchBox.PlaceholderColor3 = Theme.SubText
+		searchBox.Text = ""
+		searchBox.TextColor3 = Theme.Text
+		searchBox.TextSize = 13
+		searchBox.Font = Enum.Font.Gotham
+		searchBox.TextXAlignment = Enum.TextXAlignment.Left
+		searchBox.ZIndex = 62
+		searchBox.Parent = dropdown
+		createCorner(searchBox, 6)
+		createStroke(searchBox, Theme.Stroke, 1, 0.45)
+	end
+
 	local useScroll = itemCount > 6
 	local parentForItems
 
 	if useScroll then
 		local scroll = Instance.new("ScrollingFrame")
-		scroll.Size = UDim2.new(1, -8, 1, -8)
-		scroll.Position = UDim2.new(0, 4, 0, 4)
+		scroll.Size = UDim2.new(1, -8, 1, -(8 + searchHeight))
+		scroll.Position = UDim2.new(0, 4, 0, 4 + searchHeight)
 		scroll.BackgroundTransparency = 1
 		scroll.BorderSizePixel = 0
 		scroll.ScrollBarThickness = 4
@@ -1136,8 +1172,8 @@ function Panel:CreateDropdownBase(button, itemCount)
 		local holder = Instance.new("Frame")
 		holder.BackgroundTransparency = 1
 		holder.BorderSizePixel = 0
-		holder.Size = UDim2.new(1, -8, 1, -8)
-		holder.Position = UDim2.new(0, 4, 0, 4)
+		holder.Size = UDim2.new(1, -8, 1, -(8 + searchHeight))
+		holder.Position = UDim2.new(0, 4, 0, 4 + searchHeight)
 		holder.ZIndex = 61
 		holder.Parent = dropdown
 
@@ -1152,7 +1188,30 @@ function Panel:CreateDropdownBase(button, itemCount)
 	self.State.OpenDropdownAnchor = button
 	self.State.OpenDropdownBag = dropdownBag
 
-	return dropdown, parentForItems
+	return dropdown, parentForItems, searchBox
+end
+
+function Panel:BindDropdownSearch(searchBox, parentForItems)
+	if not searchBox or not parentForItems then return end
+
+	local function applySearch()
+		local query = searchBox.Text
+		for _, child in ipairs(parentForItems:GetChildren()) do
+			if child:IsA("GuiButton") then
+				if child:GetAttribute("SearchAlwaysVisible") == true then
+					child.Visible = true
+				else
+					child.Visible = matchesSearchText(child:GetAttribute("SearchText") or child.Text, query)
+				end
+			end
+		end
+	end
+
+	if self.State.OpenDropdownBag then
+		AddCleanupItem(self.State.OpenDropdownBag, searchBox:GetPropertyChangedSignal("Text"):Connect(applySearch))
+	end
+
+	applySearch()
 end
 
 function Panel:CreateSelect(row, option)
@@ -1164,7 +1223,7 @@ function Panel:CreateSelect(row, option)
 
 		local items = self:GetOptionItems(option)
 
-		local _, parentForItems = self:CreateDropdownBase(button, #items)
+		local _, parentForItems, searchBox = self:CreateDropdownBase(button, #items, shouldSearchDropdown(option, #items))
 
 		for _, item in ipairs(items) do
 			local itemButton = Instance.new("TextButton")
@@ -1177,6 +1236,7 @@ function Panel:CreateSelect(row, option)
 			itemButton.Font = Enum.Font.Gotham
 			itemButton.ZIndex = 62
 			itemButton.Parent = parentForItems
+			itemButton:SetAttribute("SearchText", tostring(item))
 			createCorner(itemButton, 6)
 
 			itemButton.MouseButton1Click:Connect(function()
@@ -1184,6 +1244,8 @@ function Panel:CreateSelect(row, option)
 				self:CloseDropdown()
 			end)
 		end
+
+		self:BindDropdownSearch(searchBox, parentForItems)
 	end
 
 	self:BindDropdownToggle(button, openDropdown)
@@ -1212,7 +1274,7 @@ function Panel:CreateMultiSelect(row, option)
 		local items = self:GetOptionItems(option)
 
 		local totalItems = #items + 1
-		local _, parentForItems = self:CreateDropdownBase(button, totalItems)
+		local _, parentForItems, searchBox = self:CreateDropdownBase(button, totalItems, shouldSearchDropdown(option, totalItems))
 
 		local function refreshAllButtons()
 			for _, child in ipairs(parentForItems:GetChildren()) do
@@ -1248,6 +1310,7 @@ function Panel:CreateMultiSelect(row, option)
 		clearButton.Font = Enum.Font.Gotham
 		clearButton.ZIndex = 62
 		clearButton.Parent = parentForItems
+		clearButton:SetAttribute("SearchAlwaysVisible", true)
 		createCorner(clearButton, 6)
 
 		clearButton.MouseButton1Click:Connect(function()
@@ -1263,6 +1326,7 @@ function Panel:CreateMultiSelect(row, option)
 			itemButton.ZIndex = 62
 			itemButton.Parent = parentForItems
 			itemButton:SetAttribute("ItemValue", item)
+			itemButton:SetAttribute("SearchText", tostring(item))
 			createCorner(itemButton, 6)
 
 			local check = Instance.new("TextLabel")
@@ -1295,6 +1359,7 @@ function Panel:CreateMultiSelect(row, option)
 			end)
 		end
 
+		self:BindDropdownSearch(searchBox, parentForItems)
 		refreshAllButtons()
 	end
 

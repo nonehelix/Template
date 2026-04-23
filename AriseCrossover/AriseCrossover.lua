@@ -607,12 +607,6 @@ return {
 			return findClosestCandidate(getServerEnemyCandidates(), matchFn, options)
 		end
 
-		local function getEnemyDistance(enemy)
-			local enemyRoot = getEnemyRoot(enemy)
-			local characterRoot = getCharacterRoot()
-			return characterRoot and enemyRoot and (characterRoot.Position - enemyRoot.Position).Magnitude or nil
-		end
-
 		local function describeEnemy(enemy, options)
 			if not enemy then return "nil" end
 
@@ -620,7 +614,8 @@ return {
 			local alive, reason = getEnemyAliveState(enemy, options)
 			local serverEnemy = getServerEnemy(enemy)
 			local enemyRoot = getEnemyRoot(enemy)
-			local distance = getEnemyDistance(enemy)
+			local characterRoot = getCharacterRoot()
+			local distance = characterRoot and enemyRoot and (characterRoot.Position - enemyRoot.Position).Magnitude or nil
 
 			local parts = {
 				"Name=" .. tostring(getEnemyDisplayName(enemy)),
@@ -674,30 +669,6 @@ return {
 			table.sort(reasonParts)
 
 			return "total=" .. total .. ", matching=" .. matching .. ", alive=" .. alive .. ", rejects={" .. table.concat(reasonParts, ", ") .. "}"
-		end
-
-		local function getServerEnemyScanSummary(options)
-			options = options or EMPTY_TABLE
-
-			local total, alive = 0, 0
-			local reasons = {}
-			for _, enemy in ipairs(getServerEnemyCandidates()) do
-				total = total + 1
-				local isAlive, reason = getEnemyAliveState(enemy, options)
-				if isAlive then
-					alive = alive + 1
-				else
-					reasons[reason] = (reasons[reason] or 0) + 1
-				end
-			end
-
-			local reasonParts = {}
-			for reason, count in pairs(reasons) do
-				reasonParts[#reasonParts + 1] = tostring(reason) .. "=" .. tostring(count)
-			end
-			table.sort(reasonParts)
-
-			return "server-total=" .. total .. ", server-alive=" .. alive .. ", server-rejects={" .. table.concat(reasonParts, ", ") .. "}"
 		end
 
 		local function isDungeonActive()
@@ -1389,7 +1360,7 @@ return {
 			})
 
 			function Feature:FindTarget()
-				return findClosestServerEnemy(nil, SERVER_DEAD_TARGET_OPTIONS) or findClosestEnemy(nil, SERVER_DEAD_TARGET_OPTIONS)
+				return findClosestServerEnemy(nil, SERVER_DEAD_TARGET_OPTIONS)
 			end
 
 			function Feature:SetTarget(target)
@@ -1409,15 +1380,9 @@ return {
 					if newTarget then
 						featureDebugLog(self, "AutoDungeon", "Target selected: " .. describeEnemy(newTarget, SERVER_DEAD_TARGET_OPTIONS))
 					else
-						featureDebugLog(self, "AutoDungeon", "No alive dungeon target | " .. getEnemyScanSummary(nil, SERVER_DEAD_TARGET_OPTIONS) .. " | " .. getServerEnemyScanSummary(SERVER_DEAD_TARGET_OPTIONS) .. " | " .. buildDungeonRuntimeSnapshot())
+						featureDebugLog(self, "AutoDungeon", "No alive dungeon target | " .. buildDungeonRuntimeSnapshot())
 					end
 					self:SetTarget(newTarget)
-				else
-					local distance = getEnemyDistance(target)
-					if distance and distance > (self.State.TeleportDistance + 20) then
-						featureDebugLog(self, "AutoDungeon", "Re-teleport target distance=" .. string.format("%.2f", distance) .. " | " .. describeEnemy(target, SERVER_DEAD_TARGET_OPTIONS))
-						teleportToEnemy(target, self.State.TeleportDistance)
-					end
 				end
 			end
 

@@ -8,7 +8,7 @@ return {
 		--==================================================
 		-- TABS
 		--==================================================
-		RegisterTabs({{Name = "Combat", Order = 20}, {Name = "Dungeon", Order = 30}, {Name = "Time Trial", Order = 40}, {Name = "Teleport", Order = 50}, {Name = "Debug", Order = 60}})
+		RegisterTabs({{Name = "Combat", Order = 20}, {Name = "Dungeon", Order = 30}, {Name = "Time Trial", Order = 40}, {Name = "Teleport", Order = 50}})
 
 		--==================================================
 		-- GAME REFERENCES
@@ -20,8 +20,7 @@ return {
 		--==================================================
 		local ALL_OPTION, NO_ENEMY_OPTION, NO_DUNGEON_OPTION, NO_TELEPORT_OPTION = "All", "Select enemy", "Select dungeon", "Select location"
 		local EMPTY_TABLE = {}
-		local SERVER_DEAD_TARGET_OPTIONS = {UseServerDeadAttribute = true, RequireServerEnemy = true}
-		local AUTO_CLICK_POLL_DELAY, AUTO_FARM_POLL_DELAY, SHADOW_EXCHANGE_POLL_DELAY, DEBUG_POLL_DELAY = 0.5, 0.25, 0.5, 1
+		local AUTO_CLICK_POLL_DELAY, AUTO_FARM_POLL_DELAY, SHADOW_EXCHANGE_POLL_DELAY = 0.5, 0.25, 0.5
 		local DUNGEON_CREATE_DELAY, DUNGEON_INSTANCE_WAIT = 0.5, 6
 		local TELEPORT_SPAWN_NAMES = {"Arena", "JejuEvent", "JungleEvent", "WinterEvent", "XmasWorld"}
 		local GUILD_HALL_LOCATION = "Guild Hall"
@@ -96,129 +95,16 @@ return {
 			end
 		end
 
-		local function runFeatureTask(feature, stateKey, callback, onError)
+		local function runFeatureTask(feature, stateKey, callback)
 			if feature.State[stateKey] then return false end
 
 			feature.State[stateKey] = true
 			task.spawn(function()
-				local ok, err = pcall(callback)
-				if not ok and onError then
-					pcall(onError, err)
-				end
+				pcall(callback)
 				feature.State[stateKey] = false
 			end)
 
 			return true
-		end
-
-		local function disconnectConnection(connection)
-			if connection and connection.Connected then
-				connection:Disconnect()
-			end
-			return nil
-		end
-
-		local function bindConnectionToggleFeature(feature, optionId, onStart, config)
-			config = config or EMPTY_TABLE
-
-			function feature:Start(panelRef)
-				setFeaturePanelRef(self, panelRef)
-				if config.RestartOnStart then
-					self:Stop()
-					setFeaturePanelRef(self, panelRef)
-				elseif self.State.Running then
-					return
-				end
-
-				self.State.Running = true
-				onStart(self, panelRef)
-			end
-
-			function feature:Stop()
-				self.State.Running = false
-				if config.BeforeStop then
-					config.BeforeStop(self)
-				end
-			end
-
-			function feature:GetHandlers()
-				return {
-					[optionId] = buildToggleHandler(self, function(panelRef) self:Start(panelRef) end),
-				}
-			end
-
-			function feature:Cleanup()
-				self:Stop()
-				self.State.PanelRef = nil
-				if config.OnCleanup then
-					config.OnCleanup(self)
-				end
-			end
-		end
-
-		local function formatDebugValue(value)
-			local valueType = typeof(value)
-			if valueType == "Vector3" then
-				return string.format("(%.2f, %.2f, %.2f)", value.X, value.Y, value.Z)
-			elseif valueType == "Vector2" then
-				return string.format("(%.2f, %.2f)", value.X, value.Y)
-			elseif valueType == "CFrame" then
-				local position = value.Position
-				return string.format("CFrame(%.2f, %.2f, %.2f)", position.X, position.Y, position.Z)
-			elseif valueType == "Instance" then
-				return value:GetFullName()
-			end
-
-			return tostring(value)
-		end
-
-		local function debugLog(scope, message)
-			print("[AriseCrossover][" .. tostring(scope) .. "] " .. tostring(message))
-		end
-
-		local DebugFlags = {
-			Farm = false,
-			TimeTrial = false,
-		}
-
-		local function featureDebugLog(feature, scope, message)
-			if not DebugFlags.Farm then return end
-			if feature and feature.State then
-				if feature.State.LastDebugMessage == message then return end
-				feature.State.LastDebugMessage = message
-			end
-
-			debugLog(scope, message)
-		end
-
-		local function timeTrialDebugLog(message)
-			if DebugFlags.TimeTrial then
-				debugLog("TimeTrial", message)
-			end
-		end
-
-		local function buildAttributeSnapshot(instance)
-			if not instance then return "<missing>" end
-
-			local ok, attributes = pcall(function()
-				return instance:GetAttributes()
-			end)
-			if not ok or type(attributes) ~= "table" then return "<unavailable>" end
-
-			local names = {}
-			for name in pairs(attributes) do
-				names[#names + 1] = tostring(name)
-			end
-
-			table.sort(names)
-			if #names == 0 then return "<none>" end
-
-			local parts = {}
-			for _, name in ipairs(names) do
-				parts[#parts + 1] = name .. "=" .. formatDebugValue(attributes[name])
-			end
-
-			return table.concat(parts, ", ")
 		end
 
 		local function bindPollingToggleFeature(feature, optionId, onTick, config)
@@ -369,14 +255,12 @@ return {
 		local function fireBridgeDataRemote(payload)
 			local bridgeModule = ReplicatedStorage:FindFirstChild("BridgeNet2")
 			local remoteEvent = bridgeModule and bridgeModule:FindFirstChild("dataRemoteEvent")
-			timeTrialDebugLog("BridgeNet2=" .. tostring(bridgeModule ~= nil) .. " dataRemoteEvent=" .. tostring(remoteEvent ~= nil) .. " payloadType=" .. type(payload))
 			if not remoteEvent or type(payload) ~= "table" then return false end
 
-			local ok, err = pcall(function()
+			local ok = pcall(function()
 				remoteEvent:FireServer(payload)
 			end)
 
-			timeTrialDebugLog("dataRemoteEvent:FireServer ok=" .. tostring(ok) .. " err=" .. tostring(err))
 			return ok
 		end
 
@@ -399,14 +283,6 @@ return {
 			if valueObject:IsA("TextLabel") or valueObject:IsA("TextButton") or valueObject:IsA("TextBox") then return valueObject.Text end
 			if valueObject:IsA("StringValue") or valueObject:IsA("NumberValue") or valueObject:IsA("IntValue") then return valueObject.Value end
 			return valueObject:GetAttribute("Text") or valueObject:GetAttribute("Value")
-		end
-
-		local function parseHealthNumber(value)
-			if value == nil then return nil end
-
-			local text = tostring(value):gsub(",", "")
-			local numberText = text:match("%-?%d+%.?%d*")
-			return numberText and tonumber(numberText) or nil
 		end
 
 		local indexerModuleCache = {}
@@ -594,39 +470,6 @@ return {
 			return enemy and enemy.Name or nil
 		end
 
-		local function getEnemyHealthObject(enemy)
-			local main = getEnemyHealthBarMain(enemy)
-			local bar = main and main:FindFirstChild("Bar")
-			return (bar and bar:FindFirstChild("Amount")) or (main and main:FindFirstChild("Amount")) or nil
-		end
-
-		local function getEnemyClientHealth(enemy)
-			return parseHealthNumber(readValueObject(getEnemyHealthObject(enemy)))
-		end
-
-		local function hasDeadAttribute(instance)
-			if not instance then return false end
-
-			for _, attributeName in ipairs({"Dead", "IsDead", "Died", "Removed", "Remove"}) do
-				if instance:GetAttribute(attributeName) == true then
-					return true
-				end
-			end
-
-			return false
-		end
-
-		local function getAttributeHealth(instance)
-			if not instance then return nil end
-
-			for _, attributeName in ipairs({"Health", "HP", "CurrentHealth", "CurrentHP"}) do
-				local health = parseHealthNumber(instance:GetAttribute(attributeName))
-				if health ~= nil then return health end
-			end
-
-			return nil
-		end
-
 		local function getServerEnemy(enemy)
 			local _, serverFolder = getEnemyFolders()
 			if not enemy then return nil end
@@ -646,52 +489,12 @@ return {
 			return serverFolder:FindFirstChild(enemy.Name) or serverFolder:FindFirstChild(enemy.Name, true)
 		end
 
-		local function getEnemyAliveState(enemy, options)
-			options = options or EMPTY_TABLE
-
-			if not enemy or not enemy.Parent then return false, "missing-model" end
-
-			local enemyRoot = getEnemyRoot(enemy)
-			if not enemyRoot then return false, "missing-root" end
+		local function isEnemyAlive(enemy)
+			if not enemy or not enemy.Parent then return false end
+			if not getEnemyRoot(enemy) then return false end
 
 			local serverEnemy = getServerEnemy(enemy)
-			if options.UseServerDeadAttribute then
-				if not serverEnemy then
-					if options.RequireServerEnemy then return false, "missing-server-enemy" end
-					return true, "server-enemy-missing"
-				end
-
-				if serverEnemy:GetAttribute("Dead") == true then return false, "server-dead-true" end
-				return true, "server-dead-false"
-			end
-
-			if hasDeadAttribute(enemy) then return false, "client-dead-attribute" end
-
-			if serverEnemy then
-				if hasDeadAttribute(serverEnemy) then return false, "server-dead-attribute" end
-
-				local serverHealth = getAttributeHealth(serverEnemy)
-				if serverHealth ~= nil and serverHealth <= 0 then return false, "server-health-zero" end
-				if serverHealth ~= nil and serverHealth > 0 then return true, "server-health-positive" end
-			end
-
-			local clientAttributeHealth = getAttributeHealth(enemy)
-			if clientAttributeHealth ~= nil and clientAttributeHealth <= 0 then return false, "client-health-zero" end
-			if clientAttributeHealth ~= nil and clientAttributeHealth > 0 then return true, "client-health-positive" end
-
-			local healthObject = getEnemyHealthObject(enemy)
-			local clientHealth = getEnemyClientHealth(enemy)
-			if clientHealth ~= nil and clientHealth <= 0 then return false, "client-healthbar-zero" end
-			if clientHealth ~= nil and clientHealth > 0 then return true, "client-healthbar-positive" end
-			if healthObject then return false, "client-healthbar-unreadable" end
-
-			if options.AllowUnknownHealth then return true, "unknown-health-allowed" end
-			return false, "missing-healthbar"
-		end
-
-		local function isEnemyAlive(enemy, options)
-			local alive = getEnemyAliveState(enemy, options)
-			return alive == true
+			return serverEnemy ~= nil and serverEnemy:GetAttribute("Dead") ~= true
 		end
 
 		local function getServerEnemyCandidates()
@@ -725,17 +528,14 @@ return {
 			return candidates
 		end
 
-		local function findClosestCandidate(candidates, matchFn, options)
-			options = options or EMPTY_TABLE
-
+		local function findClosestCandidate(candidates, matchFn)
 			local characterRoot = getCharacterRoot()
 			local closestEnemy = nil
 			local closestDistance = nil
 
 			for _, enemy in ipairs(candidates or EMPTY_TABLE) do
 				if matchFn == nil or matchFn(enemy) then
-					local alive = options.IgnoreAlive == true or isEnemyAlive(enemy, options)
-					if alive then
+					if isEnemyAlive(enemy) then
 						local enemyRoot = getEnemyRoot(enemy)
 						if enemyRoot then
 							local distance = characterRoot and (characterRoot.Position - enemyRoot.Position).Magnitude or 0
@@ -751,90 +551,12 @@ return {
 			return closestEnemy, closestDistance
 		end
 
-		local function findClosestEnemy(matchFn, options)
-			local enemyFolder = getEnemyFolders()
-			if not enemyFolder then return nil end
-
-			return findClosestCandidate(enemyFolder:GetChildren(), matchFn, options)
-		end
-
-		local function findClosestServerEnemy(matchFn, options)
-			return findClosestCandidate(getServerEnemyCandidates(), matchFn, options)
-		end
-
 		local function findClosestServerTarget(matchFn)
-			return findClosestServerEnemy(matchFn, SERVER_DEAD_TARGET_OPTIONS)
+			return findClosestCandidate(getServerEnemyCandidates(), matchFn)
 		end
 
 		local function isServerTargetAlive(target)
-			return target and target.Parent and isEnemyAlive(target, SERVER_DEAD_TARGET_OPTIONS)
-		end
-
-		local function describeEnemy(enemy, options)
-			if not enemy then return "nil" end
-
-			options = options or EMPTY_TABLE
-			local alive, reason = getEnemyAliveState(enemy, options)
-			local serverEnemy = getServerEnemy(enemy)
-			local enemyRoot = getEnemyRoot(enemy)
-			local characterRoot = getCharacterRoot()
-			local distance = characterRoot and enemyRoot and (characterRoot.Position - enemyRoot.Position).Magnitude or nil
-
-			local parts = {
-				"Name=" .. tostring(getEnemyDisplayName(enemy)),
-				"Model=" .. tostring(enemy.Name),
-				"Alive=" .. tostring(alive),
-				"Reason=" .. tostring(reason),
-				"ClientHealth=" .. tostring(getEnemyClientHealth(enemy)),
-				"ClientAttrHealth=" .. tostring(getAttributeHealth(enemy)),
-				"ServerHealth=" .. tostring(getAttributeHealth(serverEnemy)),
-				"ServerDead=" .. tostring(serverEnemy and serverEnemy:GetAttribute("Dead")),
-				"HasHealthObject=" .. tostring(getEnemyHealthObject(enemy) ~= nil),
-				"Distance=" .. (distance and string.format("%.2f", distance) or "nil"),
-				"Root=" .. (enemyRoot and formatDebugValue(enemyRoot.Position) or "nil"),
-				"Path=" .. enemy:GetFullName(),
-			}
-
-			if options.IncludeAttributes then
-				parts[#parts + 1] = "Attrs={" .. buildAttributeSnapshot(enemy) .. "}"
-				if serverEnemy then
-					parts[#parts + 1] = "ServerAttrs={" .. buildAttributeSnapshot(serverEnemy) .. "}"
-				end
-			end
-
-			return table.concat(parts, " | ")
-		end
-
-		local function getEnemyScanSummary(matchFn, options, candidates)
-			options = options or EMPTY_TABLE
-			if not candidates then
-				local enemyFolder = getEnemyFolders()
-				if not enemyFolder then return "enemy-folder-missing" end
-				candidates = enemyFolder:GetChildren()
-			end
-
-			local total, matching, alive = 0, 0, 0
-			local reasons = {}
-			for _, enemy in ipairs(candidates) do
-				total = total + 1
-				if matchFn == nil or matchFn(enemy) then
-					matching = matching + 1
-					local isAlive, reason = getEnemyAliveState(enemy, options)
-					if isAlive then
-						alive = alive + 1
-					else
-						reasons[reason] = (reasons[reason] or 0) + 1
-					end
-				end
-			end
-
-			local reasonParts = {}
-			for reason, count in pairs(reasons) do
-				reasonParts[#reasonParts + 1] = tostring(reason) .. "=" .. tostring(count)
-			end
-			table.sort(reasonParts)
-
-			return "total=" .. total .. ", matching=" .. matching .. ", alive=" .. alive .. ", rejects={" .. table.concat(reasonParts, ", ") .. "}"
+			return target and target.Parent and isEnemyAlive(target)
 		end
 
 		local function isDungeonActive()
@@ -897,13 +619,6 @@ return {
 					addEnemyItem(items, seen, enemyName)
 				end
 			end
-		end
-
-		local function getMapEnemyDisplayNames(mapInfo)
-			local items = {}
-			collectMapEnemyItems(mapInfo, items, {})
-			table.sort(items)
-			return items
 		end
 
 		local function getCurrentWorldOrder()
@@ -997,25 +712,17 @@ return {
 		local function scoreMapInfoByServerEnemies(mapInfo)
 			local internalSet, displaySet = getMapEnemySets(mapInfo)
 			local score = 0
-			local matched = {}
 
 			for _, enemy in ipairs(getServerEnemyCandidates()) do
 				for _, key in ipairs(getEnemyCandidateKeys(enemy)) do
 					if internalSet[key] or displaySet[key] then
 						score = score + 1
-						matched[key] = true
 						break
 					end
 				end
 			end
 
-			local matchedNames = {}
-			for name in pairs(matched) do
-				matchedNames[#matchedNames + 1] = name
-			end
-			table.sort(matchedNames)
-
-			return score, matchedNames
+			return score
 		end
 
 		local function getNearestDungeonSpawnDistance(mapInfo)
@@ -1038,13 +745,11 @@ return {
 
 		local function resolveCurrentMapInfo()
 			local entries = getMapInfoEntries()
-			if #entries == 0 then
-				return nil, "MapInfo missing", {}
-			end
+			if #entries == 0 then return nil end
 
 			if #entries == 1 then
 				local entry = entries[1]
-				return entry.Info, "single-entry:" .. tostring(entry.Info.Name or entry.Key), entries
+				return entry.Info
 			end
 
 			local currentOrder = getCurrentWorldOrder()
@@ -1053,97 +758,45 @@ return {
 			for _, entry in ipairs(entries) do
 				local info = entry.Info
 				if currentOrder ~= nil and (tonumber(entry.Key) == currentOrder or tonumber(info.Order) == currentOrder or tonumber(info.World) == currentOrder) then
-					return info, "order:" .. tostring(currentOrder), entries
+					return info
 				end
 
 				if currentMapName ~= nil and (tostring(entry.Key) == currentMapName or tostring(info.Name) == currentMapName) then
-					return info, "name:" .. currentMapName, entries
+					return info
 				end
 			end
 
 			local bestByEnemies = nil
+			local bestEnemyScore = nil
 			for _, entry in ipairs(entries) do
-				local score, matchedNames = scoreMapInfoByServerEnemies(entry.Info)
-				entry.EnemyScore = score
-				entry.EnemyMatches = matchedNames
-				if score > 0 and (not bestByEnemies or score > bestByEnemies.EnemyScore) then
+				local score = scoreMapInfoByServerEnemies(entry.Info)
+				if score > 0 and (bestEnemyScore == nil or score > bestEnemyScore) then
 					bestByEnemies = entry
+					bestEnemyScore = score
 				end
 			end
 			if bestByEnemies then
-				return bestByEnemies.Info, "server-enemies:" .. tostring(bestByEnemies.EnemyScore), entries
+				return bestByEnemies.Info
 			end
 
 			local bestBySpawn = nil
+			local bestSpawnDistance = nil
 			for _, entry in ipairs(entries) do
 				local distance = getNearestDungeonSpawnDistance(entry.Info)
-				entry.SpawnDistance = distance
-				if distance ~= nil and (not bestBySpawn or distance < bestBySpawn.SpawnDistance) then
+				if distance ~= nil and (bestSpawnDistance == nil or distance < bestSpawnDistance) then
 					bestBySpawn = entry
+					bestSpawnDistance = distance
 				end
 			end
 			if bestBySpawn then
-				return bestBySpawn.Info, "nearest-spawn:" .. string.format("%.1f", bestBySpawn.SpawnDistance), entries
+				return bestBySpawn.Info
 			end
 
-			return nil, "unresolved", entries
+			return nil
 		end
 
 		local function getCurrentMapInfo()
-			local mapInfo = resolveCurrentMapInfo()
-			return mapInfo
-		end
-
-		local function buildMapDetectionSnapshot()
-			local selectedMap, reason, entries = resolveCurrentMapInfo()
-			local parts = {
-				"Selected=" .. tostring(selectedMap and selectedMap.Name or "nil"),
-				"Reason=" .. tostring(reason),
-				"Replicated.World=" .. formatDebugValue(ReplicatedStorage:GetAttribute("World")),
-				"Replicated.CurrentWorld=" .. formatDebugValue(ReplicatedStorage:GetAttribute("CurrentWorld")),
-				"Player.World=" .. formatDebugValue(player:GetAttribute("World")),
-				"Player.CurrentWorld=" .. formatDebugValue(player:GetAttribute("CurrentWorld")),
-				"Replicated.MapName=" .. formatDebugValue(ReplicatedStorage:GetAttribute("MapName")),
-				"Replicated.CurrentMap=" .. formatDebugValue(ReplicatedStorage:GetAttribute("CurrentMap")),
-				"Player.MapName=" .. formatDebugValue(player:GetAttribute("MapName")),
-				"Player.CurrentMap=" .. formatDebugValue(player:GetAttribute("CurrentMap")),
-				"Entries=" .. tostring(#entries),
-			}
-
-			for _, entry in ipairs(entries) do
-				if entry.EnemyScore == nil then
-					local score, matchedNames = scoreMapInfoByServerEnemies(entry.Info)
-					entry.EnemyScore = score
-					entry.EnemyMatches = matchedNames
-				end
-				if entry.SpawnDistance == nil then
-					entry.SpawnDistance = getNearestDungeonSpawnDistance(entry.Info)
-				end
-
-				local internalNames = getMapEnemyInternalNames(entry.Info)
-				local names = getMapEnemyDisplayNames(entry.Info)
-				local unresolved = {}
-				for _, internalName in ipairs(internalNames) do
-					if #getEnemyDisplayNamesForInternalName(internalName) == 0 then
-						unresolved[#unresolved + 1] = internalName
-					end
-				end
-
-				parts[#parts + 1] = string.format(
-					"Candidate[%s]=Name:%s Order:%s Internal:%s RealNames:%s Unresolved:%s EnemyScore:%s SpawnDistance:%s Matches:%s",
-					tostring(entry.Key),
-					tostring(entry.Info.Name),
-					tostring(entry.Info.Order),
-					table.concat(internalNames, ", "),
-					table.concat(names, ", "),
-					table.concat(unresolved, ", "),
-					tostring(entry.EnemyScore or 0),
-					entry.SpawnDistance and string.format("%.1f", entry.SpawnDistance) or "nil",
-					table.concat(entry.EnemyMatches or EMPTY_TABLE, ", ")
-				)
-			end
-
-			return table.concat(parts, " | ")
+			return resolveCurrentMapInfo()
 		end
 
 		local function getAutoFarmEnemyItems()
@@ -1497,7 +1150,6 @@ return {
 				payload[key] = value
 			end
 
-			timeTrialDebugLog("Payload Event=TimeTrialAction Action=" .. tostring(action) .. " Dungeon=" .. tostring(payload.Dungeon) .. " Diff=" .. tostring(payload.Diff) .. " tokenByte=" .. tostring(string.byte(TIME_TRIAL_BRIDGE_TOKEN)))
 			return fireBridgeDataRemote({payload, TIME_TRIAL_BRIDGE_TOKEN})
 		end
 
@@ -1510,20 +1162,15 @@ return {
 		end
 
 		local function startTimeTrial(difficulty, dungeonId)
-			timeTrialDebugLog("Start requested difficulty=" .. tostring(difficulty) .. " dungeonId=" .. tostring(dungeonId))
 			if not isValidTimeTrialDifficulty(difficulty) then
-				timeTrialDebugLog("Rejected invalid difficulty. Valid=" .. table.concat(TIME_TRIAL_DIFFICULTIES, ", "))
 				return false
 			end
 
 			if dungeonId == nil then
-				timeTrialDebugLog("Rejected missing dungeon id")
 				return false
 			end
 
-			local ok = sendTimeTrialAction("Start", {Dungeon = dungeonId, Diff = difficulty})
-			timeTrialDebugLog("Start result=" .. tostring(ok))
-			return ok
+			return sendTimeTrialAction("Start", {Dungeon = dungeonId, Diff = difficulty})
 		end
 
 		local function buildDungeonActionPayload(dungeonOwner, dungeonInfo)
@@ -1544,44 +1191,6 @@ return {
 				World = isTable and dungeonInfo.World or nil,
 				DungeonRank = isTable and dungeonInfo.DungeonRank or nil,
 			}
-		end
-
-		local function getChildCount(instance)
-			if not instance then return 0 end
-			local ok, children = pcall(function()
-				return instance:GetChildren()
-			end)
-			return ok and #children or 0
-		end
-
-		local function buildDungeonRuntimeSnapshot()
-			local enemyClientFolder, enemyServerFolder = getEnemyFolders()
-			local dungeonFolder = getLiveDungeonFolder()
-			local characterRoot = getCharacterRoot()
-
-			return table.concat({
-				"NormalDungeon=" .. tostring(isNormalDungeonInstance()),
-				"DungeonActive=" .. tostring(isDungeonActive()),
-				"ExcludedDungeonMode=" .. tostring(isExcludedDungeonMode()),
-				"Replicated.Dungeon=" .. formatDebugValue(ReplicatedStorage:GetAttribute("Dungeon")),
-				"Player.InTimeTrial=" .. formatDebugValue(player:GetAttribute("InTimeTrial")),
-				"Player.InBossRush=" .. formatDebugValue(player:GetAttribute("InBossRush")),
-				"Replicated.InTimeTrial=" .. formatDebugValue(ReplicatedStorage:GetAttribute("InTimeTrial")),
-				"Replicated.InBossRush=" .. formatDebugValue(ReplicatedStorage:GetAttribute("InBossRush")),
-				"Replicated.IsCastle=" .. formatDebugValue(ReplicatedStorage:GetAttribute("IsCastle")),
-				"EnemyClientCount=" .. tostring(getChildCount(enemyClientFolder)),
-				"EnemyServerCount=" .. tostring(getChildCount(enemyServerFolder)),
-				"DungeonEntries=" .. tostring(getChildCount(dungeonFolder)),
-				"CharacterRoot=" .. (characterRoot and formatDebugValue(characterRoot.Position) or "nil"),
-			}, " | ")
-		end
-
-		local function dumpDebugSnapshot()
-			debugLog("Snapshot", "PlayerAttrs: " .. buildAttributeSnapshot(player))
-			debugLog("Snapshot", "ReplicatedAttrs: " .. buildAttributeSnapshot(ReplicatedStorage))
-			debugLog("Snapshot", "DungeonState: " .. buildDungeonRuntimeSnapshot())
-			debugLog("Snapshot", "MapDetection: " .. buildMapDetectionSnapshot())
-			debugLog("Snapshot", "AvailableDungeons: " .. tostring(#getLiveDungeonEntries()))
 		end
 
 		--==================================================
@@ -1697,19 +1306,12 @@ return {
 			function Feature:Tick(values)
 				local selectedEnemies = normalizeSelectionArray(values and values.AutoFarmEnemy)
 				if #selectedEnemies == 0 then
-					featureDebugLog(self, "AutoFarm", "Waiting for enemy selection")
 					return
 				end
 
 				local target = self.State.CurrentTarget
 				if not self:TargetMatches(target, selectedEnemies) or not isServerTargetAlive(target) then
-					local selectionLabel = self:FormatSelection(selectedEnemies)
 					local newTarget = self:FindTarget(selectedEnemies)
-					if newTarget then
-						featureDebugLog(self, "AutoFarm", "Target selected: " .. describeEnemy(newTarget, SERVER_DEAD_TARGET_OPTIONS))
-					else
-						featureDebugLog(self, "AutoFarm", "No alive target for " .. tostring(selectionLabel) .. " | " .. getEnemyScanSummary(self:GetMatchFn(selectedEnemies), SERVER_DEAD_TARGET_OPTIONS, getServerEnemyCandidates()))
-					end
 					setFeatureTarget(self, newTarget)
 				end
 			end
@@ -1721,7 +1323,6 @@ return {
 				UseLoopId = true,
 				BeforeStop = function(self)
 					self.State.CurrentTarget = nil
-					self.State.LastDebugMessage = nil
 				end,
 				ExtraHandlers = {
 					AutoFarmEnemy = buildRestartHandler(Feature, "AutoFarm"),
@@ -1749,18 +1350,12 @@ return {
 			function Feature:Tick()
 				if not isNormalDungeonInstance() then
 					self.State.CurrentTarget = nil
-					featureDebugLog(self, "AutoDungeon", "Waiting for normal dungeon instance | " .. buildDungeonRuntimeSnapshot())
 					return
 				end
 
 				local target = self.State.CurrentTarget
 				if not isServerTargetAlive(target) then
 					local newTarget = self:FindTarget()
-					if newTarget then
-						featureDebugLog(self, "AutoDungeon", "Target selected: " .. describeEnemy(newTarget, SERVER_DEAD_TARGET_OPTIONS))
-					else
-						featureDebugLog(self, "AutoDungeon", "No alive dungeon target | " .. buildDungeonRuntimeSnapshot())
-					end
 					setFeatureTarget(self, newTarget)
 				end
 			end
@@ -1772,7 +1367,6 @@ return {
 				UseLoopId = true,
 				BeforeStop = function(self)
 					self.State.CurrentTarget = nil
-					self.State.LastDebugMessage = nil
 				end,
 			})
 		end
@@ -1830,12 +1424,11 @@ return {
 		do
 			local Feature = RegisterFeature({
 				Key = "TimeTrialStarter", Tab = "Time Trial", Section = "Start", Order = 10,
-				Defaults = {TimeTrialDifficulty = "Easy", DebugTimeTrialStart = false},
+				Defaults = {TimeTrialDifficulty = "Easy"},
 				State = {Starting = false, PanelRef = nil},
 				Options = {
 					{ Id = "TimeTrialDifficulty", Type = "select", Label = "Difficulty", Description = "Select Time Trial difficulty", Items = getTimeTrialDifficultyItems },
 					{ Id = "StartTimeTrial", Type = "button", Label = "Start Time Trial", Description = "Starts Time Trial with selected difficulty", ButtonText = "Start" },
-					{ Id = "DebugTimeTrialStart", Type = "toggle", Label = "Debug Time Trial", Description = "Logs Time Trial start payload and remote status" },
 				}
 			})
 
@@ -1844,31 +1437,22 @@ return {
 
 				local difficulty = values and values.TimeTrialDifficulty
 				if not isValidTimeTrialDifficulty(difficulty) then
-					timeTrialDebugLog("Run rejected invalid difficulty=" .. tostring(difficulty))
 					return
 				end
 
 				runFeatureTask(self, "Starting", function()
 					local ownTimeTrial = getOwnTimeTrialInfo()
 					if not ownTimeTrial then
-						timeTrialDebugLog("No existing Time Trial instance; creating")
 						sendTimeTrialAction("Create")
 						task.wait(DUNGEON_CREATE_DELAY)
-					else
-						timeTrialDebugLog("Existing Time Trial instance found: " .. ownTimeTrial:GetFullName())
 					end
 
 					ownTimeTrial = getOwnTimeTrialInfo() or waitForOwnTimeTrialInfo(DUNGEON_INSTANCE_WAIT)
 					local dungeonId = getTimeTrialDungeonId(ownTimeTrial)
-					timeTrialDebugLog("Resolved Time Trial dungeon id=" .. tostring(dungeonId))
 
 					if dungeonId ~= nil then
 						startTimeTrial(difficulty, dungeonId)
-					else
-						timeTrialDebugLog("Could not resolve Time Trial dungeon id after create")
 					end
-				end, function(err)
-					timeTrialDebugLog("Run failed err=" .. tostring(err))
 				end)
 			end
 
@@ -1876,16 +1460,10 @@ return {
 				return {
 					TimeTrialDifficulty = buildPanelRefHandler(self),
 					StartTimeTrial = function(_, _, panelRef) self:Run(panelRef) end,
-					DebugTimeTrialStart = function(value, _, panelRef)
-						setFeaturePanelRef(self, panelRef)
-						DebugFlags.TimeTrial = value == true
-						debugLog("TimeTrial", "Debug " .. (DebugFlags.TimeTrial and "enabled" or "disabled"))
-					end,
 				}
 			end
 
 			function Feature:Cleanup()
-				DebugFlags.TimeTrial = false
 				self.State.Starting = false
 				self.State.PanelRef = nil
 			end
@@ -1986,193 +1564,5 @@ return {
 			end
 		end
 
-		--==================================================
-		-- FEATURE: DEBUG PLAYER ATTRIBUTES
-		--==================================================
-		do
-			local Feature = RegisterFeature({
-				Key = "DebugPlayerAttributes", Tab = "Debug", Section = "Attributes", Order = 10,
-				Defaults = {DebugPlayerAttributes = false},
-				State = {Running = false, PanelRef = nil, AttributeConnection = nil},
-				Options = {
-					{ Id = "DebugPlayerAttributes", Type = "toggle", Label = "Monitor Player Attributes", Description = "Logs LocalPlayer attribute changes to console" },
-				}
-			})
-
-			bindConnectionToggleFeature(Feature, "DebugPlayerAttributes", function(self)
-				debugLog("PlayerAttrs", "Initial: " .. buildAttributeSnapshot(player))
-				self.State.AttributeConnection = player.AttributeChanged:Connect(function(attributeName)
-					if not self.State.Running then return end
-					debugLog("PlayerAttrs", tostring(attributeName) .. "=" .. formatDebugValue(player:GetAttribute(attributeName)))
-				end)
-			end, {
-				RestartOnStart = true,
-				BeforeStop = function(self)
-					self.State.AttributeConnection = disconnectConnection(self.State.AttributeConnection)
-				end,
-			})
-		end
-
-		--==================================================
-		-- FEATURE: DEBUG REPLICATED ATTRIBUTES
-		--==================================================
-		do
-			local Feature = RegisterFeature({
-				Key = "DebugReplicatedAttributes", Tab = "Debug", Section = "Attributes", Order = 20,
-				Defaults = {DebugReplicatedAttributes = false},
-				State = {Running = false, PanelRef = nil, AttributeConnection = nil},
-				Options = {
-					{ Id = "DebugReplicatedAttributes", Type = "toggle", Label = "Monitor Replicated Attributes", Description = "Logs ReplicatedStorage attribute changes to console" },
-				}
-			})
-
-			bindConnectionToggleFeature(Feature, "DebugReplicatedAttributes", function(self)
-				debugLog("ReplicatedAttrs", "Initial: " .. buildAttributeSnapshot(ReplicatedStorage))
-				self.State.AttributeConnection = ReplicatedStorage.AttributeChanged:Connect(function(attributeName)
-					if not self.State.Running then return end
-					debugLog("ReplicatedAttrs", tostring(attributeName) .. "=" .. formatDebugValue(ReplicatedStorage:GetAttribute(attributeName)))
-				end)
-			end, {
-				RestartOnStart = true,
-				BeforeStop = function(self)
-					self.State.AttributeConnection = disconnectConnection(self.State.AttributeConnection)
-				end,
-			})
-		end
-
-		--==================================================
-		-- FEATURE: DEBUG DUNGEON STATE
-		--==================================================
-		do
-			local Feature = RegisterFeature({
-				Key = "DebugDungeonState", Tab = "Debug", Section = "Dungeon", Order = 30,
-				Defaults = {DebugDungeonState = false},
-				State = {Running = false, LoopId = 0, PanelRef = nil, PollDelay = DEBUG_POLL_DELAY, LastSnapshot = nil},
-				Options = {
-					{ Id = "DebugDungeonState", Type = "toggle", Label = "Monitor Dungeon State", Description = "Logs dungeon flags and enemy counts when they change" },
-				}
-			})
-
-			bindPollingToggleFeature(Feature, "DebugDungeonState", function(self)
-				local snapshot = buildDungeonRuntimeSnapshot()
-				if self.State.LastSnapshot ~= snapshot then
-					self.State.LastSnapshot = snapshot
-					debugLog("DungeonState", snapshot)
-				end
-			end, {
-				RestartOnStart = true,
-				UseLoopId = true,
-				BeforeStop = function(self)
-					self.State.LastSnapshot = nil
-				end,
-			})
-		end
-
-		--==================================================
-		-- FEATURE: DEBUG FARM TARGETING
-		--==================================================
-		do
-			local Feature = RegisterFeature({
-				Key = "DebugFarmTargeting", Tab = "Debug", Section = "Farm", Order = 40,
-				Defaults = {DebugFarmTargeting = false},
-				State = {PanelRef = nil},
-				Options = {
-					{ Id = "DebugFarmTargeting", Type = "toggle", Label = "Debug Farm Targeting", Description = "Logs Auto Farm and Auto Dungeon target decisions" },
-				}
-			})
-
-			function Feature:GetHandlers()
-				return {
-					DebugFarmTargeting = function(value, _, panelRef)
-						setFeaturePanelRef(self, panelRef)
-						DebugFlags.Farm = value == true
-						debugLog("FarmDebug", "Farm targeting debug " .. (DebugFlags.Farm and "enabled" or "disabled"))
-					end,
-				}
-			end
-
-			function Feature:Cleanup()
-				DebugFlags.Farm = false
-				self.State.PanelRef = nil
-			end
-		end
-
-		--==================================================
-		-- FEATURE: DEBUG MAP DETECTION
-		--==================================================
-		do
-			local Feature = RegisterFeature({
-				Key = "DebugMapDetection", Tab = "Debug", Section = "Farm", Order = 45,
-				Defaults = {DebugMapDetection = false},
-				State = {Running = false, LoopId = 0, PanelRef = nil, PollDelay = DEBUG_POLL_DELAY, LastSnapshot = nil},
-				Options = {
-					{ Id = "DebugMapDetection", Type = "toggle", Label = "Monitor Map Detection", Description = "Logs current MapInfo detection and enemy name mapping" },
-				}
-			})
-
-			bindPollingToggleFeature(Feature, "DebugMapDetection", function(self)
-				local snapshot = buildMapDetectionSnapshot()
-				if self.State.LastSnapshot ~= snapshot then
-					self.State.LastSnapshot = snapshot
-					debugLog("MapDetection", snapshot)
-				end
-			end, {
-				RestartOnStart = true,
-				UseLoopId = true,
-				BeforeStop = function(self)
-					self.State.LastSnapshot = nil
-				end,
-			})
-		end
-
-		--==================================================
-		-- FEATURE: DEBUG CLOSEST ENEMY
-		--==================================================
-		do
-			local Feature = RegisterFeature({
-				Key = "DebugClosestEnemy", Tab = "Debug", Section = "Farm", Order = 50,
-				Defaults = {DebugClosestEnemy = false},
-				State = {Running = false, LoopId = 0, PanelRef = nil, PollDelay = DEBUG_POLL_DELAY, LastSnapshot = nil},
-				Options = {
-					{ Id = "DebugClosestEnemy", Type = "toggle", Label = "Monitor Closest Enemy", Description = "Logs closest enemy attributes, health, distance, and path when it changes" },
-				}
-			})
-
-			bindPollingToggleFeature(Feature, "DebugClosestEnemy", function(self)
-				local enemy = findClosestEnemy(nil, {IgnoreAlive = true})
-				local snapshot = enemy and describeEnemy(enemy, {AllowUnknownHealth = true, IncludeAttributes = true}) or "nil"
-				if self.State.LastSnapshot ~= snapshot then
-					self.State.LastSnapshot = snapshot
-					debugLog("ClosestEnemy", snapshot)
-				end
-			end, {
-				RestartOnStart = true,
-				UseLoopId = true,
-				BeforeStop = function(self)
-					self.State.LastSnapshot = nil
-				end,
-			})
-		end
-
-		--==================================================
-		-- FEATURE: DEBUG SNAPSHOT
-		--==================================================
-		do
-			local Feature = RegisterFeature({
-				Key = "DebugSnapshot", Tab = "Debug", Section = "Tools", Order = 40,
-				Defaults = {},
-				Options = {
-					{ Id = "DumpDebugSnapshot", Type = "button", Label = "Dump Snapshot", Description = "Prints current player, replicated, and dungeon state to console", ButtonText = "Dump" },
-				}
-			})
-
-			function Feature:GetHandlers()
-				return {
-					DumpDebugSnapshot = function()
-						dumpDebugSnapshot()
-					end,
-				}
-			end
-		end
 	end
 }

@@ -29,7 +29,6 @@ return {
 		local lastStartedDungeonInfo = nil
 		local autoFarmZoneItemsCache = {NO_ZONE_OPTION}
 		local autoFarmZoneEnemiesCache = {}
-		local autoFarmZoneDataLoading = false
 		local autoFarmZoneDataLoaded = false
 		local autoFarmSelectedZone = NO_ZONE_OPTION
 
@@ -381,28 +380,43 @@ return {
 			) or false
 		end
 
-		local enemyDisplayLookupCache = nil
+		local enemyDisplayMappingsCache = nil
 
-		local function getEnemyDisplayLookup()
-			if enemyDisplayLookupCache ~= nil then
-				return enemyDisplayLookupCache
+		local function getEnemyDisplayMappings()
+			if enemyDisplayMappingsCache ~= nil then
+				return enemyDisplayMappingsCache
 			end
 
-			local lookup = {}
+			local uniqueLookup = {}
+			local allLookup = {}
 			local duplicates = {}
 			local enemyInfo = getEnemyInfoConfig()
 			if type(enemyInfo) == "table" then
 				local function addLookup(candidate, displayName)
 					local key = string.lower(tostring(candidate or ""))
 					displayName = tostring(displayName or "")
-					if key == "" or displayName == "" or duplicates[key] then
+					if key == "" or displayName == "" then
 						return
 					end
 
-					if lookup[key] == nil then
-						lookup[key] = displayName
-					elseif lookup[key] ~= displayName then
-						lookup[key] = nil
+					local allNames = allLookup[key]
+					if not allNames then
+						allNames = {}
+						allLookup[key] = allNames
+					end
+
+					if not arrayContains(allNames, displayName) then
+						allNames[#allNames + 1] = displayName
+					end
+
+					if duplicates[key] then
+						return
+					end
+
+					if uniqueLookup[key] == nil then
+						uniqueLookup[key] = displayName
+					elseif uniqueLookup[key] ~= displayName then
+						uniqueLookup[key] = nil
 						duplicates[key] = true
 					end
 				end
@@ -419,8 +433,16 @@ return {
 				end
 			end
 
-			enemyDisplayLookupCache = lookup
-			return lookup
+			enemyDisplayMappingsCache = {
+				Unique = uniqueLookup,
+				All = allLookup,
+			}
+
+			return enemyDisplayMappingsCache
+		end
+
+		local function getEnemyDisplayLookup()
+			return getEnemyDisplayMappings().Unique
 		end
 
 		local function getResolvedEnemyDisplayName(enemy)
@@ -585,144 +607,110 @@ return {
 			items[#items + 1] = enemyName
 		end
 
+		local function buildAutoFarmZoneData()
+			local mapInfo = requireIndexerModule({"MapInfo", "MapsInfo"})
+			if type(mapInfo) ~= "table" then
+				return nil, nil
+			end
+
+			local zoneItems = {NO_ZONE_OPTION}
+			local zoneEnemies = {}
+			local internalNameMap = getEnemyDisplayMappings().All
+			local zoneEntries = {}
+
+			for key, info in pairs(mapInfo) do
+				if type(info) == "table" and info.Name ~= nil then
+					zoneEntries[#zoneEntries + 1] = {Key = key, Info = info}
+				end
+			end
+
+			table.sort(zoneEntries, function(a, b)
+				local orderA = tonumber(a.Info.Order)
+				local orderB = tonumber(b.Info.Order)
+				if orderA ~= nil and orderB ~= nil and orderA ~= orderB then
+					return orderA < orderB
+				end
+				return tostring(a.Info.Name or a.Key) < tostring(b.Info.Name or b.Key)
+			end)
+
+			local function collectInternalNames(source, items, seen)
+				if type(source) ~= "table" then
+					return
+				end
+
+				for _, value in pairs(source) do
+					if type(value) == "string" then
+						local key = string.lower(value)
+						if not seen[key] then
+							seen[key] = true
+							items[#items + 1] = value
+						end
+					elseif type(value) == "table" then
+						collectInternalNames(value, items, seen)
+					end
+				end
+			end
+
+			local function getZoneNormalList(zoneInfo)
+				if type(zoneInfo) ~= "table" then
+					return nil
+				end
+
+				if type(zoneInfo.Normal) == "table" then
+					return zoneInfo.Normal
+				end
+
+				for _, value in pairs(zoneInfo) do
+					if type(value) == "table" and type(value.Normal) == "table" then
+						return value.Normal
+					end
+				end
+
+				return nil
+			end
+
+			for _, entry in ipairs(zoneEntries) do
+				local zoneName = tostring(entry.Info.Name or entry.Key)
+				local zoneEnemyItems = {}
+				local zoneEnemySeen = {}
+				local internalNames = {}
+
+				collectInternalNames(getZoneNormalList(entry.Info), internalNames, {})
+
+				for _, internalName in ipairs(internalNames) do
+					local displayNames = internalNameMap[string.lower(tostring(internalName))] or EMPTY_TABLE
+					for _, enemyName in ipairs(displayNames) do
+						addEnemyItem(zoneEnemyItems, zoneEnemySeen, enemyName)
+					end
+				end
+
+				table.sort(zoneEnemyItems)
+
+				if #zoneEnemyItems > 0 then
+					zoneItems[#zoneItems + 1] = zoneName
+					zoneEnemies[zoneName] = {ALL_OPTION}
+					for _, enemyName in ipairs(zoneEnemyItems) do
+						zoneEnemies[zoneName][#zoneEnemies[zoneName] + 1] = enemyName
+					end
+				end
+			end
+
+			return zoneItems, zoneEnemies
+		end
+
 		local function loadAutoFarmZoneData()
-			if autoFarmZoneDataLoading or autoFarmZoneDataLoaded then
+			if autoFarmZoneDataLoaded then
 				return
 			end
 
-			autoFarmZoneDataLoading = true
-
-			task.spawn(function()
-				local zoneItems = {NO_ZONE_OPTION}
-				local zoneEnemies = {}
-
-				local ok, err = pcall(function()
-					local mapInfo = requireIndexerModule({"MapInfo", "MapsInfo"})
-					local enemyInfo = getEnemyInfoConfig()
-					if type(mapInfo) ~= "table" or type(enemyInfo) ~= "table" then
-						return
-					end
-
-					local internalNameMap = {}
-
-					local function addInternalName(internalName, displayName)
-						internalName = string.lower(tostring(internalName or ""))
-						displayName = tostring(displayName or "")
-						if internalName == "" or displayName == "" then
-							return
-						end
-
-						local names = internalNameMap[internalName]
-						if not names then
-							names = {}
-							internalNameMap[internalName] = names
-						end
-
-						if not arrayContains(names, displayName) then
-							names[#names + 1] = displayName
-						end
-					end
-
-					for id, info in pairs(enemyInfo) do
-						if type(info) == "table" then
-							local displayName = tostring(info.Name or "")
-							if displayName ~= "" then
-								for _, candidate in ipairs({id, info.Name, info.Arise, info.Model, info.CustomModel}) do
-									addInternalName(candidate, displayName)
-								end
-							end
-						end
-					end
-
-					local zoneEntries = {}
-					for key, info in pairs(mapInfo) do
-						if type(info) == "table" and info.Name ~= nil then
-							zoneEntries[#zoneEntries + 1] = {Key = key, Info = info}
-						end
-					end
-
-					table.sort(zoneEntries, function(a, b)
-						local orderA = tonumber(a.Info.Order)
-						local orderB = tonumber(b.Info.Order)
-						if orderA ~= nil and orderB ~= nil and orderA ~= orderB then
-							return orderA < orderB
-						end
-						return tostring(a.Info.Name or a.Key) < tostring(b.Info.Name or b.Key)
-					end)
-
-					local function collectInternalNames(source, items, seen)
-						if type(source) ~= "table" then
-							return
-						end
-
-						for _, value in pairs(source) do
-							if type(value) == "string" then
-								if not seen[value] then
-									seen[value] = true
-									items[#items + 1] = value
-								end
-							elseif type(value) == "table" then
-								collectInternalNames(value, items, seen)
-							end
-						end
-					end
-
-					local function getZoneNormalList(zoneInfo)
-						if type(zoneInfo) ~= "table" then
-							return nil
-						end
-
-						if type(zoneInfo.Normal) == "table" then
-							return zoneInfo.Normal
-						end
-
-						for _, value in pairs(zoneInfo) do
-							if type(value) == "table" and type(value.Normal) == "table" then
-								return value.Normal
-							end
-						end
-
-						return nil
-					end
-
-					for _, entry in ipairs(zoneEntries) do
-						local zoneName = tostring(entry.Info.Name or entry.Key)
-						local zoneEnemyItems = {}
-						local zoneEnemySeen = {}
-						local internalNames = {}
-						local normalList = getZoneNormalList(entry.Info)
-
-						collectInternalNames(normalList, internalNames, {})
-
-						for _, internalName in ipairs(internalNames) do
-							local displayNames = internalNameMap[string.lower(tostring(internalName))] or EMPTY_TABLE
-							for _, enemyName in ipairs(displayNames) do
-								addEnemyItem(zoneEnemyItems, zoneEnemySeen, enemyName)
-							end
-						end
-
-						table.sort(zoneEnemyItems)
-
-						if #zoneEnemyItems > 0 then
-							zoneItems[#zoneItems + 1] = zoneName
-							zoneEnemies[zoneName] = {ALL_OPTION}
-							for _, enemyName in ipairs(zoneEnemyItems) do
-								zoneEnemies[zoneName][#zoneEnemies[zoneName] + 1] = enemyName
-							end
-						end
-					end
-				end)
-
-				if ok then
-					autoFarmZoneItemsCache = zoneItems
-					autoFarmZoneEnemiesCache = zoneEnemies
-					autoFarmZoneDataLoaded = true
-				else
-					warn("[AriseCrossover] Failed to load Auto Farm zone data: " .. tostring(err))
-				end
-
-				autoFarmZoneDataLoading = false
-			end)
+			local ok, zoneItems, zoneEnemies = pcall(buildAutoFarmZoneData)
+			if ok and type(zoneItems) == "table" and type(zoneEnemies) == "table" then
+				autoFarmZoneItemsCache = zoneItems
+				autoFarmZoneEnemiesCache = zoneEnemies
+				autoFarmZoneDataLoaded = true
+			elseif not ok then
+				warn("[AriseCrossover] Failed to load Auto Farm zone data: " .. tostring(zoneItems))
+			end
 		end
 
 		local function getAutoFarmZoneItems()
@@ -738,8 +726,6 @@ return {
 			loadAutoFarmZoneData()
 			return autoFarmZoneEnemiesCache[autoFarmSelectedZone] or {}
 		end
-
-		loadAutoFarmZoneData()
 
 		local function getClosestTeleportCFrame(enemyRoot, distance)
 			local characterRoot = getCharacterRoot()

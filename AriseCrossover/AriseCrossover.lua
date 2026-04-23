@@ -96,6 +96,21 @@ return {
 			end
 		end
 
+		local function runFeatureTask(feature, stateKey, callback, onError)
+			if feature.State[stateKey] then return false end
+
+			feature.State[stateKey] = true
+			task.spawn(function()
+				local ok, err = pcall(callback)
+				if not ok and onError then
+					pcall(onError, err)
+				end
+				feature.State[stateKey] = false
+			end)
+
+			return true
+		end
+
 		local function disconnectConnection(connection)
 			if connection and connection.Connected then
 				connection:Disconnect()
@@ -394,6 +409,125 @@ return {
 			return numberText and tonumber(numberText) or nil
 		end
 
+		local indexerModuleCache = {}
+		local enemyInfoLookupCache = nil
+
+		local function getIndexer()
+			if Indexer and Indexer.Parent then return Indexer end
+			Indexer = ReplicatedStorage:FindFirstChild("Indexer")
+			return Indexer
+		end
+
+		local function requireIndexerModule(moduleNames)
+			if type(moduleNames) == "string" then
+				moduleNames = {moduleNames}
+			end
+
+			local indexer = getIndexer()
+			if not indexer then return nil end
+
+			for _, moduleName in ipairs(moduleNames or EMPTY_TABLE) do
+				local cached = indexerModuleCache[moduleName]
+				if cached ~= nil then
+					if cached ~= false then
+						return cached
+					end
+				else
+					local module = indexer:FindFirstChild(moduleName)
+					if module and module:IsA("ModuleScript") then
+						local ok, result = pcall(require, module)
+						if ok and type(result) == "table" then
+							indexerModuleCache[moduleName] = result
+							return result
+						end
+					end
+				end
+			end
+
+			return nil
+		end
+
+		local function getEnemyInfoConfig()
+			return requireIndexerModule({"EnemyInfo", "EnemiesInfo", "Enemies", "MobsInfo"})
+		end
+
+		local function getMapInfoConfig()
+			return requireIndexerModule({"MapInfo", "MapsInfo"})
+		end
+
+		local function addInternalEnemyMapping(lookups, internalName, displayName)
+			internalName = tostring(internalName or "")
+			displayName = tostring(displayName or "")
+			if internalName == "" or displayName == "" then return end
+
+			local mappedNames = lookups.ByInternal[internalName]
+			if not mappedNames then
+				mappedNames = {}
+				lookups.ByInternal[internalName] = mappedNames
+			end
+
+			if not arrayContains(mappedNames, displayName) then
+				mappedNames[#mappedNames + 1] = displayName
+			end
+		end
+
+		local function getEnemyInfoLookups()
+			if enemyInfoLookupCache then return enemyInfoLookupCache end
+
+			local enemyInfo = getEnemyInfoConfig()
+			if not enemyInfo then
+				return {ById = {}, ByInternal = {}, AllDisplayNames = {}}
+			end
+
+			local lookups = {ById = {}, ByInternal = {}, AllDisplayNames = {}}
+			local seenDisplayNames = {}
+
+			for id, info in pairs(enemyInfo) do
+				if type(info) == "table" then
+					local displayName = tostring(info.Name or "")
+					if displayName ~= "" then
+						lookups.ById[tostring(id)] = info
+						if info.Id ~= nil then
+							lookups.ById[tostring(info.Id)] = info
+						end
+
+						addInternalEnemyMapping(lookups, id, displayName)
+						addInternalEnemyMapping(lookups, info.Name, displayName)
+						addInternalEnemyMapping(lookups, info.Arise, displayName)
+						addInternalEnemyMapping(lookups, info.Model, displayName)
+						addInternalEnemyMapping(lookups, info.CustomModel, displayName)
+
+						if not seenDisplayNames[displayName] then
+							seenDisplayNames[displayName] = true
+							lookups.AllDisplayNames[#lookups.AllDisplayNames + 1] = displayName
+						end
+					end
+				end
+			end
+
+			table.sort(lookups.AllDisplayNames)
+			for _, mappedNames in pairs(lookups.ByInternal) do
+				table.sort(mappedNames)
+			end
+
+			enemyInfoLookupCache = lookups
+			return lookups
+		end
+
+		local function getEnemyInfoById(enemyId)
+			if enemyId == nil then return nil end
+			return getEnemyInfoLookups().ById[tostring(enemyId)]
+		end
+
+		local function getEnemyDisplayNamesForInternalName(internalName)
+			if internalName == nil then return EMPTY_TABLE end
+			return getEnemyInfoLookups().ByInternal[tostring(internalName)] or EMPTY_TABLE
+		end
+
+		local function getAllKnownEnemyNames()
+			return getEnemyInfoLookups().AllDisplayNames
+		end
+
 		local function getCharacterRoot()
 			local character = player.Character
 			return character and character:FindFirstChild("HumanoidRootPart") or nil
@@ -432,6 +566,12 @@ return {
 			local title = main and main:FindFirstChild("Title")
 			local titleText = readValueObject(title)
 			if titleText and tostring(titleText) ~= "" then return tostring(titleText) end
+
+			local enemyInfo = getEnemyInfoById(enemy and (enemy:GetAttribute("Id") or enemy:GetAttribute("ID")))
+			if enemyInfo and enemyInfo.Name then return tostring(enemyInfo.Name) end
+
+			local modelNames = getEnemyDisplayNamesForInternalName(enemy and enemy:GetAttribute("Model"))
+			if modelNames[1] then return modelNames[1] end
 
 			local attributeName = enemy and enemy:GetAttribute("Name")
 			if attributeName and tostring(attributeName) ~= "" then return tostring(attributeName) end
@@ -550,7 +690,7 @@ return {
 				if not getEnemyRoot(enemy) then return end
 
 				local isTagged = CollectionService:HasTag(enemy, "EnemyServer")
-				local hasEnemyAttributes = enemy:GetAttribute("Dead") ~= nil or enemy:GetAttribute("HP") ~= nil or enemy:GetAttribute("Id") ~= nil
+				local hasEnemyAttributes = enemy:GetAttribute("Dead") ~= nil or enemy:GetAttribute("HP") ~= nil or enemy:GetAttribute("Id") ~= nil or enemy:GetAttribute("ID") ~= nil or enemy:GetAttribute("Model") ~= nil
 				if not isTagged and not hasEnemyAttributes then return end
 
 				seen[enemy] = true
@@ -607,6 +747,14 @@ return {
 			return findClosestCandidate(getServerEnemyCandidates(), matchFn, options)
 		end
 
+		local function findClosestServerTarget(matchFn)
+			return findClosestServerEnemy(matchFn, SERVER_DEAD_TARGET_OPTIONS)
+		end
+
+		local function isServerTargetAlive(target)
+			return target and target.Parent and isEnemyAlive(target, SERVER_DEAD_TARGET_OPTIONS)
+		end
+
 		local function describeEnemy(enemy, options)
 			if not enemy then return "nil" end
 
@@ -642,14 +790,17 @@ return {
 			return table.concat(parts, " | ")
 		end
 
-		local function getEnemyScanSummary(matchFn, options)
+		local function getEnemyScanSummary(matchFn, options, candidates)
 			options = options or EMPTY_TABLE
-			local enemyFolder = getEnemyFolders()
-			if not enemyFolder then return "enemy-folder-missing" end
+			if not candidates then
+				local enemyFolder = getEnemyFolders()
+				if not enemyFolder then return "enemy-folder-missing" end
+				candidates = enemyFolder:GetChildren()
+			end
 
 			local total, matching, alive = 0, 0, 0
 			local reasons = {}
-			for _, enemy in ipairs(enemyFolder:GetChildren()) do
+			for _, enemy in ipairs(candidates) do
 				total = total + 1
 				if matchFn == nil or matchFn(enemy) then
 					matching = matching + 1
@@ -687,72 +838,97 @@ return {
 			return isDungeonActive() and not isExcludedDungeonMode()
 		end
 
-		local knownEnemyNameCache = nil
+		local function getCurrentWorldOrder()
+			return tonumber(ReplicatedStorage:GetAttribute("World") or player:GetAttribute("World"))
+		end
 
-		local function getKnownEnemyNames()
-			if knownEnemyNameCache then return knownEnemyNameCache end
+		local function getCurrentMapName()
+			local mapName = ReplicatedStorage:GetAttribute("MapName")
+				or ReplicatedStorage:GetAttribute("Map")
+				or ReplicatedStorage:GetAttribute("WorldName")
+				or player:GetAttribute("MapName")
+				or player:GetAttribute("Map")
+				or player:GetAttribute("WorldName")
 
-			local names = {}
-			local infoModule = nil
+			mapName = mapName and tostring(mapName) or nil
+			return mapName ~= "" and mapName or nil
+		end
 
-			if Indexer then
-				for _, moduleName in ipairs({"EnemiesInfo", "EnemyInfo", "Enemies", "MobsInfo"}) do
-					local candidate = Indexer:FindFirstChild(moduleName)
-					if candidate and candidate:IsA("ModuleScript") then
-						infoModule = candidate
-						break
+		local function isMapInfoEntry(value)
+			return type(value) == "table" and (value.Name ~= nil or value.Order ~= nil or value.Dungeons ~= nil)
+		end
+
+		local function getCurrentMapInfo()
+			local mapInfo = getMapInfoConfig()
+			if type(mapInfo) ~= "table" then return nil end
+			if isMapInfoEntry(mapInfo) then return mapInfo end
+
+			local currentOrder = getCurrentWorldOrder()
+			local currentMapName = getCurrentMapName()
+
+			for key, info in pairs(mapInfo) do
+				if isMapInfoEntry(info) then
+					if currentOrder ~= nil and (tonumber(key) == currentOrder or tonumber(info.Order) == currentOrder or tonumber(info.World) == currentOrder) then
+						return info
+					end
+
+					if currentMapName ~= nil and (tostring(key) == currentMapName or tostring(info.Name) == currentMapName) then
+						return info
 					end
 				end
 			end
 
-			if not infoModule then return names end
+			return nil
+		end
 
-			local ok, enemyInfo = pcall(require, infoModule)
-			if not ok or type(enemyInfo) ~= "table" then return names end
+		local function addEnemyItem(items, seen, enemyName)
+			enemyName = tostring(enemyName or "")
+			if enemyName == "" or seen[enemyName] then return end
 
-			local seen = {}
-			for _, info in pairs(enemyInfo) do
-				if type(info) == "table" and type(info.Name) == "string" and info.Name ~= "" and not seen[info.Name] then
-					seen[info.Name] = true
-					names[#names + 1] = info.Name
+			seen[enemyName] = true
+			items[#items + 1] = enemyName
+		end
+
+		local ignoredMapEnemyKeys = {
+			DungeonSpawns = true,
+			Dungeons = true,
+			Image = true,
+			Name = true,
+			Order = true,
+		}
+
+		local function collectMapEnemyItems(source, items, seen)
+			if type(source) ~= "table" then return end
+
+			for key, value in pairs(source) do
+				if type(value) == "string" then
+					for _, enemyName in ipairs(getEnemyDisplayNamesForInternalName(value)) do
+						addEnemyItem(items, seen, enemyName)
+					end
+				elseif type(value) == "table" and not ignoredMapEnemyKeys[key] then
+					collectMapEnemyItems(value, items, seen)
 				end
 			end
-
-			table.sort(names)
-			knownEnemyNameCache = names
-			return names
 		end
 
 		local function getAutoFarmEnemyItems()
 			local items = {ALL_OPTION}
 			local seen = {[ALL_OPTION] = true}
-			local enemyFolder = getEnemyFolders()
 
-			if enemyFolder then
-				for _, enemy in ipairs(enemyFolder:GetChildren()) do
-					local enemyName = getEnemyDisplayName(enemy)
-					if enemyName and enemyName ~= "" and not seen[enemyName] then
-						seen[enemyName] = true
-						items[#items + 1] = enemyName
-					end
-				end
-			end
+			collectMapEnemyItems(getCurrentMapInfo(), items, seen)
 
 			if #items == 1 then
-				for _, enemyName in ipairs(getKnownEnemyNames()) do
-					if not seen[enemyName] then
-						seen[enemyName] = true
-						items[#items + 1] = enemyName
-					end
+				for _, enemyName in ipairs(getAllKnownEnemyNames()) do
+					addEnemyItem(items, seen, enemyName)
 				end
-			else
-				table.sort(items, function(a, b)
-					if a == b then return false end
-					if a == ALL_OPTION then return true end
-					if b == ALL_OPTION then return false end
-					return a < b
-				end)
 			end
+
+			table.sort(items, function(a, b)
+				if a == b then return false end
+				if a == ALL_OPTION then return true end
+				if b == ALL_OPTION then return false end
+				return a < b
+			end)
 
 			return items
 		end
@@ -887,7 +1063,7 @@ return {
 			local main = Workspace:FindFirstChild("__Main")
 			if not main then return nil end
 
-			return main:FindFirstChild("__Dungeon") or main:FindFirstChild("Dungeon") or main:FindFirstChild("__Dungeon", true)
+			return main:FindFirstChild("__Dungeon")
 		end
 
 		local function makeDungeonLabel(info)
@@ -907,9 +1083,8 @@ return {
 			return attrs
 		end
 
-		local function isDungeonCandidate(instance, attrs)
-			if not instance or not attrs then return false end
-
+		local function hasDungeonAttributes(attrs)
+			if not attrs then return false end
 			local hasCoreInfo = attrs.Dungeon ~= nil or attrs.DungeonMap ~= nil or attrs.MapName ~= nil
 			local hasIdentifier = attrs.ID ~= nil or attrs.DoubleID ~= nil or attrs._C ~= nil
 			return hasCoreInfo and hasIdentifier
@@ -919,7 +1094,7 @@ return {
 			if not dungeonObject then return nil end
 
 			local attrs = getSafeAttributes(dungeonObject)
-			if not isDungeonCandidate(dungeonObject, attrs) then return nil end
+			if not hasDungeonAttributes(attrs) then return nil end
 
 			local mapName = attrs.MapName or attrs.Dungeon or attrs.DungeonMap
 			local dungeonName = attrs.Dungeon or mapName or attrs.DungeonMap
@@ -948,7 +1123,6 @@ return {
 			local seenInstances = {}
 			local seenKeys = {}
 			local folder = getLiveDungeonFolder()
-			local main = Workspace:FindFirstChild("__Main")
 
 			local function addCandidate(dungeonObject)
 				if not dungeonObject or seenInstances[dungeonObject] then return end
@@ -961,34 +1135,11 @@ return {
 				entries[#entries + 1] = info
 			end
 
-			local function scanContainer(container)
-				if not container then return end
-
-				addCandidate(container)
-
-				local okChildren, children = pcall(function()
-					return container:GetChildren()
-				end)
-				if okChildren and type(children) == "table" then
-					for _, child in ipairs(children) do
-						addCandidate(child)
-					end
-				end
-
-				local okDescendants, descendants = pcall(function()
-					return container:GetDescendants()
-				end)
-				if okDescendants and type(descendants) == "table" then
-					for _, descendant in ipairs(descendants) do
-						addCandidate(descendant)
-					end
-				end
-			end
-
 			if folder then
-				scanContainer(folder)
-			elseif main then
-				scanContainer(main)
+				addCandidate(folder)
+				for _, dungeonObject in ipairs(folder:GetDescendants()) do
+					addCandidate(dungeonObject)
+				end
 			end
 
 			table.sort(entries, function(a, b)
@@ -1300,15 +1451,11 @@ return {
 			end
 
 			function Feature:FindTarget(selectedEnemies)
-				return findClosestEnemy(self:GetMatchFn(selectedEnemies), SERVER_DEAD_TARGET_OPTIONS)
+				return findClosestServerTarget(self:GetMatchFn(selectedEnemies))
 			end
 
 			function Feature:TargetMatches(target, selectedEnemies)
 				return target and target.Parent and self:MatchesSelection(target, selectedEnemies)
-			end
-
-			function Feature:SetTarget(target)
-				setFeatureTarget(self, target)
 			end
 
 			function Feature:Tick(values)
@@ -1319,15 +1466,15 @@ return {
 				end
 
 				local target = self.State.CurrentTarget
-				if not self:TargetMatches(target, selectedEnemies) or not isEnemyAlive(target, SERVER_DEAD_TARGET_OPTIONS) then
+				if not self:TargetMatches(target, selectedEnemies) or not isServerTargetAlive(target) then
 					local selectionLabel = self:FormatSelection(selectedEnemies)
 					local newTarget = self:FindTarget(selectedEnemies)
 					if newTarget then
 						featureDebugLog(self, "AutoFarm", "Target selected: " .. describeEnemy(newTarget, SERVER_DEAD_TARGET_OPTIONS))
 					else
-						featureDebugLog(self, "AutoFarm", "No alive target for " .. tostring(selectionLabel) .. " | " .. getEnemyScanSummary(self:GetMatchFn(selectedEnemies), SERVER_DEAD_TARGET_OPTIONS))
+						featureDebugLog(self, "AutoFarm", "No alive target for " .. tostring(selectionLabel) .. " | " .. getEnemyScanSummary(self:GetMatchFn(selectedEnemies), SERVER_DEAD_TARGET_OPTIONS, getServerEnemyCandidates()))
 					end
-					self:SetTarget(newTarget)
+					setFeatureTarget(self, newTarget)
 				end
 			end
 
@@ -1360,11 +1507,7 @@ return {
 			})
 
 			function Feature:FindTarget()
-				return findClosestServerEnemy(nil, SERVER_DEAD_TARGET_OPTIONS)
-			end
-
-			function Feature:SetTarget(target)
-				setFeatureTarget(self, target)
+				return findClosestServerTarget(nil)
 			end
 
 			function Feature:Tick()
@@ -1375,14 +1518,14 @@ return {
 				end
 
 				local target = self.State.CurrentTarget
-				if not target or not target.Parent or not isEnemyAlive(target, SERVER_DEAD_TARGET_OPTIONS) then
+				if not isServerTargetAlive(target) then
 					local newTarget = self:FindTarget()
 					if newTarget then
 						featureDebugLog(self, "AutoDungeon", "Target selected: " .. describeEnemy(newTarget, SERVER_DEAD_TARGET_OPTIONS))
 					else
 						featureDebugLog(self, "AutoDungeon", "No alive dungeon target | " .. buildDungeonRuntimeSnapshot())
 					end
-					self:SetTarget(newTarget)
+					setFeatureTarget(self, newTarget)
 				end
 			end
 
@@ -1412,37 +1555,23 @@ return {
 				}
 			})
 
-			function Feature:CreateDungeon(dungeonInfo)
-				return sendDungeonAction("Create", buildDungeonActionPayload(nil, dungeonInfo))
-			end
-
-			function Feature:StartDungeon(dungeonInfo)
-				return sendDungeonAction("Start", buildDungeonActionPayload(player.UserId, dungeonInfo))
-			end
-
 			function Feature:Run(panelRef)
 				local values = setFeaturePanelRef(self, panelRef)
-				if self.State.Starting then return end
 
 				local dungeonInfo = getSelectedDungeonInfo(values and values.SelectedDungeon)
 				if not dungeonInfo then return end
 
-				self.State.Starting = true
+				runFeatureTask(self, "Starting", function()
+					local ownDungeon = getOwnDungeonInfo()
+					if not ownDungeon then
+						sendDungeonAction("Create", buildDungeonActionPayload(nil, dungeonInfo))
+						task.wait(DUNGEON_CREATE_DELAY)
+					end
 
-				task.spawn(function()
-					pcall(function()
-						local ownDungeon = getOwnDungeonInfo()
-						if not ownDungeon then
-							self:CreateDungeon(dungeonInfo)
-							task.wait(DUNGEON_CREATE_DELAY)
-						end
-
-						ownDungeon = getOwnDungeonInfo() or waitForOwnDungeonInfo(DUNGEON_INSTANCE_WAIT)
-						if ownDungeon then
-							self:StartDungeon(dungeonInfo)
-						end
-					end)
-					self.State.Starting = false
+					ownDungeon = getOwnDungeonInfo() or waitForOwnDungeonInfo(DUNGEON_INSTANCE_WAIT)
+					if ownDungeon then
+						sendDungeonAction("Start", buildDungeonActionPayload(player.UserId, dungeonInfo))
+					end
 				end)
 			end
 
@@ -1474,17 +1603,8 @@ return {
 				}
 			})
 
-			function Feature:CreateTimeTrial()
-				return sendTimeTrialAction("Create")
-			end
-
-			function Feature:StartTimeTrial(difficulty, dungeonId)
-				return startTimeTrial(difficulty, dungeonId)
-			end
-
 			function Feature:Run(panelRef)
 				local values = setFeaturePanelRef(self, panelRef)
-				if self.State.Starting then return end
 
 				local difficulty = values and values.TimeTrialDifficulty
 				if not isValidTimeTrialDifficulty(difficulty) then
@@ -1492,33 +1612,27 @@ return {
 					return
 				end
 
-				self.State.Starting = true
-
-				task.spawn(function()
-					local ok, err = pcall(function()
-						local ownTimeTrial = getOwnTimeTrialInfo()
-						if not ownTimeTrial then
-							timeTrialDebugLog("No existing Time Trial instance; creating")
-							self:CreateTimeTrial()
-							task.wait(DUNGEON_CREATE_DELAY)
-						else
-							timeTrialDebugLog("Existing Time Trial instance found: " .. ownTimeTrial:GetFullName())
-						end
-
-						ownTimeTrial = getOwnTimeTrialInfo() or waitForOwnTimeTrialInfo(DUNGEON_INSTANCE_WAIT)
-						local dungeonId = getTimeTrialDungeonId(ownTimeTrial)
-						timeTrialDebugLog("Resolved Time Trial dungeon id=" .. tostring(dungeonId))
-
-						if dungeonId ~= nil then
-							self:StartTimeTrial(difficulty, dungeonId)
-						else
-							timeTrialDebugLog("Could not resolve Time Trial dungeon id after create")
-						end
-					end)
-					if not ok then
-						timeTrialDebugLog("Run failed err=" .. tostring(err))
+				runFeatureTask(self, "Starting", function()
+					local ownTimeTrial = getOwnTimeTrialInfo()
+					if not ownTimeTrial then
+						timeTrialDebugLog("No existing Time Trial instance; creating")
+						sendTimeTrialAction("Create")
+						task.wait(DUNGEON_CREATE_DELAY)
+					else
+						timeTrialDebugLog("Existing Time Trial instance found: " .. ownTimeTrial:GetFullName())
 					end
-					self.State.Starting = false
+
+					ownTimeTrial = getOwnTimeTrialInfo() or waitForOwnTimeTrialInfo(DUNGEON_INSTANCE_WAIT)
+					local dungeonId = getTimeTrialDungeonId(ownTimeTrial)
+					timeTrialDebugLog("Resolved Time Trial dungeon id=" .. tostring(dungeonId))
+
+					if dungeonId ~= nil then
+						startTimeTrial(difficulty, dungeonId)
+					else
+						timeTrialDebugLog("Could not resolve Time Trial dungeon id after create")
+					end
+				end, function(err)
+					timeTrialDebugLog("Run failed err=" .. tostring(err))
 				end)
 			end
 
@@ -1616,14 +1730,10 @@ return {
 			function Feature:Run(panelRef)
 				local values = setFeaturePanelRef(self, panelRef)
 				local selectedLocation = values and values.SelectedTeleportLocation
-				if self.State.Teleporting or selectedLocation == nil or selectedLocation == NO_TELEPORT_OPTION then return end
+				if selectedLocation == nil or selectedLocation == NO_TELEPORT_OPTION then return end
 
-				self.State.Teleporting = true
-				task.spawn(function()
-					pcall(function()
-						teleportToSavedLocation(selectedLocation)
-					end)
-					self.State.Teleporting = false
+				runFeatureTask(self, "Teleporting", function()
+					teleportToSavedLocation(selectedLocation)
 				end)
 			end
 

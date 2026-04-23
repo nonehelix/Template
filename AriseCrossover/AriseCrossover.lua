@@ -16,7 +16,8 @@ return {
 		local ALL_OPTION, NO_ZONE_OPTION, NO_DUNGEON_OPTION, NO_TELEPORT_OPTION = "All", "Select zone", "Select dungeon", "Select location"
 		local EMPTY_TABLE = {}
 		local AUTO_CLICK_POLL_DELAY, AUTO_FARM_POLL_DELAY, SHADOW_EXCHANGE_POLL_DELAY = 0.5, 0.25, 0.5
-		local DUNGEON_CREATE_DELAY, DUNGEON_INSTANCE_WAIT = 0.5, 6
+		local AUTO_FARM_TELEPORT_DELAY = 0.5
+		local DUNGEON_CREATE_DELAY, DUNGEON_INSTANCE_WAIT, DUNGEON_RESTART_RETRY_DELAY = 0.5, 6, 3
 		local TELEPORT_SPAWN_NAMES = {"Arena", "JejuEvent", "JungleEvent", "WinterEvent", "XmasWorld"}
 		local GUILD_HALL_LOCATION = "Guild Hall"
 		local TIME_TRIAL_BRIDGE_TOKEN = string.char(17)
@@ -33,7 +34,16 @@ return {
 		local autoFarmSelectedZone = NO_ZONE_OPTION
 
 		local function newTargetingState()
-			return {Running = false, LoopId = 0, PanelRef = nil, PollDelay = AUTO_FARM_POLL_DELAY, TeleportDistance = 7, CurrentTarget = nil}
+			return {
+				Running = false,
+				LoopId = 0,
+				PanelRef = nil,
+				PollDelay = AUTO_FARM_POLL_DELAY,
+				TeleportDistance = 7,
+				CurrentTarget = nil,
+				LastTeleportAt = nil,
+				TeleportRequestId = 0,
+			}
 		end
 
 		local function getPanelValues(panelRef) return panelRef and panelRef.Config and panelRef.Config.Values or nil end
@@ -763,14 +773,55 @@ return {
 			local character = player.Character
 			if character then
 				character:PivotTo(getClosestTeleportCFrame(enemyRoot, distance))
+				return true
 			end
+
+			return false
 		end
 
 		local function setFeatureTarget(feature, target)
 			if feature.State.CurrentTarget == target then return end
 
 			feature.State.CurrentTarget = target
-			if target then teleportToEnemy(target, feature.State.TeleportDistance) end
+			feature.State.TeleportRequestId = (feature.State.TeleportRequestId or 0) + 1
+			if target and teleportToEnemy(target, feature.State.TeleportDistance) then
+				feature.State.LastTeleportAt = os.clock()
+			end
+		end
+
+		local function setFeatureTargetWithDelay(feature, target, delay)
+			if feature.State.CurrentTarget == target then return end
+
+			feature.State.CurrentTarget = target
+			feature.State.TeleportRequestId = (feature.State.TeleportRequestId or 0) + 1
+			if not target then return end
+
+			local requestId = feature.State.TeleportRequestId
+			local minimumDelay = math.max(tonumber(delay) or 0, 0)
+			local remainingDelay = 0
+			if minimumDelay > 0 and feature.State.LastTeleportAt ~= nil then
+				remainingDelay = math.max(minimumDelay - (os.clock() - feature.State.LastTeleportAt), 0)
+			end
+
+			local function teleportCurrentTarget()
+				if feature.State.TeleportRequestId ~= requestId or feature.State.CurrentTarget ~= target or not feature.State.Running then
+					return
+				end
+
+				if teleportToEnemy(target, feature.State.TeleportDistance) then
+					feature.State.LastTeleportAt = os.clock()
+				end
+			end
+
+			if remainingDelay <= 0 then
+				teleportCurrentTarget()
+				return
+			end
+
+			task.spawn(function()
+				task.wait(remainingDelay)
+				teleportCurrentTarget()
+			end)
 		end
 
 		local function tickAutoServerTargetFeature(feature, isActiveFn)
@@ -1206,11 +1257,12 @@ return {
 		do
 			local Feature = RegisterFeature({
 				Key = "AutoFarm", Tab = "Auto Farm", Order = 25,
-				Defaults = {AutoFarmZone = NO_ZONE_OPTION, AutoFarmEnemy = {}, AutoFarm = false},
+				Defaults = {AutoFarmZone = NO_ZONE_OPTION, AutoFarmEnemy = {}, AutoFarmTeleportDelay = AUTO_FARM_TELEPORT_DELAY, AutoFarm = false},
 				State = newTargetingState(),
 				Options = {
 					{ Id = "AutoFarmZone", Type = "select", Label = "Zone", Description = "Select zone enemy list", Items = getAutoFarmZoneItems },
 					{ Id = "AutoFarmEnemy", Type = "multiselect", Label = "Enemy", Description = "Select enemies to farm", Items = getAutoFarmEnemyItems, EmptyText = "Nothing selected" },
+					{ Id = "AutoFarmTeleportDelay", Type = "number", Label = "Teleport Delay", Description = "Minimum seconds between retarget teleports", Min = 0, Max = 10 },
 					{ Id = "AutoFarm", Type = "toggle", Label = "Auto Farm", Description = "Teleports to the closest selected enemy and retargets on death" },
 				}
 			})
@@ -1257,12 +1309,13 @@ return {
 				if #selectedEnemies == 0 then return end
 
 				local target = self.State.CurrentTarget
+				local teleportDelay = math.max(tonumber(values and values.AutoFarmTeleportDelay) or AUTO_FARM_TELEPORT_DELAY, 0)
 				local matchFn = arrayContains(selectedEnemies, ALL_OPTION) and nil or function(enemy)
 					return self:MatchesSelection(enemy, selectedEnemies)
 				end
 
 				if not (target and target.Parent and self:MatchesSelection(target, selectedEnemies)) or not isTargetAlive(target) then
-					setFeatureTarget(self, findClosestServerTarget(matchFn))
+					setFeatureTargetWithDelay(self, findClosestServerTarget(matchFn), teleportDelay)
 				end
 			end
 
@@ -1279,6 +1332,7 @@ return {
 						Feature:SetZone(value, panelRef)
 					end,
 					AutoFarmEnemy = buildRestartHandler(Feature, "AutoFarm"),
+					AutoFarmTeleportDelay = buildRestartHandler(Feature, "AutoFarm"),
 				},
 			})
 		end
@@ -1378,7 +1432,7 @@ return {
 			local Feature = RegisterFeature({
 				Key = "DungeonRestart", Tab = "Dungeon", Order = 20,
 				Defaults = {AutoRestartDungeon = false},
-				State = {Running = false, LoopId = 0, PanelRef = nil, SawDungeonEnd = false, Restarting = false},
+				State = {Running = false, LoopId = 0, PanelRef = nil, Restarting = false, LastRestartAttempt = 0},
 				Options = {
 					{ Id = "AutoRestartDungeon", Type = "toggle", Label = "Auto Restart", Description = "Restarts the dungeon when the end countdown appears" },
 				}
@@ -1391,23 +1445,30 @@ return {
 					return
 				end
 
-				runFeatureTask(self, "Restarting", function()
+				local started = runFeatureTask(self, "Restarting", function()
 					startDungeonInstance(dungeonInfo)
 				end)
+
+				if started then
+					self.State.LastRestartAttempt = os.clock()
+				end
 			end
 
 			function Feature:Tick()
 				local showingEndText = isDungeonEndingNow()
 				if not showingEndText then
-					self.State.SawDungeonEnd = false
+					self.State.LastRestartAttempt = 0
 					return
 				end
 
-				if self.State.SawDungeonEnd then
+				if self.State.Restarting then
 					return
 				end
 
-				self.State.SawDungeonEnd = true
+				if os.clock() - (self.State.LastRestartAttempt or 0) < DUNGEON_RESTART_RETRY_DELAY then
+					return
+				end
+
 				self:Run(self.State.PanelRef)
 			end
 
@@ -1418,7 +1479,7 @@ return {
 				UseLoopId = true,
 				PollDelay = 0.5,
 				BeforeStop = function(self)
-					self.State.SawDungeonEnd = false
+					self.State.LastRestartAttempt = 0
 				end,
 			})
 		end

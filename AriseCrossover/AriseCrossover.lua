@@ -580,13 +580,32 @@ return {
 						end
 					end
 
+					local function getZoneNormalList(zoneInfo)
+						if type(zoneInfo) ~= "table" then
+							return nil
+						end
+
+						if type(zoneInfo.Normal) == "table" then
+							return zoneInfo.Normal
+						end
+
+						for _, value in pairs(zoneInfo) do
+							if type(value) == "table" and type(value.Normal) == "table" then
+								return value.Normal
+							end
+						end
+
+						return nil
+					end
+
 					for _, entry in ipairs(zoneEntries) do
 						local zoneName = tostring(entry.Info.Name or entry.Key)
 						local zoneEnemyItems = {}
 						local zoneEnemySeen = {}
 						local internalNames = {}
+						local normalList = getZoneNormalList(entry.Info)
 
-						collectInternalNames(entry.Info.Normal, internalNames, {})
+						collectInternalNames(normalList, internalNames, {})
 
 						for _, internalName in ipairs(internalNames) do
 							local displayNames = internalNameMap[string.lower(tostring(internalName))] or EMPTY_TABLE

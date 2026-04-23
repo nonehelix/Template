@@ -8,7 +8,7 @@ return {
 		--==================================================
 		-- TABS
 		--==================================================
-		RegisterTabs({{Name = "Combat", Order = 20}, {Name = "Dungeon", Order = 30}, {Name = "Teleport", Order = 40}, {Name = "Debug", Order = 50}})
+		RegisterTabs({{Name = "Combat", Order = 20}, {Name = "Dungeon", Order = 30}, {Name = "Time Trial", Order = 40}, {Name = "Teleport", Order = 50}, {Name = "Debug", Order = 60}})
 
 		--==================================================
 		-- GAME REFERENCES
@@ -25,6 +25,9 @@ return {
 		local DUNGEON_CREATE_DELAY, DUNGEON_INSTANCE_WAIT = 0.5, 6
 		local TELEPORT_SPAWN_NAMES = {"Arena", "JejuEvent", "JungleEvent", "WinterEvent", "XmasWorld"}
 		local GUILD_HALL_LOCATION = "Guild Hall"
+		local TIME_TRIAL_DUNGEON_ID = 10822032599
+		local TIME_TRIAL_BRIDGE_TOKEN = string.char(17)
+		local TIME_TRIAL_DIFFICULTIES = {"Easy", "Normal", "Hard", "Insane", "Ultra", "Nightmare", "Chaotic"}
 		local TELEPORT_STATIC_LOCATIONS = {
 			[GUILD_HALL_LOCATION] = CFrame.new(9557.8457, -204.696213, 106.217346, 1, 0, 0, 0, 1, 0, 0, 0, 1) * CFrame.Angles(0, math.pi, 0),
 		}
@@ -337,6 +340,18 @@ return {
 
 			local ok = pcall(function()
 				bridge:Fire(payload)
+			end)
+
+			return ok
+		end
+
+		local function fireBridgeDataRemote(payload)
+			local bridgeModule = ReplicatedStorage:FindFirstChild("BridgeNet2")
+			local remoteEvent = bridgeModule and bridgeModule:FindFirstChild("dataRemoteEvent")
+			if not remoteEvent or type(payload) ~= "table" then return false end
+
+			local ok = pcall(function()
+				remoteEvent:FireServer(payload)
 			end)
 
 			return ok
@@ -986,6 +1001,28 @@ return {
 			return fireGeneralEvent(payload)
 		end
 
+		local function getTimeTrialDifficultyItems()
+			return TIME_TRIAL_DIFFICULTIES
+		end
+
+		local function isValidTimeTrialDifficulty(difficulty)
+			return arrayContains(TIME_TRIAL_DIFFICULTIES, difficulty)
+		end
+
+		local function startTimeTrial(difficulty)
+			if not isValidTimeTrialDifficulty(difficulty) then return false end
+
+			return fireBridgeDataRemote({
+				{
+					Dungeon = TIME_TRIAL_DUNGEON_ID,
+					Action = "Start",
+					Diff = difficulty,
+					Event = "TimeTrialAction",
+				},
+				TIME_TRIAL_BRIDGE_TOKEN,
+			})
+		end
+
 		local function buildDungeonActionPayload(dungeonOwner, dungeonInfo)
 			local isTable = type(dungeonInfo) == "table"
 			local dungeon = isTable and (dungeonInfo.Dungeon or dungeonInfo.Key) or dungeonInfo
@@ -1301,6 +1338,37 @@ return {
 
 			function Feature:Cleanup()
 				self.State.Starting = false
+				self.State.PanelRef = nil
+			end
+		end
+
+		--==================================================
+		-- FEATURE: TIME TRIAL STARTER
+		--==================================================
+		do
+			local Feature = RegisterFeature({
+				Key = "TimeTrialStarter", Tab = "Time Trial", Section = "Start", Order = 10,
+				Defaults = {TimeTrialDifficulty = "Easy"},
+				State = {PanelRef = nil},
+				Options = {
+					{ Id = "TimeTrialDifficulty", Type = "select", Label = "Difficulty", Description = "Select Time Trial difficulty", Items = getTimeTrialDifficultyItems },
+					{ Id = "StartTimeTrial", Type = "button", Label = "Start Time Trial", Description = "Starts Time Trial with selected difficulty", ButtonText = "Start" },
+				}
+			})
+
+			function Feature:Run(panelRef)
+				local values = setFeaturePanelRef(self, panelRef)
+				startTimeTrial(values and values.TimeTrialDifficulty)
+			end
+
+			function Feature:GetHandlers()
+				return {
+					TimeTrialDifficulty = buildPanelRefHandler(self),
+					StartTimeTrial = function(_, _, panelRef) self:Run(panelRef) end,
+				}
+			end
+
+			function Feature:Cleanup()
 				self.State.PanelRef = nil
 			end
 		end

@@ -95,6 +95,10 @@ return {
 			end
 		end
 
+		local function buildPanelRefHandler(feature)
+			return function(_, _, panelRef) setFeaturePanelRef(feature, panelRef) end
+		end
+
 		local function buildRestartHandler(feature, enabledKey)
 			return function(_, values, panelRef)
 				setFeaturePanelRef(feature, panelRef)
@@ -106,9 +110,7 @@ return {
 
 		local function buildActionHandlers(feature, selectOptionId, buttonOptionId)
 			return {
-				[selectOptionId] = function(_, _, panelRef)
-					setFeaturePanelRef(feature, panelRef)
-				end,
+				[selectOptionId] = buildPanelRefHandler(feature),
 				[buttonOptionId] = function(_, _, panelRef)
 					feature:Run(panelRef)
 				end,
@@ -997,7 +999,15 @@ return {
 			local characterRoot = getCharacterRoot()
 			local promptCFrame = getPromptTargetCFrame(portalPrompt)
 			if character and characterRoot and promptCFrame then
-				character:PivotTo(promptCFrame * CFrame.new(0, 0, 3))
+				local offsetCFrame = promptCFrame * CFrame.new(0, 0, 3)
+				local targetPosition = offsetCFrame.Position
+				local lookPosition = promptCFrame.Position
+				local currentHeight = characterRoot.Position.Y
+
+				targetPosition = Vector3.new(targetPosition.X, currentHeight, targetPosition.Z)
+				lookPosition = Vector3.new(lookPosition.X, currentHeight, lookPosition.Z)
+
+				character:PivotTo(CFrame.lookAt(targetPosition, lookPosition))
 				task.wait(0.3)
 			end
 

@@ -362,6 +362,14 @@ return {
 		end
 
 		local enemyDisplayLookupCache = nil
+		local function isBruteEnemyInfo(info)
+			if type(info) ~= "table" then
+				return false
+			end
+
+			local name = tostring(info.Name or "")
+			return info.TypeG == "BrutesDefeated" or string.find(name, "Brute", 1, true) ~= nil
+		end
 
 		local function getEnemyDisplayLookup()
 			if enemyDisplayLookupCache ~= nil then
@@ -369,18 +377,34 @@ return {
 			end
 
 			local lookup = {}
+			local duplicates = {}
 			local enemyInfo = getEnemyInfoConfig()
 			if type(enemyInfo) == "table" then
+				local function addLookupKey(key, displayName)
+					key = string.lower(tostring(key or ""))
+					displayName = tostring(displayName or "")
+					if key == "" or displayName == "" or duplicates[key] then
+						return
+					end
+
+					local existing = lookup[key]
+					if existing == nil then
+						lookup[key] = displayName
+					elseif existing ~= displayName then
+						lookup[key] = nil
+						duplicates[key] = true
+					end
+				end
+
 				for id, info in pairs(enemyInfo) do
 					if type(info) == "table" then
 						local displayName = tostring(info.Name or "")
 						if displayName ~= "" then
-							for _, candidate in ipairs({id, info.Name, info.Arise, info.Model, info.CustomModel}) do
-								local key = string.lower(tostring(candidate or ""))
-								if key ~= "" and lookup[key] == nil then
-									lookup[key] = displayName
-								end
-							end
+							addLookupKey(id, displayName)
+							addLookupKey(info.Name, displayName)
+							addLookupKey(info.Model, displayName)
+							addLookupKey(info.Arise, displayName)
+							addLookupKey(info.CustomModel, displayName)
 						end
 					end
 				end
@@ -561,31 +585,12 @@ return {
 
 					local internalNameMap = {}
 
-					local function addInternalName(internalName, displayName)
-						internalName = string.lower(tostring(internalName or ""))
-						displayName = tostring(displayName or "")
-						if internalName == "" or displayName == "" then
-							return
-						end
-
-						local names = internalNameMap[internalName]
-						if not names then
-							names = {}
-							internalNameMap[internalName] = names
-						end
-
-						if not arrayContains(names, displayName) then
-							names[#names + 1] = displayName
-						end
-					end
-
 					for id, info in pairs(enemyInfo) do
-						if type(info) == "table" then
+						if type(info) == "table" and not isBruteEnemyInfo(info) then
 							local displayName = tostring(info.Name or "")
-							if displayName ~= "" then
-								for _, candidate in ipairs({id, info.Name, info.Arise, info.Model, info.CustomModel}) do
-									addInternalName(candidate, displayName)
-								end
+							local internalName = string.lower(tostring(info.Arise or ""))
+							if displayName ~= "" and internalName ~= "" and internalNameMap[internalName] == nil then
+								internalNameMap[internalName] = displayName
 							end
 						end
 					end
@@ -651,8 +656,8 @@ return {
 						collectInternalNames(normalList, internalNames, {})
 
 						for _, internalName in ipairs(internalNames) do
-							local displayNames = internalNameMap[string.lower(tostring(internalName))] or EMPTY_TABLE
-							for _, enemyName in ipairs(displayNames) do
+							local enemyName = internalNameMap[string.lower(tostring(internalName))]
+							if enemyName then
 								addEnemyItem(zoneEnemyItems, zoneEnemySeen, enemyName)
 							end
 						end

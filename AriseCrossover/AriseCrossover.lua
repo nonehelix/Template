@@ -13,7 +13,7 @@ return {
 		--==================================================
 		-- HELPERS
 		--==================================================
-		local ALL_OPTION, NO_ZONE_OPTION, NO_ENEMY_OPTION, NO_DUNGEON_OPTION, NO_TELEPORT_OPTION = "All", "Select zone", "Select enemy", "Select dungeon", "Select location"
+		local ALL_OPTION, NO_ZONE_OPTION, NO_DUNGEON_OPTION, NO_TELEPORT_OPTION = "All", "Select zone", "Select dungeon", "Select location"
 		local EMPTY_TABLE = {}
 		local AUTO_CLICK_POLL_DELAY, AUTO_FARM_POLL_DELAY, SHADOW_EXCHANGE_POLL_DELAY = 0.5, 0.25, 0.5
 		local DUNGEON_CREATE_DELAY, DUNGEON_INSTANCE_WAIT = 0.5, 6
@@ -52,7 +52,7 @@ return {
 
 			local function addSelection(value)
 				value = tostring(value or "")
-				if value == "" or value == NO_ENEMY_OPTION or seen[value] then return end
+				if value == "" or seen[value] then return end
 				seen[value] = true
 				result[#result + 1] = value
 			end
@@ -323,10 +323,6 @@ return {
 			return nil
 		end
 
-		local function getMapInfoConfig()
-			return requireIndexerModule({"MapInfo", "MapsInfo"})
-		end
-
 		local function getEnemyInfoConfig()
 			return requireIndexerModule({"EnemyInfo", "EnemiesInfo", "Enemies", "MobsInfo"})
 		end
@@ -334,13 +330,6 @@ return {
 		local function getCharacterRoot()
 			local character = player.Character
 			return character and character:FindFirstChild("HumanoidRootPart") or nil
-		end
-
-		local function teleportCharacterToCFrame(cframe)
-			local character = player.Character
-			if not character or not cframe then return false end
-			character:PivotTo(cframe)
-			return true
 		end
 
 		local function getEnemyRoot(enemy)
@@ -359,13 +348,9 @@ return {
 			return enemies and enemies:FindFirstChild("Server") or nil
 		end
 
-		local function getEnemyHealthBarMain(enemy)
-			local healthBar = enemy and enemy:FindFirstChild("HealthBar")
-			return healthBar and healthBar:FindFirstChild("Main") or nil
-		end
-
 		local function getEnemyDisplayName(enemy)
-			local main = getEnemyHealthBarMain(enemy)
+			local healthBar = enemy and enemy:FindFirstChild("HealthBar")
+			local main = healthBar and healthBar:FindFirstChild("Main") or nil
 			local title = main and main:FindFirstChild("Title")
 			local titleText = readValueObject(title)
 			if titleText and tostring(titleText) ~= "" then return tostring(titleText) end
@@ -430,11 +415,26 @@ return {
 			local serverFolder = getServerEnemyFolder()
 			if not enemy then return nil end
 
-			if CollectionService:HasTag(enemy, "EnemyServer") or (serverFolder and enemy:IsDescendantOf(serverFolder)) then
+			if CollectionService:HasTag(enemy, "EnemyServer") then
 				return enemy
 			end
 
 			if not serverFolder then return nil end
+			if enemy == serverFolder then return nil end
+
+			if enemy:IsDescendantOf(serverFolder) then
+				local current = enemy
+				while current and current.Parent and current.Parent ~= serverFolder do
+					if CollectionService:HasTag(current, "EnemyServer") then
+						return current
+					end
+					current = current.Parent
+				end
+
+				if current and current.Parent == serverFolder then
+					return current
+				end
+			end
 
 			for _, taggedEnemy in ipairs(CollectionService:GetTagged("EnemyServer")) do
 				if taggedEnemy.Name == enemy.Name and taggedEnemy:IsDescendantOf(serverFolder) then
@@ -459,16 +459,18 @@ return {
 			local seen = {}
 
 			local function addCandidate(enemy)
-				if not enemy or seen[enemy] then return end
+				if not enemy then return end
 				if serverFolder and not enemy:IsDescendantOf(serverFolder) then return end
-				if not getEnemyRoot(enemy) then return end
+				local serverEnemy = getServerEnemy(enemy)
+				if not serverEnemy or seen[serverEnemy] then return end
+				if not getEnemyRoot(serverEnemy) then return end
 
-				local isTagged = CollectionService:HasTag(enemy, "EnemyServer")
-				local hasEnemyAttributes = enemy:GetAttribute("Dead") ~= nil or enemy:GetAttribute("HP") ~= nil or enemy:GetAttribute("Id") ~= nil or enemy:GetAttribute("ID") ~= nil or enemy:GetAttribute("Model") ~= nil
+				local isTagged = CollectionService:HasTag(serverEnemy, "EnemyServer")
+				local hasEnemyAttributes = serverEnemy:GetAttribute("Dead") ~= nil or serverEnemy:GetAttribute("HP") ~= nil or serverEnemy:GetAttribute("Id") ~= nil or serverEnemy:GetAttribute("ID") ~= nil or serverEnemy:GetAttribute("Model") ~= nil
 				if not isTagged and not hasEnemyAttributes then return end
 
-				seen[enemy] = true
-				candidates[#candidates + 1] = enemy
+				seen[serverEnemy] = true
+				candidates[#candidates + 1] = serverEnemy
 			end
 
 			for _, enemy in ipairs(CollectionService:GetTagged("EnemyServer")) do
@@ -551,7 +553,7 @@ return {
 				local zoneEnemies = {}
 
 				local ok, err = pcall(function()
-					local mapInfo = getMapInfoConfig()
+					local mapInfo = requireIndexerModule({"MapInfo", "MapsInfo"})
 					local enemyInfo = getEnemyInfoConfig()
 					if type(mapInfo) ~= "table" or type(enemyInfo) ~= "table" then
 						return
@@ -724,7 +726,10 @@ return {
 		local function teleportToEnemy(enemy, distance)
 			local enemyRoot = getEnemyRoot(enemy)
 			if not enemyRoot then return end
-			teleportCharacterToCFrame(getClosestTeleportCFrame(enemyRoot, distance))
+			local character = player.Character
+			if character then
+				character:PivotTo(getClosestTeleportCFrame(enemyRoot, distance))
+			end
 		end
 
 		local function setFeatureTarget(feature, target)
@@ -732,6 +737,13 @@ return {
 
 			feature.State.CurrentTarget = target
 			if target then teleportToEnemy(target, feature.State.TeleportDistance) end
+		end
+
+		local function buildTaskCleanup(stateKey)
+			return function(self)
+				self.State[stateKey] = false
+				self.State.PanelRef = nil
+			end
 		end
 
 		local teleportSpawnNameToInstance = {}
@@ -780,25 +792,17 @@ return {
 			return items
 		end
 
-		local function getSelectedTeleportSpawn(selectedSpawnName)
-			if selectedSpawnName == nil or selectedSpawnName == "" or selectedSpawnName == NO_TELEPORT_OPTION then return nil end
-
-			local cachedSpawn = teleportSpawnNameToInstance[selectedSpawnName]
-			if cachedSpawn and cachedSpawn.Parent then return cachedSpawn end
-
-			local spawnsFolder = getTeleportSpawnsFolder()
-			return spawnsFolder and spawnsFolder:FindFirstChild(selectedSpawnName) or nil
-		end
-
-		local function getTeleportLocationCFrame(selectedLocation)
-			local staticCFrame = TELEPORT_STATIC_LOCATIONS[selectedLocation]
-			if staticCFrame then return staticCFrame end
-
-			return getTeleportSpawnCFrame(getSelectedTeleportSpawn(selectedLocation))
-		end
-
 		local function teleportToSavedLocation(selectedLocation)
-			local cframe = getTeleportLocationCFrame(selectedLocation)
+			local cframe = TELEPORT_STATIC_LOCATIONS[selectedLocation]
+			if not cframe then
+				local spawnInstance = teleportSpawnNameToInstance[selectedLocation]
+				if not (spawnInstance and spawnInstance.Parent) then
+					local spawnsFolder = getTeleportSpawnsFolder()
+					spawnInstance = spawnsFolder and spawnsFolder:FindFirstChild(selectedLocation) or nil
+				end
+				cframe = getTeleportSpawnCFrame(spawnInstance)
+			end
+
 			local character = player.Character
 			if not character or not cframe then return false end
 
@@ -834,29 +838,17 @@ return {
 			return mapName .. " - Rank " .. rank
 		end
 
-		local function getSafeAttributes(instance)
-			if not instance then return nil end
-
-			local ok, attrs = pcall(function()
-				return instance:GetAttributes()
-			end)
-
-			if not ok or type(attrs) ~= "table" then return nil end
-			return attrs
-		end
-
-		local function hasDungeonAttributes(attrs)
-			if not attrs then return false end
-			local hasCoreInfo = attrs.Dungeon ~= nil or attrs.DungeonMap ~= nil or attrs.MapName ~= nil
-			local hasIdentifier = attrs.ID ~= nil or attrs.DoubleID ~= nil or attrs._C ~= nil
-			return hasCoreInfo and hasIdentifier
-		end
-
 		local function getLiveDungeonInfo(dungeonObject)
 			if not dungeonObject then return nil end
 
-			local attrs = getSafeAttributes(dungeonObject)
-			if not hasDungeonAttributes(attrs) then return nil end
+			local ok, attrs = pcall(function()
+				return dungeonObject:GetAttributes()
+			end)
+			if not ok or type(attrs) ~= "table" then return nil end
+
+			local hasCoreInfo = attrs.Dungeon ~= nil or attrs.DungeonMap ~= nil or attrs.MapName ~= nil
+			local hasIdentifier = attrs.ID ~= nil or attrs.DoubleID ~= nil or attrs._C ~= nil
+			if not hasCoreInfo or not hasIdentifier then return nil end
 
 			local mapName = attrs.MapName or attrs.Dungeon or attrs.DungeonMap
 			local dungeonName = attrs.Dungeon or mapName or attrs.DungeonMap
@@ -963,10 +955,6 @@ return {
 			return nil
 		end
 
-		local function waitForOwnDungeonInfo(timeout)
-			return waitForInfo(getOwnDungeonInfo, timeout)
-		end
-
 		local function sendDungeonAction(action, extraPayload)
 			local payload = {Event = "DungeonAction", Action = action}
 
@@ -1000,10 +988,6 @@ return {
 			return nil
 		end
 
-		local function waitForOwnTimeTrialInfo(timeout)
-			return waitForInfo(getOwnTimeTrialInfo, timeout)
-		end
-
 		local function getTimeTrialDungeonId(timeTrialInfo)
 			if not timeTrialInfo then return nil end
 
@@ -1021,10 +1005,6 @@ return {
 			end
 
 			return fireBridgeDataRemote({payload, TIME_TRIAL_BRIDGE_TOKEN})
-		end
-
-		local function getTimeTrialDifficultyItems()
-			return TIME_TRIAL_DIFFICULTIES
 		end
 
 		local function isValidTimeTrialDifficulty(difficulty)
@@ -1063,25 +1043,6 @@ return {
 			}
 		end
 
-		local function cloneDungeonInfo(dungeonInfo)
-			if type(dungeonInfo) ~= "table" then
-				return dungeonInfo
-			end
-
-			return {
-				Key = dungeonInfo.Key,
-				Label = dungeonInfo.Label,
-				Dungeon = dungeonInfo.Dungeon,
-				DungeonMap = dungeonInfo.DungeonMap,
-				Map = dungeonInfo.Map,
-				MapName = dungeonInfo.MapName,
-				World = dungeonInfo.World,
-				DungeonRank = dungeonInfo.DungeonRank,
-				ID = dungeonInfo.ID,
-				DoubleID = dungeonInfo.DoubleID,
-			}
-		end
-
 		local function startDungeonInstance(dungeonInfo)
 			if not dungeonInfo then
 				return false
@@ -1093,31 +1054,34 @@ return {
 				task.wait(DUNGEON_CREATE_DELAY)
 			end
 
-			ownDungeon = getOwnDungeonInfo() or waitForOwnDungeonInfo(DUNGEON_INSTANCE_WAIT)
+			ownDungeon = getOwnDungeonInfo() or waitForInfo(getOwnDungeonInfo, DUNGEON_INSTANCE_WAIT)
 			if not ownDungeon then
 				return false
 			end
 
-			lastStartedDungeonInfo = cloneDungeonInfo(dungeonInfo)
+			lastStartedDungeonInfo = type(dungeonInfo) == "table" and {
+				Key = dungeonInfo.Key,
+				Label = dungeonInfo.Label,
+				Dungeon = dungeonInfo.Dungeon,
+				DungeonMap = dungeonInfo.DungeonMap,
+				Map = dungeonInfo.Map,
+				MapName = dungeonInfo.MapName,
+				World = dungeonInfo.World,
+				DungeonRank = dungeonInfo.DungeonRank,
+				ID = dungeonInfo.ID,
+				DoubleID = dungeonInfo.DoubleID,
+			} or dungeonInfo
 			return sendDungeonAction("Start", buildDungeonActionPayload(player.UserId, dungeonInfo)) == true
 		end
 
-		local function getDungeonHudLabel()
+		local function isDungeonEndingNow()
 			local playerGui = player:FindFirstChild("PlayerGui")
 			local hud = playerGui and playerGui:FindFirstChild("Hud")
 			local upContainer = hud and hud:FindFirstChild("UpContanier")
 			local dungeonInfo = upContainer and upContainer:FindFirstChild("DungeonInfo")
-			return dungeonInfo and dungeonInfo:FindFirstChild("TextLabel") or nil
-		end
-
-		local function isDungeonEndingNow()
-			local dungeonInfoLabel = getDungeonHudLabel()
+			local dungeonInfoLabel = dungeonInfo and dungeonInfo:FindFirstChild("TextLabel") or nil
 			local text = dungeonInfoLabel and tostring(dungeonInfoLabel.Text or "") or ""
 			return string.find(text, "Dungeon Ends in", 1, true) ~= nil
-		end
-
-		local function getRestartDungeonInfo(selectedDungeon)
-			return lastStartedDungeonInfo or getSelectedDungeonInfo(selectedDungeon)
 		end
 
 		--==================================================
@@ -1214,7 +1178,7 @@ return {
 				autoFarmSelectedZone = zoneName
 
 				if self.State.ZoneInitialized and changed then
-					self.State.CurrentTarget = nil
+					setFeatureTarget(self, nil)
 					if panelRef and panelRef.SetValue then
 						panelRef:SetValue("AutoFarmEnemy", {})
 					end
@@ -1225,7 +1189,22 @@ return {
 
 			function Feature:MatchesSelection(enemy, selectedEnemies)
 				if arrayContains(selectedEnemies, ALL_OPTION) then return true end
-				return arrayContains(selectedEnemies, getResolvedEnemyDisplayName(enemy))
+
+				for _, candidate in ipairs({
+					getResolvedEnemyDisplayName(enemy),
+					getEnemyDisplayName(enemy),
+					enemy and enemy:GetAttribute("Id"),
+					enemy and enemy:GetAttribute("ID"),
+					enemy and enemy:GetAttribute("Model"),
+					enemy and enemy:GetAttribute("Name"),
+					enemy and enemy.Name,
+				}) do
+					if arrayContains(selectedEnemies, candidate) then
+						return true
+					end
+				end
+
+				return false
 			end
 
 			function Feature:GetMatchFn(selectedEnemies)
@@ -1233,10 +1212,6 @@ return {
 				return function(enemy)
 					return self:MatchesSelection(enemy, selectedEnemies)
 				end
-			end
-
-			function Feature:FindTarget(selectedEnemies)
-				return findClosestServerTarget(self:GetMatchFn(selectedEnemies))
 			end
 
 			function Feature:TargetMatches(target, selectedEnemies)
@@ -1251,8 +1226,7 @@ return {
 
 				local target = self.State.CurrentTarget
 				if not self:TargetMatches(target, selectedEnemies) or not isTargetAlive(target) then
-					local newTarget = self:FindTarget(selectedEnemies)
-					setFeatureTarget(self, newTarget)
+					setFeatureTarget(self, findClosestServerTarget(self:GetMatchFn(selectedEnemies)))
 				end
 			end
 
@@ -1262,7 +1236,7 @@ return {
 				RestartOnStart = true,
 				UseLoopId = true,
 				BeforeStop = function(self)
-					self.State.CurrentTarget = nil
+					setFeatureTarget(self, nil)
 				end,
 				ExtraHandlers = {
 					AutoFarmZone = function(value, _, panelRef)
@@ -1286,20 +1260,15 @@ return {
 				}
 			})
 
-			function Feature:FindTarget()
-				return findClosestServerTarget(nil)
-			end
-
 			function Feature:Tick()
 				if not isNormalDungeonInstance() then
-					self.State.CurrentTarget = nil
+					setFeatureTarget(self, nil)
 					return
 				end
 
 				local target = self.State.CurrentTarget
 				if not isTargetAlive(target) then
-					local newTarget = self:FindTarget()
-					setFeatureTarget(self, newTarget)
+					setFeatureTarget(self, findClosestServerTarget(nil))
 				end
 			end
 
@@ -1309,7 +1278,7 @@ return {
 				RestartOnStart = true,
 				UseLoopId = true,
 				BeforeStop = function(self)
-					self.State.CurrentTarget = nil
+					setFeatureTarget(self, nil)
 				end,
 			})
 		end
@@ -1343,10 +1312,7 @@ return {
 				return buildActionHandlers(self, "SelectedDungeon", "StartDungeon")
 			end
 
-			function Feature:Cleanup()
-				self.State.Starting = false
-				self.State.PanelRef = nil
-			end
+			Feature.Cleanup = buildTaskCleanup("Starting")
 		end
 
 		--==================================================
@@ -1364,7 +1330,7 @@ return {
 
 			function Feature:Run(panelRef)
 				local values = setFeaturePanelRef(self, panelRef)
-				local dungeonInfo = getRestartDungeonInfo(values and values.SelectedDungeon)
+				local dungeonInfo = lastStartedDungeonInfo or getSelectedDungeonInfo(values and values.SelectedDungeon)
 				if not dungeonInfo then
 					return
 				end
@@ -1374,7 +1340,7 @@ return {
 				end)
 			end
 
-			function Feature:Tick(values)
+			function Feature:Tick()
 				local showingEndText = isDungeonEndingNow()
 				if not showingEndText then
 					self.State.SawDungeonEnd = false
@@ -1390,7 +1356,7 @@ return {
 			end
 
 			bindPollingToggleFeature(Feature, "AutoRestartDungeon", function(self, values)
-				self:Tick(values)
+				self:Tick()
 			end, {
 				RestartOnStart = true,
 				UseLoopId = true,
@@ -1410,7 +1376,7 @@ return {
 				Defaults = {TimeTrialDifficulty = "Easy"},
 				State = {Starting = false, PanelRef = nil},
 				Options = {
-					{ Id = "TimeTrialDifficulty", Type = "select", Label = "Difficulty", Description = "Select Time Trial difficulty", Items = getTimeTrialDifficultyItems },
+					{ Id = "TimeTrialDifficulty", Type = "select", Label = "Difficulty", Description = "Select Time Trial difficulty", Items = TIME_TRIAL_DIFFICULTIES },
 					{ Id = "StartTimeTrial", Type = "button", Label = "Start Time Trial", Description = "Starts Time Trial with selected difficulty", ButtonText = "Start" },
 				}
 			})
@@ -1430,7 +1396,7 @@ return {
 						task.wait(DUNGEON_CREATE_DELAY)
 					end
 
-					ownTimeTrial = getOwnTimeTrialInfo() or waitForOwnTimeTrialInfo(DUNGEON_INSTANCE_WAIT)
+					ownTimeTrial = getOwnTimeTrialInfo() or waitForInfo(getOwnTimeTrialInfo, DUNGEON_INSTANCE_WAIT)
 					local dungeonId = getTimeTrialDungeonId(ownTimeTrial)
 
 					if dungeonId ~= nil then
@@ -1443,10 +1409,7 @@ return {
 				return buildActionHandlers(self, "TimeTrialDifficulty", "StartTimeTrial")
 			end
 
-			function Feature:Cleanup()
-				self.State.Starting = false
-				self.State.PanelRef = nil
-			end
+			Feature.Cleanup = buildTaskCleanup("Starting")
 		end
 
 		--==================================================
@@ -1535,10 +1498,7 @@ return {
 				return buildActionHandlers(self, "SelectedTeleportLocation", "TeleportToLocation")
 			end
 
-			function Feature:Cleanup()
-				self.State.PanelRef = nil
-				self.State.Teleporting = false
-			end
+			Feature.Cleanup = buildTaskCleanup("Teleporting")
 		end
 
 	end

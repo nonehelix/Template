@@ -1125,7 +1125,7 @@ return {
 		--==================================================
 		do
 			local Feature = RegisterFeature({
-				Key = "AutoClick", Tab = "Combat", Section = "Click", Order = 10,
+				Key = "AutoClick", Tab = "Combat", Order = 10,
 				Defaults = {AutoClick = false},
 				State = {Running = false, PanelRef = nil, CapturedOriginal = false, OriginalAutoClick = nil, OriginalAutoClicker = nil},
 				Options = {
@@ -1175,7 +1175,7 @@ return {
 		--==================================================
 		do
 			local Feature = RegisterFeature({
-				Key = "AutoAttack", Tab = "Combat", Section = "Attack", Order = 20,
+				Key = "AutoAttack", Tab = "Combat", Order = 20,
 				Defaults = {AutoAttack = false},
 				Options = {
 					{ Id = "AutoAttack", Type = "toggle", Label = "Auto Attack", Description = "Auto attacks enemies" },
@@ -1196,7 +1196,7 @@ return {
 		--==================================================
 		do
 			local Feature = RegisterFeature({
-				Key = "AutoFarm", Tab = "Combat", Section = "Farm", Order = 25,
+				Key = "AutoFarm", Tab = "Combat", Order = 25,
 				Defaults = {AutoFarmZone = NO_ZONE_OPTION, AutoFarmEnemy = {}, AutoFarm = false},
 				State = newTargetingState(),
 				Options = {
@@ -1278,7 +1278,7 @@ return {
 		--==================================================
 		do
 			local Feature = RegisterFeature({
-				Key = "AutoDungeon", Tab = "Dungeon", Section = "Farm", Order = 15,
+				Key = "AutoDungeon", Tab = "Dungeon", Order = 15,
 				Defaults = {AutoDungeon = false},
 				State = newTargetingState(),
 				Options = {
@@ -1319,7 +1319,7 @@ return {
 		--==================================================
 		do
 			local Feature = RegisterFeature({
-				Key = "DungeonStarter", Tab = "Dungeon", Section = "Dungeon", Order = 10,
+				Key = "DungeonStarter", Tab = "Dungeon", Order = 10,
 				Defaults = {SelectedDungeon = NO_DUNGEON_OPTION},
 				State = {Starting = false, PanelRef = nil},
 				Options = {
@@ -1354,7 +1354,7 @@ return {
 		--==================================================
 		do
 			local Feature = RegisterFeature({
-				Key = "DungeonRestart", Tab = "Dungeon", Section = "Dungeon", Order = 20,
+				Key = "DungeonRestart", Tab = "Dungeon", Order = 20,
 				Defaults = {AutoRestartDungeon = false},
 				State = {Running = false, LoopId = 0, PanelRef = nil, SawDungeonEnd = false, Restarting = false},
 				Options = {
@@ -1406,7 +1406,7 @@ return {
 		--==================================================
 		do
 			local Feature = RegisterFeature({
-				Key = "TimeTrialStarter", Tab = "Time Trial", Section = "Start", Order = 10,
+				Key = "TimeTrialStarter", Tab = "Time Trial", Order = 10,
 				Defaults = {TimeTrialDifficulty = "Easy"},
 				State = {Starting = false, PanelRef = nil},
 				Options = {
@@ -1454,7 +1454,7 @@ return {
 		--==================================================
 		do
 			local Feature = RegisterFeature({
-				Key = "ShadowExchange", Tab = "Combat", Section = "Exchange", Order = 30,
+				Key = "ShadowExchange", Tab = "Combat", Order = 30,
 				Defaults = {ShadowExchange = false},
 				State = {Running = false, LoopId = 0, PanelRef = nil, CapturedOriginal = false, OriginalPass = nil, OriginalButtonVisible = nil},
 				Options = {
@@ -1512,7 +1512,7 @@ return {
 		--==================================================
 		do
 			local Feature = RegisterFeature({
-				Key = "SpawnTeleport", Tab = "Teleport", Section = "Spawns", Order = 10,
+				Key = "SpawnTeleport", Tab = "Teleport", Order = 10,
 				Defaults = {SelectedTeleportLocation = NO_TELEPORT_OPTION},
 				State = {PanelRef = nil, Teleporting = false},
 				Options = {

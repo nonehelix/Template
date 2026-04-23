@@ -1358,7 +1358,6 @@ return {
 				Defaults = {AutoRestartDungeon = false},
 				State = {Running = false, LoopId = 0, PanelRef = nil, SawDungeonEnd = false, Restarting = false},
 				Options = {
-					{ Id = "RestartLastDungeon", Type = "button", Label = "Restart Dungeon", Description = "Restarts the last started dungeon or the selected dungeon", ButtonText = "Restart" },
 					{ Id = "AutoRestartDungeon", Type = "toggle", Label = "Auto Restart", Description = "Restarts the dungeon when the end countdown appears" },
 				}
 			})
@@ -1399,11 +1398,6 @@ return {
 				BeforeStop = function(self)
 					self.State.SawDungeonEnd = false
 				end,
-				ExtraHandlers = {
-					RestartLastDungeon = function(_, _, panelRef)
-						Feature:Run(panelRef)
-					end,
-				},
 			})
 		end
 

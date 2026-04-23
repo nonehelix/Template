@@ -25,7 +25,6 @@ return {
 		local DUNGEON_CREATE_DELAY, DUNGEON_INSTANCE_WAIT = 0.5, 6
 		local TELEPORT_SPAWN_NAMES = {"Arena", "JejuEvent", "JungleEvent", "WinterEvent", "XmasWorld"}
 		local GUILD_HALL_LOCATION = "Guild Hall"
-		local TIME_TRIAL_DUNGEON_ID = 10822032599
 		local TIME_TRIAL_BRIDGE_TOKEN = string.char(17)
 		local TIME_TRIAL_DIFFICULTIES = {"Easy", "Normal", "Hard", "Insane", "Ultra", "Nightmare", "Chaotic"}
 		local TELEPORT_STATIC_LOCATIONS = {
@@ -1010,6 +1009,55 @@ return {
 			return fireGeneralEvent(payload)
 		end
 
+		local function getOwnTimeTrialInfo()
+			local infos = ReplicatedStorage:FindFirstChild("__Infos")
+			local timeTrials = infos and infos:FindFirstChild("__TimeTrial")
+			if not timeTrials then return nil end
+
+			local ownTrial = timeTrials:FindFirstChild(tostring(player.UserId))
+			if ownTrial then return ownTrial end
+
+			for _, trial in ipairs(timeTrials:GetChildren()) do
+				if tonumber(trial:GetAttribute("Leader")) == player.UserId then
+					return trial
+				end
+			end
+
+			return nil
+		end
+
+		local function waitForOwnTimeTrialInfo(timeout)
+			local startedAt = os.clock()
+
+			repeat
+				local timeTrial = getOwnTimeTrialInfo()
+				if timeTrial then return timeTrial end
+				task.wait(0.25)
+			until os.clock() - startedAt >= (timeout or DUNGEON_INSTANCE_WAIT)
+
+			return nil
+		end
+
+		local function getTimeTrialDungeonId(timeTrialInfo)
+			if not timeTrialInfo then return nil end
+
+			local leader = timeTrialInfo:GetAttribute("Leader")
+			if leader ~= nil then return leader end
+
+			return tonumber(timeTrialInfo.Name) or timeTrialInfo.Name
+		end
+
+		local function sendTimeTrialAction(action, extraPayload)
+			local payload = {Event = "TimeTrialAction", Action = action}
+
+			for key, value in pairs(extraPayload or {}) do
+				payload[key] = value
+			end
+
+			timeTrialDebugLog("Payload Event=TimeTrialAction Action=" .. tostring(action) .. " Dungeon=" .. tostring(payload.Dungeon) .. " Diff=" .. tostring(payload.Diff) .. " tokenByte=" .. tostring(string.byte(TIME_TRIAL_BRIDGE_TOKEN)))
+			return fireBridgeDataRemote({payload, TIME_TRIAL_BRIDGE_TOKEN})
+		end
+
 		local function getTimeTrialDifficultyItems()
 			return TIME_TRIAL_DIFFICULTIES
 		end
@@ -1018,25 +1066,19 @@ return {
 			return arrayContains(TIME_TRIAL_DIFFICULTIES, difficulty)
 		end
 
-		local function startTimeTrial(difficulty)
-			timeTrialDebugLog("Start requested difficulty=" .. tostring(difficulty))
+		local function startTimeTrial(difficulty, dungeonId)
+			timeTrialDebugLog("Start requested difficulty=" .. tostring(difficulty) .. " dungeonId=" .. tostring(dungeonId))
 			if not isValidTimeTrialDifficulty(difficulty) then
 				timeTrialDebugLog("Rejected invalid difficulty. Valid=" .. table.concat(TIME_TRIAL_DIFFICULTIES, ", "))
 				return false
 			end
 
-			local payload = {
-				{
-					Dungeon = TIME_TRIAL_DUNGEON_ID,
-					Action = "Start",
-					Diff = difficulty,
-					Event = "TimeTrialAction",
-				},
-				TIME_TRIAL_BRIDGE_TOKEN,
-			}
+			if dungeonId == nil then
+				timeTrialDebugLog("Rejected missing dungeon id")
+				return false
+			end
 
-			timeTrialDebugLog("Payload Dungeon=" .. tostring(TIME_TRIAL_DUNGEON_ID) .. " Action=Start Diff=" .. tostring(difficulty) .. " Event=TimeTrialAction tokenByte=" .. tostring(string.byte(TIME_TRIAL_BRIDGE_TOKEN)))
-			local ok = fireBridgeDataRemote(payload)
+			local ok = sendTimeTrialAction("Start", {Dungeon = dungeonId, Diff = difficulty})
 			timeTrialDebugLog("Start result=" .. tostring(ok))
 			return ok
 		end
@@ -1367,7 +1409,7 @@ return {
 			local Feature = RegisterFeature({
 				Key = "TimeTrialStarter", Tab = "Time Trial", Section = "Start", Order = 10,
 				Defaults = {TimeTrialDifficulty = "Easy", DebugTimeTrialStart = false},
-				State = {PanelRef = nil},
+				State = {PanelRef = nil, Starting = false},
 				Options = {
 					{ Id = "TimeTrialDifficulty", Type = "select", Label = "Difficulty", Description = "Select Time Trial difficulty", Items = getTimeTrialDifficultyItems },
 					{ Id = "StartTimeTrial", Type = "button", Label = "Start Time Trial", Description = "Starts Time Trial with selected difficulty", ButtonText = "Start" },
@@ -1375,9 +1417,49 @@ return {
 				}
 			})
 
+			function Feature:CreateTimeTrial()
+				return sendTimeTrialAction("Create")
+			end
+
+			function Feature:StartTimeTrial(difficulty, dungeonId)
+				return startTimeTrial(difficulty, dungeonId)
+			end
+
 			function Feature:Run(panelRef)
 				local values = setFeaturePanelRef(self, panelRef)
-				startTimeTrial(values and values.TimeTrialDifficulty)
+				if self.State.Starting then return end
+
+				local difficulty = values and values.TimeTrialDifficulty
+				if not isValidTimeTrialDifficulty(difficulty) then
+					timeTrialDebugLog("Run rejected invalid difficulty=" .. tostring(difficulty))
+					return
+				end
+
+				self.State.Starting = true
+
+				task.spawn(function()
+					pcall(function()
+						local ownTimeTrial = getOwnTimeTrialInfo()
+						if not ownTimeTrial then
+							timeTrialDebugLog("No existing Time Trial instance; creating")
+							self:CreateTimeTrial()
+							task.wait(DUNGEON_CREATE_DELAY)
+						else
+							timeTrialDebugLog("Existing Time Trial instance found: " .. ownTimeTrial:GetFullName())
+						end
+
+						ownTimeTrial = getOwnTimeTrialInfo() or waitForOwnTimeTrialInfo(DUNGEON_INSTANCE_WAIT)
+						local dungeonId = getTimeTrialDungeonId(ownTimeTrial)
+						timeTrialDebugLog("Resolved Time Trial dungeon id=" .. tostring(dungeonId))
+
+						if dungeonId ~= nil then
+							self:StartTimeTrial(difficulty, dungeonId)
+						else
+							timeTrialDebugLog("Could not resolve Time Trial dungeon id after create")
+						end
+					end)
+					self.State.Starting = false
+				end)
 			end
 
 			function Feature:GetHandlers()
@@ -1394,6 +1476,7 @@ return {
 
 			function Feature:Cleanup()
 				DebugFlags.TimeTrial = false
+				self.State.Starting = false
 				self.State.PanelRef = nil
 			end
 		end

@@ -357,11 +357,11 @@ return {
 			timeTrialDebugLog("BridgeNet2=" .. tostring(bridgeModule ~= nil) .. " dataRemoteEvent=" .. tostring(remoteEvent ~= nil) .. " payloadType=" .. type(payload))
 			if not remoteEvent or type(payload) ~= "table" then return false end
 
-			local ok = pcall(function()
+			local ok, err = pcall(function()
 				remoteEvent:FireServer(payload)
 			end)
 
-			timeTrialDebugLog("dataRemoteEvent:FireServer ok=" .. tostring(ok))
+			timeTrialDebugLog("dataRemoteEvent:FireServer ok=" .. tostring(ok) .. " err=" .. tostring(err))
 			return ok
 		end
 
@@ -408,7 +408,12 @@ return {
 
 		local function getEnemyRoot(enemy)
 			if not enemy then return nil end
-			return enemy.PrimaryPart or enemy:FindFirstChild("HumanoidRootPart") or enemy:FindFirstChildWhichIsA("BasePart", true)
+			if enemy:IsA("BasePart") then return enemy end
+			if enemy:IsA("Model") then
+				return enemy.PrimaryPart or enemy:FindFirstChild("HumanoidRootPart") or enemy:FindFirstChildWhichIsA("BasePart", true)
+			end
+
+			return enemy:FindFirstChild("HumanoidRootPart") or enemy:FindFirstChildWhichIsA("BasePart", true)
 		end
 
 		local function getEnemyFolders()
@@ -469,7 +474,13 @@ return {
 
 		local function getServerEnemy(enemy)
 			local _, serverFolder = getEnemyFolders()
-			if not enemy or not serverFolder then return nil end
+			if not enemy then return nil end
+
+			if CollectionService:HasTag(enemy, "EnemyServer") or (serverFolder and enemy:IsDescendantOf(serverFolder)) then
+				return enemy
+			end
+
+			if not serverFolder then return nil end
 
 			for _, taggedEnemy in ipairs(CollectionService:GetTagged("EnemyServer")) do
 				if taggedEnemy.Name == enemy.Name and taggedEnemy:IsDescendantOf(serverFolder) then
@@ -528,16 +539,45 @@ return {
 			return alive == true
 		end
 
-		local function findClosestEnemy(matchFn, options)
+		local function getServerEnemyCandidates()
+			local _, serverFolder = getEnemyFolders()
+			local candidates = {}
+			local seen = {}
+
+			local function addCandidate(enemy)
+				if not enemy or seen[enemy] then return end
+				if serverFolder and not enemy:IsDescendantOf(serverFolder) then return end
+				if not getEnemyRoot(enemy) then return end
+
+				local isTagged = CollectionService:HasTag(enemy, "EnemyServer")
+				local hasEnemyAttributes = enemy:GetAttribute("Dead") ~= nil or enemy:GetAttribute("HP") ~= nil or enemy:GetAttribute("Id") ~= nil
+				if not isTagged and not hasEnemyAttributes then return end
+
+				seen[enemy] = true
+				candidates[#candidates + 1] = enemy
+			end
+
+			for _, enemy in ipairs(CollectionService:GetTagged("EnemyServer")) do
+				addCandidate(enemy)
+			end
+
+			if serverFolder then
+				for _, enemy in ipairs(serverFolder:GetDescendants()) do
+					addCandidate(enemy)
+				end
+			end
+
+			return candidates
+		end
+
+		local function findClosestCandidate(candidates, matchFn, options)
 			options = options or EMPTY_TABLE
-			local enemyFolder = getEnemyFolders()
-			if not enemyFolder then return nil end
 
 			local characterRoot = getCharacterRoot()
 			local closestEnemy = nil
 			local closestDistance = nil
 
-			for _, enemy in ipairs(enemyFolder:GetChildren()) do
+			for _, enemy in ipairs(candidates or EMPTY_TABLE) do
 				if matchFn == nil or matchFn(enemy) then
 					local alive = options.IgnoreAlive == true or isEnemyAlive(enemy, options)
 					if alive then
@@ -556,6 +596,23 @@ return {
 			return closestEnemy, closestDistance
 		end
 
+		local function findClosestEnemy(matchFn, options)
+			local enemyFolder = getEnemyFolders()
+			if not enemyFolder then return nil end
+
+			return findClosestCandidate(enemyFolder:GetChildren(), matchFn, options)
+		end
+
+		local function findClosestServerEnemy(matchFn, options)
+			return findClosestCandidate(getServerEnemyCandidates(), matchFn, options)
+		end
+
+		local function getEnemyDistance(enemy)
+			local enemyRoot = getEnemyRoot(enemy)
+			local characterRoot = getCharacterRoot()
+			return characterRoot and enemyRoot and (characterRoot.Position - enemyRoot.Position).Magnitude or nil
+		end
+
 		local function describeEnemy(enemy, options)
 			if not enemy then return "nil" end
 
@@ -563,8 +620,7 @@ return {
 			local alive, reason = getEnemyAliveState(enemy, options)
 			local serverEnemy = getServerEnemy(enemy)
 			local enemyRoot = getEnemyRoot(enemy)
-			local characterRoot = getCharacterRoot()
-			local distance = characterRoot and enemyRoot and (characterRoot.Position - enemyRoot.Position).Magnitude or nil
+			local distance = getEnemyDistance(enemy)
 
 			local parts = {
 				"Name=" .. tostring(getEnemyDisplayName(enemy)),
@@ -618,6 +674,30 @@ return {
 			table.sort(reasonParts)
 
 			return "total=" .. total .. ", matching=" .. matching .. ", alive=" .. alive .. ", rejects={" .. table.concat(reasonParts, ", ") .. "}"
+		end
+
+		local function getServerEnemyScanSummary(options)
+			options = options or EMPTY_TABLE
+
+			local total, alive = 0, 0
+			local reasons = {}
+			for _, enemy in ipairs(getServerEnemyCandidates()) do
+				total = total + 1
+				local isAlive, reason = getEnemyAliveState(enemy, options)
+				if isAlive then
+					alive = alive + 1
+				else
+					reasons[reason] = (reasons[reason] or 0) + 1
+				end
+			end
+
+			local reasonParts = {}
+			for reason, count in pairs(reasons) do
+				reasonParts[#reasonParts + 1] = tostring(reason) .. "=" .. tostring(count)
+			end
+			table.sort(reasonParts)
+
+			return "server-total=" .. total .. ", server-alive=" .. alive .. ", server-rejects={" .. table.concat(reasonParts, ", ") .. "}"
 		end
 
 		local function isDungeonActive()
@@ -1021,6 +1101,12 @@ return {
 				if tonumber(trial:GetAttribute("Leader")) == player.UserId then
 					return trial
 				end
+
+				local members = trial:FindFirstChild("Members")
+				local memberValue = members and members:GetAttribute(tostring(player.UserId))
+				if tonumber(memberValue) == player.UserId then
+					return trial
+				end
 			end
 
 			return nil
@@ -1303,7 +1389,7 @@ return {
 			})
 
 			function Feature:FindTarget()
-				return findClosestEnemy(nil, SERVER_DEAD_TARGET_OPTIONS)
+				return findClosestServerEnemy(nil, SERVER_DEAD_TARGET_OPTIONS) or findClosestEnemy(nil, SERVER_DEAD_TARGET_OPTIONS)
 			end
 
 			function Feature:SetTarget(target)
@@ -1323,9 +1409,15 @@ return {
 					if newTarget then
 						featureDebugLog(self, "AutoDungeon", "Target selected: " .. describeEnemy(newTarget, SERVER_DEAD_TARGET_OPTIONS))
 					else
-						featureDebugLog(self, "AutoDungeon", "No alive dungeon target | " .. getEnemyScanSummary(nil, SERVER_DEAD_TARGET_OPTIONS) .. " | " .. buildDungeonRuntimeSnapshot())
+						featureDebugLog(self, "AutoDungeon", "No alive dungeon target | " .. getEnemyScanSummary(nil, SERVER_DEAD_TARGET_OPTIONS) .. " | " .. getServerEnemyScanSummary(SERVER_DEAD_TARGET_OPTIONS) .. " | " .. buildDungeonRuntimeSnapshot())
 					end
 					self:SetTarget(newTarget)
+				else
+					local distance = getEnemyDistance(target)
+					if distance and distance > (self.State.TeleportDistance + 20) then
+						featureDebugLog(self, "AutoDungeon", "Re-teleport target distance=" .. string.format("%.2f", distance) .. " | " .. describeEnemy(target, SERVER_DEAD_TARGET_OPTIONS))
+						teleportToEnemy(target, self.State.TeleportDistance)
+					end
 				end
 			end
 
@@ -1409,7 +1501,7 @@ return {
 			local Feature = RegisterFeature({
 				Key = "TimeTrialStarter", Tab = "Time Trial", Section = "Start", Order = 10,
 				Defaults = {TimeTrialDifficulty = "Easy", DebugTimeTrialStart = false},
-				State = {PanelRef = nil, Starting = false},
+				State = {Starting = false, PanelRef = nil},
 				Options = {
 					{ Id = "TimeTrialDifficulty", Type = "select", Label = "Difficulty", Description = "Select Time Trial difficulty", Items = getTimeTrialDifficultyItems },
 					{ Id = "StartTimeTrial", Type = "button", Label = "Start Time Trial", Description = "Starts Time Trial with selected difficulty", ButtonText = "Start" },
@@ -1438,7 +1530,7 @@ return {
 				self.State.Starting = true
 
 				task.spawn(function()
-					pcall(function()
+					local ok, err = pcall(function()
 						local ownTimeTrial = getOwnTimeTrialInfo()
 						if not ownTimeTrial then
 							timeTrialDebugLog("No existing Time Trial instance; creating")
@@ -1458,6 +1550,9 @@ return {
 							timeTrialDebugLog("Could not resolve Time Trial dungeon id after create")
 						end
 					end)
+					if not ok then
+						timeTrialDebugLog("Run failed err=" .. tostring(err))
+					end
 					self.State.Starting = false
 				end)
 			end

@@ -567,17 +567,6 @@ return {
 			return isDungeonActive() and ReplicatedStorage:GetAttribute("IsCastle") == true
 		end
 
-		local function tickAutoServerTargetFeature(feature, isActiveFn)
-			if not isActiveFn() then
-				setFeatureTarget(feature, nil)
-				return
-			end
-
-			if not isTargetAlive(feature.State.CurrentTarget) then
-				setFeatureTarget(feature, findClosestServerTarget(nil))
-			end
-		end
-
 		local function addEnemyItem(items, seen, enemyName)
 			enemyName = tostring(enemyName or "")
 			if enemyName == "" or seen[enemyName] then return end
@@ -782,6 +771,17 @@ return {
 
 			feature.State.CurrentTarget = target
 			if target then teleportToEnemy(target, feature.State.TeleportDistance) end
+		end
+
+		local function tickAutoServerTargetFeature(feature, isActiveFn)
+			if not isActiveFn() then
+				setFeatureTarget(feature, nil)
+				return
+			end
+
+			if not isTargetAlive(feature.State.CurrentTarget) then
+				setFeatureTarget(feature, findClosestServerTarget(nil))
+			end
 		end
 
 		local function buildTaskCleanup(stateKey)

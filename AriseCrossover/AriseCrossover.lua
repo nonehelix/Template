@@ -366,6 +366,56 @@ return {
 			return enemy and enemy.Name or nil
 		end
 
+		local enemyDisplayLookupCache = nil
+
+		local function getEnemyDisplayLookup()
+			if enemyDisplayLookupCache ~= nil then
+				return enemyDisplayLookupCache
+			end
+
+			local lookup = {}
+			local enemyInfo = getEnemyInfoConfig()
+			if type(enemyInfo) == "table" then
+				for id, info in pairs(enemyInfo) do
+					if type(info) == "table" then
+						local displayName = tostring(info.Name or "")
+						if displayName ~= "" then
+							for _, candidate in ipairs({id, info.Name, info.Arise, info.Model, info.CustomModel}) do
+								local key = string.lower(tostring(candidate or ""))
+								if key ~= "" and lookup[key] == nil then
+									lookup[key] = displayName
+								end
+							end
+						end
+					end
+				end
+			end
+
+			enemyDisplayLookupCache = lookup
+			return lookup
+		end
+
+		local function getResolvedEnemyDisplayName(enemy)
+			local displayName = getEnemyDisplayName(enemy)
+			local lookup = getEnemyDisplayLookup()
+
+			for _, candidate in ipairs({
+				enemy and enemy:GetAttribute("Id"),
+				enemy and enemy:GetAttribute("ID"),
+				enemy and enemy:GetAttribute("Model"),
+				enemy and enemy:GetAttribute("Name"),
+				displayName,
+				enemy and enemy.Name,
+			}) do
+				local key = string.lower(tostring(candidate or ""))
+				if key ~= "" and lookup[key] ~= nil then
+					return lookup[key]
+				end
+			end
+
+			return displayName
+		end
+
 		local function getServerEnemy(enemy)
 			local _, serverFolder = getEnemyFolders()
 			if not enemy then return nil end
@@ -480,10 +530,10 @@ return {
 
 		local function isExcludedDungeonMode()
 			return player:GetAttribute("InTimeTrial") == true
-				or ReplicatedStorage:GetAttribute("InTimeTrial") == true
-				or player:GetAttribute("InBossRush") == true
-				or ReplicatedStorage:GetAttribute("InBossRush") == true
-				or ReplicatedStorage:GetAttribute("IsCastle") == true
+			or ReplicatedStorage:GetAttribute("InTimeTrial") == true
+			or player:GetAttribute("InBossRush") == true
+			or ReplicatedStorage:GetAttribute("InBossRush") == true
+			or ReplicatedStorage:GetAttribute("IsCastle") == true
 		end
 
 		local function isNormalDungeonInstance()
@@ -1131,7 +1181,7 @@ return {
 
 			function Feature:MatchesSelection(enemy, selectedEnemies)
 				if arrayContains(selectedEnemies, ALL_OPTION) then return true end
-				return arrayContains(selectedEnemies, getEnemyDisplayName(enemy))
+				return arrayContains(selectedEnemies, getResolvedEnemyDisplayName(enemy))
 			end
 
 			function Feature:GetMatchFn(selectedEnemies)
@@ -1142,7 +1192,7 @@ return {
 			end
 
 			function Feature:FindTarget(selectedEnemies)
-				return findClosestClientTarget(self:GetMatchFn(selectedEnemies))
+				return findClosestServerTarget(self:GetMatchFn(selectedEnemies))
 			end
 
 			function Feature:TargetMatches(target, selectedEnemies)

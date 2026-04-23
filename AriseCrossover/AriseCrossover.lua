@@ -84,21 +84,6 @@ return {
 			return getPanelValues(panelRef)
 		end
 
-		local function buildToggleHandler(feature, onEnabled)
-			return function(value, _, panelRef)
-				setFeaturePanelRef(feature, panelRef)
-				if value then
-					onEnabled(panelRef)
-				else
-					feature:Stop()
-				end
-			end
-		end
-
-		local function buildPanelRefHandler(feature)
-			return function(_, _, panelRef) setFeaturePanelRef(feature, panelRef) end
-		end
-
 		local function buildRestartHandler(feature, enabledKey)
 			return function(_, values, panelRef)
 				setFeaturePanelRef(feature, panelRef)
@@ -110,7 +95,7 @@ return {
 
 		local function buildActionHandlers(feature, selectOptionId, buttonOptionId)
 			return {
-				[selectOptionId] = buildPanelRefHandler(feature),
+				[selectOptionId] = function(_, _, panelRef) setFeaturePanelRef(feature, panelRef) end,
 				[buttonOptionId] = function(_, _, panelRef)
 					feature:Run(panelRef)
 				end,
@@ -183,7 +168,14 @@ return {
 
 			function feature:GetHandlers()
 				local handlers = {
-					[optionId] = buildToggleHandler(self, function(panelRef) self:Start(panelRef) end),
+					[optionId] = function(value, _, panelRef)
+						setFeaturePanelRef(self, panelRef)
+						if value then
+							self:Start(panelRef)
+						else
+							self:Stop()
+						end
+					end,
 				}
 
 				for handlerId, handler in pairs(config.ExtraHandlers or EMPTY_TABLE) do
@@ -203,22 +195,16 @@ return {
 			end
 		end
 
-		local settingsCache, leaderstatsCache, passesCache = nil, nil, nil
+		local settingsCache, passesCache = nil, nil
 		local function getSettings()
 			if settingsCache and settingsCache.Parent == player then return settingsCache end
 			settingsCache = player:FindFirstChild("Settings") or player:WaitForChild("Settings", 10)
 			return settingsCache
 		end
 
-		local function getLeaderstats()
-			if leaderstatsCache and leaderstatsCache.Parent == player then return leaderstatsCache end
-			leaderstatsCache = player:FindFirstChild("leaderstats") or player:WaitForChild("leaderstats", 10)
-			return leaderstatsCache
-		end
-
 		local function getPasses()
 			if passesCache and passesCache.Parent then return passesCache end
-			local leaderstats = getLeaderstats()
+			local leaderstats = player:FindFirstChild("leaderstats") or player:WaitForChild("leaderstats", 10)
 			passesCache = leaderstats and (leaderstats:FindFirstChild("Passes") or leaderstats:WaitForChild("Passes", 10)) or nil
 			return passesCache
 		end
@@ -808,17 +794,6 @@ return {
 			end)
 		end
 
-		local function tickAutoServerTargetFeature(feature, isActiveFn)
-			if not isActiveFn() then
-				setFeatureTarget(feature, nil)
-				return
-			end
-
-			if not isTargetAlive(feature.State.CurrentTarget) then
-				setFeatureTarget(feature, findClosestServerTarget(nil))
-			end
-		end
-
 		local function buildTaskCleanup(stateKey)
 			return function(self)
 				self.State[stateKey] = false
@@ -1018,13 +993,6 @@ return {
 
 		local dungeonLabelToInfo = {}
 
-		local function getLiveDungeonFolder()
-			local main = Workspace:FindFirstChild("__Main")
-			if not main then return nil end
-
-			return main:FindFirstChild("__Dungeon")
-		end
-
 		local function makeDungeonLabel(info)
 			local mapName = tostring(info.MapName or info.Dungeon or "Dungeon")
 			local rank = info.DungeonRank ~= nil and tostring(info.DungeonRank) or "?"
@@ -1069,7 +1037,8 @@ return {
 			local entries = {}
 			local seenInstances = {}
 			local seenKeys = {}
-			local folder = getLiveDungeonFolder()
+			local main = Workspace:FindFirstChild("__Main")
+			local folder = main and main:FindFirstChild("__Dungeon")
 
 			local function addCandidate(dungeonObject)
 				if not dungeonObject or seenInstances[dungeonObject] then return end
@@ -1205,14 +1174,7 @@ return {
 		end
 
 		local function startTimeTrial(difficulty, dungeonId)
-			if not isValidTimeTrialDifficulty(difficulty) then
-				return false
-			end
-
-			if dungeonId == nil then
-				return false
-			end
-
+			if dungeonId == nil or not isValidTimeTrialDifficulty(difficulty) then return false end
 			return sendTimeTrialAction("Start", {Dungeon = dungeonId, Diff = difficulty})
 		end
 
@@ -1252,19 +1214,12 @@ return {
 				return false
 			end
 
-			lastStartedDungeonInfo = type(dungeonInfo) == "table" and {
-				Key = dungeonInfo.Key,
-				Label = dungeonInfo.Label,
-				Dungeon = dungeonInfo.Dungeon,
-				DungeonMap = dungeonInfo.DungeonMap,
-				Map = dungeonInfo.Map,
-				MapName = dungeonInfo.MapName,
-				World = dungeonInfo.World,
-				DungeonRank = dungeonInfo.DungeonRank,
-				ID = dungeonInfo.ID,
-				DoubleID = dungeonInfo.DoubleID,
-			} or dungeonInfo
-			return sendDungeonAction("Start", buildDungeonActionPayload(player.UserId, dungeonInfo)) == true
+			if sendDungeonAction("Start", buildDungeonActionPayload(player.UserId, dungeonInfo)) == true then
+				lastStartedDungeonInfo = dungeonInfo
+				return true
+			end
+
+			return false
 		end
 
 		local function isDungeonEndingNow()
@@ -1448,7 +1403,11 @@ return {
 			})
 
 			function Feature:Tick()
-				tickAutoServerTargetFeature(self, isNormalDungeonInstance)
+				if not isNormalDungeonInstance() then
+					setFeatureTarget(self, nil)
+				elseif not isTargetAlive(self.State.CurrentTarget) then
+					setFeatureTarget(self, findClosestServerTarget(nil))
+				end
 			end
 
 			bindPollingToggleFeature(Feature, "AutoDungeon", function(self)
@@ -1482,8 +1441,7 @@ return {
 			function Feature:Tick()
 				if not isCastleDungeonInstance() then
 					setFeatureTarget(self, nil)
-					self.State.LastCastlePortalSearchAt = 0
-					self.State.LastCastlePortalInteractAt = 0
+					self.State.LastCastlePortalSearchAt, self.State.LastCastlePortalInteractAt = 0, 0
 					return
 				end
 
@@ -1508,8 +1466,7 @@ return {
 				UseLoopId = true,
 				BeforeStop = function(self)
 					setFeatureTarget(self, nil)
-					self.State.LastCastlePortalSearchAt = 0
-					self.State.LastCastlePortalInteractAt = 0
+					self.State.LastCastlePortalSearchAt, self.State.LastCastlePortalInteractAt = 0, 0
 				end,
 			})
 		end
@@ -1560,14 +1517,11 @@ return {
 			})
 
 			function Feature:Run(panelRef)
-				local values = setFeaturePanelRef(self, panelRef)
-				local dungeonInfo = lastStartedDungeonInfo or getSelectedDungeonInfo(values and values.SelectedDungeon)
-				if not dungeonInfo then
-					return
-				end
+				setFeaturePanelRef(self, panelRef)
+				if not lastStartedDungeonInfo then return end
 
 				local started = runFeatureTask(self, "Restarting", function()
-					startDungeonInstance(dungeonInfo)
+					startDungeonInstance(lastStartedDungeonInfo)
 				end)
 
 				if started then

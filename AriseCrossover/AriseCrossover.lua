@@ -361,15 +361,17 @@ return {
 			return enemy and enemy.Name or nil
 		end
 
-		local enemyDisplayLookupCache = nil
-		local function isBruteEnemyInfo(info)
-			if type(info) ~= "table" then
-				return false
-			end
-
-			local name = tostring(info.Name or "")
-			return info.TypeG == "BrutesDefeated" or string.find(name, "Brute", 1, true) ~= nil
+		local function hasServerEnemyAttributes(enemy)
+			return enemy and (
+				enemy:GetAttribute("Dead") ~= nil
+				or enemy:GetAttribute("HP") ~= nil
+				or enemy:GetAttribute("Id") ~= nil
+				or enemy:GetAttribute("ID") ~= nil
+				or enemy:GetAttribute("Model") ~= nil
+			) or false
 		end
+
+		local enemyDisplayLookupCache = nil
 
 		local function getEnemyDisplayLookup()
 			if enemyDisplayLookupCache ~= nil then
@@ -380,17 +382,16 @@ return {
 			local duplicates = {}
 			local enemyInfo = getEnemyInfoConfig()
 			if type(enemyInfo) == "table" then
-				local function addLookupKey(key, displayName)
-					key = string.lower(tostring(key or ""))
+				local function addLookup(candidate, displayName)
+					local key = string.lower(tostring(candidate or ""))
 					displayName = tostring(displayName or "")
 					if key == "" or displayName == "" or duplicates[key] then
 						return
 					end
 
-					local existing = lookup[key]
-					if existing == nil then
+					if lookup[key] == nil then
 						lookup[key] = displayName
-					elseif existing ~= displayName then
+					elseif lookup[key] ~= displayName then
 						lookup[key] = nil
 						duplicates[key] = true
 					end
@@ -400,11 +401,9 @@ return {
 					if type(info) == "table" then
 						local displayName = tostring(info.Name or "")
 						if displayName ~= "" then
-							addLookupKey(id, displayName)
-							addLookupKey(info.Name, displayName)
-							addLookupKey(info.Model, displayName)
-							addLookupKey(info.Arise, displayName)
-							addLookupKey(info.CustomModel, displayName)
+							for _, candidate in ipairs({id, info.Name, info.Arise, info.Model, info.CustomModel}) do
+								addLookup(candidate, displayName)
+							end
 						end
 					end
 				end
@@ -416,12 +415,23 @@ return {
 
 		local function getResolvedEnemyDisplayName(enemy)
 			local displayName = getEnemyDisplayName(enemy)
+			local enemyInfo = getEnemyInfoConfig()
+			if type(enemyInfo) == "table" then
+				for _, candidate in ipairs({
+					enemy and enemy:GetAttribute("Id"),
+					enemy and enemy:GetAttribute("ID"),
+					enemy and enemy:GetAttribute("Model"),
+				}) do
+					local info = enemyInfo[tostring(candidate or "")]
+					if type(info) == "table" and tostring(info.Name or "") ~= "" then
+						return tostring(info.Name)
+					end
+				end
+			end
+
 			local lookup = getEnemyDisplayLookup()
 
 			for _, candidate in ipairs({
-				enemy and enemy:GetAttribute("Id"),
-				enemy and enemy:GetAttribute("ID"),
-				enemy and enemy:GetAttribute("Model"),
 				enemy and enemy:GetAttribute("Name"),
 				displayName,
 				enemy and enemy.Name,
@@ -439,7 +449,7 @@ return {
 			local serverFolder = getServerEnemyFolder()
 			if not enemy then return nil end
 
-			if CollectionService:HasTag(enemy, "EnemyServer") then
+			if CollectionService:HasTag(enemy, "EnemyServer") or hasServerEnemyAttributes(enemy) then
 				return enemy
 			end
 
@@ -448,15 +458,11 @@ return {
 
 			if enemy:IsDescendantOf(serverFolder) then
 				local current = enemy
-				while current and current.Parent and current.Parent ~= serverFolder do
-					if CollectionService:HasTag(current, "EnemyServer") then
+				while current and current ~= serverFolder do
+					if CollectionService:HasTag(current, "EnemyServer") or hasServerEnemyAttributes(current) then
 						return current
 					end
 					current = current.Parent
-				end
-
-				if current and current.Parent == serverFolder then
-					return current
 				end
 			end
 
@@ -490,7 +496,7 @@ return {
 				if not getEnemyRoot(serverEnemy) then return end
 
 				local isTagged = CollectionService:HasTag(serverEnemy, "EnemyServer")
-				local hasEnemyAttributes = serverEnemy:GetAttribute("Dead") ~= nil or serverEnemy:GetAttribute("HP") ~= nil or serverEnemy:GetAttribute("Id") ~= nil or serverEnemy:GetAttribute("ID") ~= nil or serverEnemy:GetAttribute("Model") ~= nil
+				local hasEnemyAttributes = hasServerEnemyAttributes(serverEnemy)
 				if not isTagged and not hasEnemyAttributes then return end
 
 				seen[serverEnemy] = true
@@ -585,12 +591,31 @@ return {
 
 					local internalNameMap = {}
 
+					local function addInternalName(internalName, displayName)
+						internalName = string.lower(tostring(internalName or ""))
+						displayName = tostring(displayName or "")
+						if internalName == "" or displayName == "" then
+							return
+						end
+
+						local names = internalNameMap[internalName]
+						if not names then
+							names = {}
+							internalNameMap[internalName] = names
+						end
+
+						if not arrayContains(names, displayName) then
+							names[#names + 1] = displayName
+						end
+					end
+
 					for id, info in pairs(enemyInfo) do
-						if type(info) == "table" and not isBruteEnemyInfo(info) then
+						if type(info) == "table" then
 							local displayName = tostring(info.Name or "")
-							local internalName = string.lower(tostring(info.Arise or ""))
-							if displayName ~= "" and internalName ~= "" and internalNameMap[internalName] == nil then
-								internalNameMap[internalName] = displayName
+							if displayName ~= "" then
+								for _, candidate in ipairs({id, info.Name, info.Arise, info.Model, info.CustomModel}) do
+									addInternalName(candidate, displayName)
+								end
 							end
 						end
 					end
@@ -656,8 +681,8 @@ return {
 						collectInternalNames(normalList, internalNames, {})
 
 						for _, internalName in ipairs(internalNames) do
-							local enemyName = internalNameMap[string.lower(tostring(internalName))]
-							if enemyName then
+							local displayNames = internalNameMap[string.lower(tostring(internalName))] or EMPTY_TABLE
+							for _, enemyName in ipairs(displayNames) do
 								addEnemyItem(zoneEnemyItems, zoneEnemySeen, enemyName)
 							end
 						end

@@ -2,6 +2,7 @@ return {
 	Load = function(Shared)
 		local Workspace, RegisterFeature, RegisterTabs = Shared.Workspace or game:GetService("Workspace"), Shared.RegisterFeature, Shared.RegisterTabs
 		local Players, ReplicatedStorage, CollectionService = game:GetService("Players"), game:GetService("ReplicatedStorage"), game:GetService("CollectionService")
+		local VirtualInputManager = game:GetService("VirtualInputManager")
 
 		local player = Players.LocalPlayer
 
@@ -18,6 +19,7 @@ return {
 		local AUTO_CLICK_POLL_DELAY, AUTO_FARM_POLL_DELAY, SHADOW_EXCHANGE_POLL_DELAY = 0.5, 0.25, 0.5
 		local AUTO_FARM_TELEPORT_DELAY = 0.5
 		local DUNGEON_CREATE_DELAY, DUNGEON_INSTANCE_WAIT, DUNGEON_RESTART_RETRY_DELAY = 0.5, 6, 3
+		local CASTLE_PORTAL_SEARCH_DELAY, CASTLE_PORTAL_INTERACT_DELAY = 0.5, 2
 		local TELEPORT_SPAWN_NAMES = {"Arena", "JejuEvent", "JungleEvent", "WinterEvent", "XmasWorld"}
 		local GUILD_HALL_LOCATION = "Guild Hall"
 		local TIME_TRIAL_BRIDGE_TOKEN = string.char(17)
@@ -93,10 +95,6 @@ return {
 			end
 		end
 
-		local function buildPanelRefHandler(feature)
-			return function(_, _, panelRef) setFeaturePanelRef(feature, panelRef) end
-		end
-
 		local function buildRestartHandler(feature, enabledKey)
 			return function(_, values, panelRef)
 				setFeaturePanelRef(feature, panelRef)
@@ -108,7 +106,9 @@ return {
 
 		local function buildActionHandlers(feature, selectOptionId, buttonOptionId)
 			return {
-				[selectOptionId] = buildPanelRefHandler(feature),
+				[selectOptionId] = function(_, _, panelRef)
+					setFeaturePanelRef(feature, panelRef)
+				end,
 				[buttonOptionId] = function(_, _, panelRef)
 					feature:Run(panelRef)
 				end,
@@ -441,10 +441,6 @@ return {
 			return enemyDisplayMappingsCache
 		end
 
-		local function getEnemyDisplayLookup()
-			return getEnemyDisplayMappings().Unique
-		end
-
 		local function getResolvedEnemyDisplayName(enemy)
 			local displayName = getEnemyDisplayName(enemy)
 			local enemyInfo = getEnemyInfoConfig()
@@ -461,7 +457,7 @@ return {
 				end
 			end
 
-			local lookup = getEnemyDisplayLookup()
+			local lookup = getEnemyDisplayMappings().Unique
 
 			for _, candidate in ipairs({
 				enemy and enemy:GetAttribute("Name"),
@@ -849,12 +845,6 @@ return {
 			return cframe and (cframe * CFrame.new(0, 3, 0)) or nil
 		end
 
-		local function addTeleportStaticLocations(items)
-			for locationName in pairs(TELEPORT_STATIC_LOCATIONS) do
-				items[#items + 1] = locationName
-			end
-		end
-
 		local function getTeleportSpawnItems()
 			local items = {NO_TELEPORT_OPTION}
 			teleportSpawnNameToInstance = {}
@@ -870,7 +860,9 @@ return {
 				end
 			end
 
-			addTeleportStaticLocations(items)
+			for locationName in pairs(TELEPORT_STATIC_LOCATIONS) do
+				items[#items + 1] = locationName
+			end
 			return items
 		end
 
@@ -903,6 +895,115 @@ return {
 			character:SetAttribute("InGuild", inGuild)
 			character:SetAttribute("InTp", false)
 			return true
+		end
+
+		local function findCastlePortalPrompt()
+			local main = Workspace:FindFirstChild("__Main")
+			local dungeon = main and main:FindFirstChild("__Dungeon")
+			local castle = dungeon and dungeon:FindFirstChild("Castle")
+
+			if castle then
+				for _, descendant in ipairs(castle:GetDescendants()) do
+					if descendant:IsA("ProximityPrompt") then
+						return descendant
+					end
+
+					if descendant:IsA("BasePart") then
+						local name = string.lower(descendant.Name)
+						if string.find(name, "portal", 1, true)
+							or string.find(name, "next", 1, true)
+							or string.find(name, "teleport", 1, true)
+						then
+							local prompt = descendant:FindFirstChildOfClass("ProximityPrompt")
+							if prompt then
+								return prompt
+							end
+						end
+					end
+				end
+			end
+
+			for _, descendant in ipairs(Workspace:GetDescendants()) do
+				if descendant:IsA("ProximityPrompt") then
+					local parent = descendant.Parent
+					local parentName = parent and string.lower(parent.Name) or ""
+					if string.find(parentName, "portal", 1, true)
+						or string.find(parentName, "next", 1, true)
+						or string.find(parentName, "floor", 1, true)
+						or string.find(parentName, "teleport", 1, true)
+					then
+						return descendant
+					end
+				end
+			end
+
+			return nil
+		end
+
+		local function getPromptTargetCFrame(prompt)
+			local current = prompt and prompt.Parent or nil
+			while current and current ~= Workspace do
+				local cframe = getInstanceCFrame(current)
+				if cframe then
+					return cframe
+				end
+
+				current = current.Parent
+			end
+
+			return nil
+		end
+
+		local function sendVirtualPromptKey(prompt)
+			local keyCode = prompt and prompt.KeyboardKeyCode or Enum.KeyCode.Unknown
+			if keyCode == Enum.KeyCode.Unknown then
+				keyCode = Enum.KeyCode.E
+			end
+
+			local holdDuration = math.max(tonumber(prompt and prompt.HoldDuration) or 0, 0.1)
+			local pressOk = pcall(function()
+				VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
+			end)
+			if not pressOk then
+				return false
+			end
+
+			task.wait(holdDuration + 0.05)
+			pcall(function()
+				VirtualInputManager:SendKeyEvent(false, keyCode, false, game)
+			end)
+
+			return true
+		end
+
+		local function tryAdvanceCastleFloor(feature)
+			local now = os.clock()
+			if now - (feature.State.LastCastlePortalSearchAt or 0) < CASTLE_PORTAL_SEARCH_DELAY then
+				return false
+			end
+
+			feature.State.LastCastlePortalSearchAt = now
+
+			local portalPrompt = findCastlePortalPrompt()
+			if not (portalPrompt and portalPrompt.Parent) then
+				return false
+			end
+
+			if now - (feature.State.LastCastlePortalInteractAt or 0) < CASTLE_PORTAL_INTERACT_DELAY then
+				return true
+			end
+
+			local character = player.Character
+			local characterRoot = getCharacterRoot()
+			local promptCFrame = getPromptTargetCFrame(portalPrompt)
+			if character and characterRoot and promptCFrame then
+				character:PivotTo(promptCFrame * CFrame.new(0, 0, 3))
+				task.wait(0.3)
+			end
+
+			task.wait(0.2)
+			feature.State.LastCastlePortalInteractAt = os.clock()
+			return sendVirtualPromptKey(portalPrompt)
 		end
 
 		local dungeonLabelToInfo = {}
@@ -1355,17 +1456,39 @@ return {
 		-- FEATURE: AUTO CASTLE
 		--==================================================
 		do
+			local state = newTargetingState()
+			state.LastCastlePortalSearchAt = 0
+			state.LastCastlePortalInteractAt = 0
+
 			local Feature = RegisterFeature({
 				Key = "AutoCastle", Tab = "Castle", Order = 10,
 				Defaults = {AutoCastle = false},
-				State = newTargetingState(),
+				State = state,
 				Options = {
-					{ Id = "AutoCastle", Type = "toggle", Label = "Auto Castle", Description = "Teleports to the closest alive enemy only inside an active castle instance" },
+					{ Id = "AutoCastle", Type = "toggle", Label = "Auto Castle", Description = "Teleports to the closest alive enemy inside castle instances and advances floors through portal prompts" },
 				}
 			})
 
 			function Feature:Tick()
-				tickAutoServerTargetFeature(self, isCastleDungeonInstance)
+				if not isCastleDungeonInstance() then
+					setFeatureTarget(self, nil)
+					self.State.LastCastlePortalSearchAt = 0
+					self.State.LastCastlePortalInteractAt = 0
+					return
+				end
+
+				if isTargetAlive(self.State.CurrentTarget) then
+					return
+				end
+
+				local target = findClosestServerTarget(nil)
+				if target then
+					setFeatureTarget(self, target)
+					return
+				end
+
+				setFeatureTarget(self, nil)
+				tryAdvanceCastleFloor(self)
 			end
 
 			bindPollingToggleFeature(Feature, "AutoCastle", function(self)
@@ -1375,6 +1498,8 @@ return {
 				UseLoopId = true,
 				BeforeStop = function(self)
 					setFeatureTarget(self, nil)
+					self.State.LastCastlePortalSearchAt = 0
+					self.State.LastCastlePortalInteractAt = 0
 				end,
 			})
 		end

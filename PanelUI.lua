@@ -130,7 +130,7 @@ local function shouldSearchDropdown(option, itemCount)
 		return option.Searchable == true
 	end
 
-	return (itemCount or 0) > 20
+	return false
 end
 
 local function matchesSearchText(text, query)

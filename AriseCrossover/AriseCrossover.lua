@@ -11,14 +11,9 @@ return {
 		RegisterTabs({{Name = "Combat", Order = 20}, {Name = "Dungeon", Order = 30}, {Name = "Time Trial", Order = 40}, {Name = "Teleport", Order = 50}})
 
 		--==================================================
-		-- GAME REFERENCES
-		--==================================================
-		local Indexer = ReplicatedStorage:FindFirstChild("Indexer")
-
-		--==================================================
 		-- HELPERS
 		--==================================================
-		local ALL_OPTION, NO_ENEMY_OPTION, NO_DUNGEON_OPTION, NO_TELEPORT_OPTION = "All", "Select enemy", "Select dungeon", "Select location"
+		local ALL_OPTION, NO_ZONE_OPTION, NO_ENEMY_OPTION, NO_DUNGEON_OPTION, NO_TELEPORT_OPTION = "All", "Select zone", "Select enemy", "Select dungeon", "Select location"
 		local EMPTY_TABLE = {}
 		local AUTO_CLICK_POLL_DELAY, AUTO_FARM_POLL_DELAY, SHADOW_EXCHANGE_POLL_DELAY = 0.5, 0.25, 0.5
 		local DUNGEON_CREATE_DELAY, DUNGEON_INSTANCE_WAIT = 0.5, 6
@@ -29,6 +24,10 @@ return {
 		local TELEPORT_STATIC_LOCATIONS = {
 			[GUILD_HALL_LOCATION] = CFrame.new(9557.8457, -204.696213, 106.217346, 1, 0, 0, 0, 1, 0, 0, 0, 1) * CFrame.Angles(0, math.pi, 0),
 		}
+		local indexerModuleCache = {}
+		local autoFarmZoneItemsCache = nil
+		local autoFarmZoneEnemiesCache = nil
+		local autoFarmSelectedZone = NO_ZONE_OPTION
 
 		local function newTargetingState()
 			return {Running = false, LoopId = 0, PanelRef = nil, PollDelay = AUTO_FARM_POLL_DELAY, TeleportDistance = 7, CurrentTarget = nil}
@@ -285,37 +284,26 @@ return {
 			return valueObject:GetAttribute("Text") or valueObject:GetAttribute("Value")
 		end
 
-		local indexerModuleCache = {}
-		local enemyInfoLookupCache = nil
-
-		local function getIndexer()
-			if Indexer and Indexer.Parent then return Indexer end
-			Indexer = ReplicatedStorage:FindFirstChild("Indexer")
-			return Indexer
-		end
-
 		local function requireIndexerModule(moduleNames)
 			if type(moduleNames) == "string" then
 				moduleNames = {moduleNames}
 			end
 
-			local indexer = getIndexer()
+			local indexer = ReplicatedStorage:FindFirstChild("Indexer")
 			if not indexer then return nil end
 
 			for _, moduleName in ipairs(moduleNames or EMPTY_TABLE) do
 				local cached = indexerModuleCache[moduleName]
 				if cached ~= nil then
-					if cached ~= false then
-						return cached
-					end
-				else
-					local module = indexer:FindFirstChild(moduleName)
-					if module and module:IsA("ModuleScript") then
-						local ok, result = pcall(require, module)
-						if ok and type(result) == "table" then
-							indexerModuleCache[moduleName] = result
-							return result
-						end
+					return cached
+				end
+
+				local module = indexer:FindFirstChild(moduleName)
+				if module and module:IsA("ModuleScript") then
+					local ok, result = pcall(require, module)
+					if ok and type(result) == "table" then
+						indexerModuleCache[moduleName] = result
+						return result
 					end
 				end
 			end
@@ -323,88 +311,12 @@ return {
 			return nil
 		end
 
+		local function getMapInfoConfig()
+			return requireIndexerModule({"MapInfo", "MapsInfo"})
+		end
+
 		local function getEnemyInfoConfig()
 			return requireIndexerModule({"EnemyInfo", "EnemiesInfo", "Enemies", "MobsInfo"})
-		end
-
-		local function addInternalEnemyMapping(lookups, internalName, displayName)
-			internalName = tostring(internalName or "")
-			displayName = tostring(displayName or "")
-			if internalName == "" or displayName == "" then return end
-
-			local function addKey(key)
-				local mappedNames = lookups.ByInternal[key]
-				if not mappedNames then
-					mappedNames = {}
-					lookups.ByInternal[key] = mappedNames
-				end
-
-				if not arrayContains(mappedNames, displayName) then
-					mappedNames[#mappedNames + 1] = displayName
-				end
-			end
-
-			addKey(internalName)
-			addKey(string.lower(internalName))
-		end
-
-		local function getEnemyInfoLookups()
-			if enemyInfoLookupCache then return enemyInfoLookupCache end
-
-			local enemyInfo = getEnemyInfoConfig()
-			if not enemyInfo then
-				return {ById = {}, ByInternal = {}, AllDisplayNames = {}}
-			end
-
-			local lookups = {ById = {}, ByInternal = {}, AllDisplayNames = {}}
-			local seenDisplayNames = {}
-
-			for id, info in pairs(enemyInfo) do
-				if type(info) == "table" then
-					local displayName = tostring(info.Name or "")
-					if displayName ~= "" then
-						lookups.ById[tostring(id)] = info
-						if info.Id ~= nil then
-							lookups.ById[tostring(info.Id)] = info
-						end
-
-						addInternalEnemyMapping(lookups, id, displayName)
-						addInternalEnemyMapping(lookups, info.Name, displayName)
-						addInternalEnemyMapping(lookups, info.Arise, displayName)
-						addInternalEnemyMapping(lookups, info.Model, displayName)
-						addInternalEnemyMapping(lookups, info.CustomModel, displayName)
-
-						if not seenDisplayNames[displayName] then
-							seenDisplayNames[displayName] = true
-							lookups.AllDisplayNames[#lookups.AllDisplayNames + 1] = displayName
-						end
-					end
-				end
-			end
-
-			table.sort(lookups.AllDisplayNames)
-			for _, mappedNames in pairs(lookups.ByInternal) do
-				table.sort(mappedNames)
-			end
-
-			enemyInfoLookupCache = lookups
-			return lookups
-		end
-
-		local function getEnemyInfoById(enemyId)
-			if enemyId == nil then return nil end
-			return getEnemyInfoLookups().ById[tostring(enemyId)]
-		end
-
-		local function getEnemyDisplayNamesForInternalName(internalName)
-			if internalName == nil then return EMPTY_TABLE end
-			internalName = tostring(internalName)
-			local lookups = getEnemyInfoLookups().ByInternal
-			return lookups[internalName] or lookups[string.lower(internalName)] or EMPTY_TABLE
-		end
-
-		local function getAllKnownEnemyNames()
-			return getEnemyInfoLookups().AllDisplayNames
 		end
 
 		local function getCharacterRoot()
@@ -445,20 +357,6 @@ return {
 			local title = main and main:FindFirstChild("Title")
 			local titleText = readValueObject(title)
 			if titleText and tostring(titleText) ~= "" then return tostring(titleText) end
-
-			local enemyInfo = getEnemyInfoById(enemy and (enemy:GetAttribute("Id") or enemy:GetAttribute("ID")))
-			if enemyInfo and enemyInfo.Name then return tostring(enemyInfo.Name) end
-
-			for _, internalName in ipairs({
-				enemy and enemy:GetAttribute("Id"),
-				enemy and enemy:GetAttribute("ID"),
-				enemy and enemy:GetAttribute("Model"),
-				enemy and enemy:GetAttribute("Name"),
-				enemy and enemy.Name,
-			}) do
-				local mappedNames = getEnemyDisplayNamesForInternalName(internalName)
-				if mappedNames[1] then return mappedNames[1] end
-			end
 
 			local attributeName = enemy and enemy:GetAttribute("Name")
 			if attributeName and tostring(attributeName) ~= "" then return tostring(attributeName) end
@@ -524,6 +422,21 @@ return {
 			return candidates
 		end
 
+		local function getClientEnemyCandidates()
+			local clientFolder = getEnemyFolders()
+			local candidates = {}
+
+			if not clientFolder then return candidates end
+
+			for _, enemy in ipairs(clientFolder:GetChildren()) do
+				if getEnemyRoot(enemy) then
+					candidates[#candidates + 1] = enemy
+				end
+			end
+
+			return candidates
+		end
+
 		local function findClosestCandidate(candidates, matchFn)
 			local characterRoot = getCharacterRoot()
 			local closestEnemy = nil
@@ -547,11 +460,15 @@ return {
 			return closestEnemy, closestDistance
 		end
 
+		local function findClosestClientTarget(matchFn)
+			return findClosestCandidate(getClientEnemyCandidates(), matchFn)
+		end
+
 		local function findClosestServerTarget(matchFn)
 			return findClosestCandidate(getServerEnemyCandidates(), matchFn)
 		end
 
-		local function isServerTargetAlive(target)
+		local function isTargetAlive(target)
 			return target and target.Parent and isEnemyAlive(target)
 		end
 
@@ -579,15 +496,146 @@ return {
 			items[#items + 1] = enemyName
 		end
 
-		local function getAutoFarmEnemyItems()
-			local items = {ALL_OPTION}
-			local seen = {[ALL_OPTION] = true}
+		local ignoredZoneEnemyKeys = {
+			DungeonSpawns = true,
+			Dungeons = true,
+			Image = true,
+			Name = true,
+			Order = true,
+		}
 
-			for _, enemyName in ipairs(getAllKnownEnemyNames()) do
-				addEnemyItem(items, seen, enemyName)
+		local function buildAutoFarmZoneData()
+			if autoFarmZoneItemsCache and autoFarmZoneEnemiesCache then
+				return autoFarmZoneItemsCache, autoFarmZoneEnemiesCache
 			end
 
-			return items
+			local zoneItems = {NO_ZONE_OPTION}
+			local zoneEnemies = {}
+
+			local ok = pcall(function()
+				local mapInfo = getMapInfoConfig()
+				local enemyInfo = getEnemyInfoConfig()
+				if type(mapInfo) ~= "table" or type(enemyInfo) ~= "table" then return end
+
+				local internalNameMap = {}
+
+				local function addInternalName(internalName, displayName)
+					internalName = string.lower(tostring(internalName or ""))
+					displayName = tostring(displayName or "")
+					if internalName == "" or displayName == "" then return end
+
+					local names = internalNameMap[internalName]
+					if not names then
+						names = {}
+						internalNameMap[internalName] = names
+					end
+
+					if not arrayContains(names, displayName) then
+						names[#names + 1] = displayName
+					end
+				end
+
+				for id, info in pairs(enemyInfo) do
+					if type(info) == "table" then
+						local displayName = tostring(info.Name or "")
+						if displayName ~= "" then
+							for _, candidate in ipairs({id, info.Name, info.Arise, info.Model, info.CustomModel}) do
+								addInternalName(candidate, displayName)
+							end
+						end
+					end
+				end
+
+				local function isZoneInfoEntry(value)
+					return type(value) == "table" and value.Name ~= nil
+				end
+
+				local zoneEntries = {}
+				if isZoneInfoEntry(mapInfo) then
+					zoneEntries[#zoneEntries + 1] = {Key = "MapInfo", Info = mapInfo}
+				else
+					for key, info in pairs(mapInfo) do
+						if isZoneInfoEntry(info) then
+							zoneEntries[#zoneEntries + 1] = {Key = key, Info = info}
+						end
+					end
+				end
+
+				table.sort(zoneEntries, function(a, b)
+					local orderA = tonumber(a.Info.Order)
+					local orderB = tonumber(b.Info.Order)
+					if orderA ~= nil and orderB ~= nil and orderA ~= orderB then return orderA < orderB end
+					return tostring(a.Info.Name or a.Key) < tostring(b.Info.Name or b.Key)
+				end)
+
+				local function collectInternalNames(source, items, seen)
+					if type(source) ~= "table" then return end
+
+					for key, value in pairs(source) do
+						if ignoredZoneEnemyKeys[key] then
+							continue
+						end
+
+						if type(value) == "string" then
+							if not seen[value] then
+								seen[value] = true
+								items[#items + 1] = value
+							end
+						elseif type(value) == "table" then
+							collectInternalNames(value, items, seen)
+						end
+					end
+				end
+
+				for _, entry in ipairs(zoneEntries) do
+					local zoneName = tostring(entry.Info.Name or entry.Key)
+					local zoneEnemyItems = {}
+					local zoneEnemySeen = {}
+					local internalNames = {}
+
+					collectInternalNames(entry.Info, internalNames, {})
+					table.sort(internalNames)
+
+					for _, internalName in ipairs(internalNames) do
+						for _, enemyName in ipairs(internalNameMap[string.lower(tostring(internalName))] or EMPTY_TABLE) do
+							addEnemyItem(zoneEnemyItems, zoneEnemySeen, enemyName)
+						end
+					end
+
+					table.sort(zoneEnemyItems)
+
+					if #zoneEnemyItems > 0 then
+						table.insert(zoneItems, zoneName)
+						zoneEnemies[zoneName] = {ALL_OPTION}
+						for _, enemyName in ipairs(zoneEnemyItems) do
+							zoneEnemies[zoneName][#zoneEnemies[zoneName] + 1] = enemyName
+						end
+					end
+				end
+			end)
+
+			if not ok then
+				zoneItems = {NO_ZONE_OPTION}
+				zoneEnemies = {}
+			end
+
+			autoFarmZoneItemsCache = zoneItems
+			autoFarmZoneEnemiesCache = zoneEnemies
+			return zoneItems, zoneEnemies
+		end
+
+		local function getAutoFarmZoneItems()
+			local zoneItems = buildAutoFarmZoneData()
+			return zoneItems
+		end
+
+		local function getAutoFarmEnemyItems()
+			local _, zoneEnemies = buildAutoFarmZoneData()
+			if autoFarmSelectedZone == nil or autoFarmSelectedZone == "" or autoFarmSelectedZone == NO_ZONE_OPTION then
+				return {}
+			end
+
+			return zoneEnemies[autoFarmSelectedZone] or {}
 		end
 
 		local function getClosestTeleportCFrame(enemyRoot, distance)
@@ -1039,22 +1087,35 @@ return {
 		do
 			local Feature = RegisterFeature({
 				Key = "AutoFarm", Tab = "Combat", Section = "Farm", Order = 25,
-				Defaults = {AutoFarmEnemy = {}, AutoFarm = false},
+				Defaults = {AutoFarmZone = NO_ZONE_OPTION, AutoFarmEnemy = {}, AutoFarm = false},
 				State = newTargetingState(),
 				Options = {
-					{ Id = "AutoFarmEnemy", Type = "multiselect", Label = "Enemy", Description = "Select enemies to farm", Items = getAutoFarmEnemyItems, EmptyText = "Nothing selected", Searchable = true },
+					{ Id = "AutoFarmZone", Type = "select", Label = "Zone", Description = "Select zone enemy list", Items = getAutoFarmZoneItems },
+					{ Id = "AutoFarmEnemy", Type = "multiselect", Label = "Enemy", Description = "Select enemies to farm", Items = getAutoFarmEnemyItems, EmptyText = "Nothing selected" },
 					{ Id = "AutoFarm", Type = "toggle", Label = "Auto Farm", Description = "Teleports to the closest selected enemy and retargets on death" },
 				}
 			})
 
+			function Feature:SetZone(zoneName, panelRef)
+				setFeaturePanelRef(self, panelRef)
+
+				zoneName = tostring(zoneName or NO_ZONE_OPTION)
+				local changed = autoFarmSelectedZone ~= zoneName
+				autoFarmSelectedZone = zoneName
+
+				if self.State.ZoneInitialized and changed then
+					self.State.CurrentTarget = nil
+					if panelRef and panelRef.SetValue then
+						panelRef:SetValue("AutoFarmEnemy", {})
+					end
+				end
+
+				self.State.ZoneInitialized = true
+			end
+
 			function Feature:MatchesSelection(enemy, selectedEnemies)
 				if arrayContains(selectedEnemies, ALL_OPTION) then return true end
 				return arrayContains(selectedEnemies, getEnemyDisplayName(enemy))
-			end
-
-			function Feature:FormatSelection(selectedEnemies)
-				if arrayContains(selectedEnemies, ALL_OPTION) then return ALL_OPTION end
-				return table.concat(selectedEnemies, ", ")
 			end
 
 			function Feature:GetMatchFn(selectedEnemies)
@@ -1065,7 +1126,7 @@ return {
 			end
 
 			function Feature:FindTarget(selectedEnemies)
-				return findClosestServerTarget(self:GetMatchFn(selectedEnemies))
+				return findClosestClientTarget(self:GetMatchFn(selectedEnemies))
 			end
 
 			function Feature:TargetMatches(target, selectedEnemies)
@@ -1079,7 +1140,7 @@ return {
 				end
 
 				local target = self.State.CurrentTarget
-				if not self:TargetMatches(target, selectedEnemies) or not isServerTargetAlive(target) then
+				if not self:TargetMatches(target, selectedEnemies) or not isTargetAlive(target) then
 					local newTarget = self:FindTarget(selectedEnemies)
 					setFeatureTarget(self, newTarget)
 				end
@@ -1094,6 +1155,9 @@ return {
 					self.State.CurrentTarget = nil
 				end,
 				ExtraHandlers = {
+					AutoFarmZone = function(value, _, panelRef)
+						Feature:SetZone(value, panelRef)
+					end,
 					AutoFarmEnemy = buildRestartHandler(Feature, "AutoFarm"),
 				},
 			})
@@ -1123,7 +1187,7 @@ return {
 				end
 
 				local target = self.State.CurrentTarget
-				if not isServerTargetAlive(target) then
+				if not isTargetAlive(target) then
 					local newTarget = self:FindTarget()
 					setFeatureTarget(self, newTarget)
 				end

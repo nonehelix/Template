@@ -8,7 +8,7 @@ return {
 		--==================================================
 		-- TABS
 		--==================================================
-		RegisterTabs({{Name = "Combat", Order = 20}, {Name = "Dungeon", Order = 30}, {Name = "Debug", Order = 40}})
+		RegisterTabs({{Name = "Combat", Order = 20}, {Name = "Dungeon", Order = 30}, {Name = "Teleport", Order = 40}, {Name = "Debug", Order = 50}})
 
 		--==================================================
 		-- GAME REFERENCES
@@ -18,17 +18,51 @@ return {
 		--==================================================
 		-- HELPERS
 		--==================================================
-		local NO_ENEMY_OPTION, NO_DUNGEON_OPTION = "Select enemy", "Select dungeon"
+		local ALL_OPTION, NO_ENEMY_OPTION, NO_DUNGEON_OPTION, NO_TELEPORT_OPTION = "All", "Select enemy", "Select dungeon", "Select location"
 		local EMPTY_TABLE = {}
 		local SERVER_DEAD_TARGET_OPTIONS = {UseServerDeadAttribute = true, RequireServerEnemy = true}
 		local AUTO_CLICK_POLL_DELAY, AUTO_FARM_POLL_DELAY, SHADOW_EXCHANGE_POLL_DELAY, DEBUG_POLL_DELAY = 0.5, 0.25, 0.5, 1
 		local DUNGEON_CREATE_DELAY, DUNGEON_INSTANCE_WAIT = 0.5, 6
+		local TELEPORT_SPAWN_NAMES = {"Arena", "JejuEvent", "JungleEvent", "WinterEvent", "XmasWorld"}
+		local TELEPORT_STATIC_LOCATIONS = {
+			["Guild Hall"] = CFrame.new(9557.8457, -204.696213, 106.217346),
+		}
 
 		local function newTargetingState()
 			return {Running = false, LoopId = 0, PanelRef = nil, PollDelay = AUTO_FARM_POLL_DELAY, TeleportDistance = 7, CurrentTarget = nil}
 		end
 
 		local function getPanelValues(panelRef) return panelRef and panelRef.Config and panelRef.Config.Values or nil end
+
+		local arrayContains = Shared.arrayContains or function(array, value)
+			if type(array) ~= "table" then return false end
+			for _, item in ipairs(array) do
+				if item == value then return true end
+			end
+			return false
+		end
+
+		local function normalizeSelectionArray(values)
+			local result = {}
+			local seen = {}
+
+			local function addSelection(value)
+				value = tostring(value or "")
+				if value == "" or value == NO_ENEMY_OPTION or seen[value] then return end
+				seen[value] = true
+				result[#result + 1] = value
+			end
+
+			if type(values) == "table" then
+				for _, value in ipairs(values) do
+					addSelection(value)
+				end
+			else
+				addSelection(values)
+			end
+
+			return result
+		end
 
 		local function setFeaturePanelRef(feature, panelRef)
 			feature.State.PanelRef = panelRef
@@ -341,6 +375,13 @@ return {
 			return character and character:FindFirstChild("HumanoidRootPart") or nil
 		end
 
+		local function teleportCharacterToCFrame(cframe)
+			local character = player.Character
+			if not character or not cframe then return false end
+			character:PivotTo(cframe)
+			return true
+		end
+
 		local function getEnemyRoot(enemy)
 			if not enemy then return nil end
 			return enemy.PrimaryPart or enemy:FindFirstChild("HumanoidRootPart") or enemy:FindFirstChildWhichIsA("BasePart", true)
@@ -608,8 +649,8 @@ return {
 		end
 
 		local function getAutoFarmEnemyItems()
-			local items = {NO_ENEMY_OPTION}
-			local seen = {[NO_ENEMY_OPTION] = true}
+			local items = {ALL_OPTION}
+			local seen = {[ALL_OPTION] = true}
 			local enemyFolder = getEnemyFolders()
 
 			if enemyFolder then
@@ -632,8 +673,8 @@ return {
 			else
 				table.sort(items, function(a, b)
 					if a == b then return false end
-					if a == NO_ENEMY_OPTION then return true end
-					if b == NO_ENEMY_OPTION then return false end
+					if a == ALL_OPTION then return true end
+					if b == ALL_OPTION then return false end
 					return a < b
 				end)
 			end
@@ -668,10 +709,9 @@ return {
 		end
 
 		local function teleportToEnemy(enemy, distance)
-			local character = player.Character
 			local enemyRoot = getEnemyRoot(enemy)
-			if not character or not enemyRoot then return end
-			character:PivotTo(getClosestTeleportCFrame(enemyRoot, distance))
+			if not enemyRoot then return end
+			teleportCharacterToCFrame(getClosestTeleportCFrame(enemyRoot, distance))
 		end
 
 		local function setFeatureTarget(feature, target)
@@ -679,6 +719,69 @@ return {
 
 			feature.State.CurrentTarget = target
 			if target then teleportToEnemy(target, feature.State.TeleportDistance) end
+		end
+
+		local teleportSpawnNameToInstance = {}
+
+		local function getTeleportSpawnsFolder()
+			return Workspace:FindFirstChild("__Spawns") or Workspace:FindFirstChild("__Spawns", true)
+		end
+
+		local function getInstanceCFrame(instance)
+			if not instance then return nil end
+			if instance:IsA("BasePart") then return instance.CFrame end
+			if instance:IsA("Attachment") then return instance.WorldCFrame end
+			if instance:IsA("Model") then return instance:GetPivot() end
+
+			local basePart = instance:FindFirstChildWhichIsA("BasePart", true)
+			return basePart and basePart.CFrame or nil
+		end
+
+		local function getTeleportSpawnCFrame(spawnInstance)
+			local cframe = getInstanceCFrame(spawnInstance)
+			return cframe and (cframe * CFrame.new(0, 3, 0)) or nil
+		end
+
+		local function addTeleportStaticLocations(items)
+			for locationName in pairs(TELEPORT_STATIC_LOCATIONS) do
+				items[#items + 1] = locationName
+			end
+		end
+
+		local function getTeleportSpawnItems()
+			local items = {NO_TELEPORT_OPTION}
+			teleportSpawnNameToInstance = {}
+
+			local spawnsFolder = getTeleportSpawnsFolder()
+			if spawnsFolder then
+				for _, spawnName in ipairs(TELEPORT_SPAWN_NAMES) do
+					local spawnInstance = spawnsFolder:FindFirstChild(spawnName)
+					if spawnInstance then
+						teleportSpawnNameToInstance[spawnName] = spawnInstance
+						items[#items + 1] = spawnName
+					end
+				end
+			end
+
+			addTeleportStaticLocations(items)
+			return items
+		end
+
+		local function getSelectedTeleportSpawn(selectedSpawnName)
+			if selectedSpawnName == nil or selectedSpawnName == "" or selectedSpawnName == NO_TELEPORT_OPTION then return nil end
+
+			local cachedSpawn = teleportSpawnNameToInstance[selectedSpawnName]
+			if cachedSpawn and cachedSpawn.Parent then return cachedSpawn end
+
+			local spawnsFolder = getTeleportSpawnsFolder()
+			return spawnsFolder and spawnsFolder:FindFirstChild(selectedSpawnName) or nil
+		end
+
+		local function getTeleportLocationCFrame(selectedLocation)
+			local staticCFrame = TELEPORT_STATIC_LOCATIONS[selectedLocation]
+			if staticCFrame then return staticCFrame end
+
+			return getTeleportSpawnCFrame(getSelectedTeleportSpawn(selectedLocation))
 		end
 
 		local dungeonLabelToInfo = {}
@@ -994,22 +1097,37 @@ return {
 		do
 			local Feature = RegisterFeature({
 				Key = "AutoFarm", Tab = "Combat", Section = "Farm", Order = 25,
-				Defaults = {AutoFarmEnemy = NO_ENEMY_OPTION, AutoFarm = false},
+				Defaults = {AutoFarmEnemy = {}, AutoFarm = false},
 				State = newTargetingState(),
 				Options = {
-					{ Id = "AutoFarmEnemy", Type = "select", Label = "Enemy", Description = "Select enemy to farm", Items = getAutoFarmEnemyItems },
+					{ Id = "AutoFarmEnemy", Type = "multiselect", Label = "Enemy", Description = "Select enemies to farm", Items = getAutoFarmEnemyItems, EmptyText = "Nothing selected" },
 					{ Id = "AutoFarm", Type = "toggle", Label = "Auto Farm", Description = "Teleports to the closest selected enemy and retargets on death" },
 				}
 			})
 
-			function Feature:FindTarget(enemyName)
-				return findClosestEnemy(function(enemy)
-					return getEnemyDisplayName(enemy) == enemyName
-				end, SERVER_DEAD_TARGET_OPTIONS)
+			function Feature:MatchesSelection(enemy, selectedEnemies)
+				if arrayContains(selectedEnemies, ALL_OPTION) then return true end
+				return arrayContains(selectedEnemies, getEnemyDisplayName(enemy))
 			end
 
-			function Feature:TargetMatches(target, enemyName)
-				return target and target.Parent and getEnemyDisplayName(target) == enemyName
+			function Feature:FormatSelection(selectedEnemies)
+				if arrayContains(selectedEnemies, ALL_OPTION) then return ALL_OPTION end
+				return table.concat(selectedEnemies, ", ")
+			end
+
+			function Feature:GetMatchFn(selectedEnemies)
+				if arrayContains(selectedEnemies, ALL_OPTION) then return nil end
+				return function(enemy)
+					return self:MatchesSelection(enemy, selectedEnemies)
+				end
+			end
+
+			function Feature:FindTarget(selectedEnemies)
+				return findClosestEnemy(self:GetMatchFn(selectedEnemies), SERVER_DEAD_TARGET_OPTIONS)
+			end
+
+			function Feature:TargetMatches(target, selectedEnemies)
+				return target and target.Parent and self:MatchesSelection(target, selectedEnemies)
 			end
 
 			function Feature:SetTarget(target)
@@ -1017,22 +1135,20 @@ return {
 			end
 
 			function Feature:Tick(values)
-				local enemyName = values and values.AutoFarmEnemy
-				if enemyName == nil or enemyName == "" or enemyName == NO_ENEMY_OPTION then
+				local selectedEnemies = normalizeSelectionArray(values and values.AutoFarmEnemy)
+				if #selectedEnemies == 0 then
 					featureDebugLog(self, "AutoFarm", "Waiting for enemy selection")
 					return
 				end
 
 				local target = self.State.CurrentTarget
-				if not self:TargetMatches(target, enemyName) or not isEnemyAlive(target, SERVER_DEAD_TARGET_OPTIONS) then
-					local selectedName = enemyName
-					local newTarget = self:FindTarget(selectedName)
+				if not self:TargetMatches(target, selectedEnemies) or not isEnemyAlive(target, SERVER_DEAD_TARGET_OPTIONS) then
+					local selectionLabel = self:FormatSelection(selectedEnemies)
+					local newTarget = self:FindTarget(selectedEnemies)
 					if newTarget then
 						featureDebugLog(self, "AutoFarm", "Target selected: " .. describeEnemy(newTarget, SERVER_DEAD_TARGET_OPTIONS))
 					else
-						featureDebugLog(self, "AutoFarm", "No alive target for " .. tostring(selectedName) .. " | " .. getEnemyScanSummary(function(enemy)
-							return getEnemyDisplayName(enemy) == selectedName
-						end, SERVER_DEAD_TARGET_OPTIONS))
+						featureDebugLog(self, "AutoFarm", "No alive target for " .. tostring(selectionLabel) .. " | " .. getEnemyScanSummary(self:GetMatchFn(selectedEnemies), SERVER_DEAD_TARGET_OPTIONS))
 					end
 					self:SetTarget(newTarget)
 				end
@@ -1222,6 +1338,41 @@ return {
 					self:RestoreOriginalValues()
 				end,
 			})
+		end
+
+		--==================================================
+		-- FEATURE: SPAWN TELEPORT
+		--==================================================
+		do
+			local Feature = RegisterFeature({
+				Key = "SpawnTeleport", Tab = "Teleport", Section = "Spawns", Order = 10,
+				Defaults = {SelectedTeleportLocation = NO_TELEPORT_OPTION},
+				State = {PanelRef = nil},
+				Options = {
+					{ Id = "SelectedTeleportLocation", Type = "select", Label = "Location", Description = "Select a spawn location", Items = getTeleportSpawnItems },
+					{ Id = "TeleportToLocation", Type = "button", Label = "Teleport", Description = "Teleports to the selected location", ButtonText = "Teleport" },
+				}
+			})
+
+			function Feature:Run(panelRef)
+				local values = setFeaturePanelRef(self, panelRef)
+				local cframe = getTeleportLocationCFrame(values and values.SelectedTeleportLocation)
+				local character = player.Character
+				if not character or not cframe then return end
+
+				character:PivotTo(cframe)
+			end
+
+			function Feature:GetHandlers()
+				return {
+					SelectedTeleportLocation = buildPanelRefHandler(self),
+					TeleportToLocation = function(_, _, panelRef) self:Run(panelRef) end,
+				}
+			end
+
+			function Feature:Cleanup()
+				self.State.PanelRef = nil
+			end
 		end
 
 		--==================================================

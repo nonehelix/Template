@@ -164,6 +164,7 @@ return {
 
 		local DebugFlags = {
 			Farm = false,
+			TimeTrial = false,
 		}
 
 		local function featureDebugLog(feature, scope, message)
@@ -174,6 +175,12 @@ return {
 			end
 
 			debugLog(scope, message)
+		end
+
+		local function timeTrialDebugLog(message)
+			if DebugFlags.TimeTrial then
+				debugLog("TimeTrial", message)
+			end
 		end
 
 		local function buildAttributeSnapshot(instance)
@@ -348,12 +355,14 @@ return {
 		local function fireBridgeDataRemote(payload)
 			local bridgeModule = ReplicatedStorage:FindFirstChild("BridgeNet2")
 			local remoteEvent = bridgeModule and bridgeModule:FindFirstChild("dataRemoteEvent")
+			timeTrialDebugLog("BridgeNet2=" .. tostring(bridgeModule ~= nil) .. " dataRemoteEvent=" .. tostring(remoteEvent ~= nil) .. " payloadType=" .. type(payload))
 			if not remoteEvent or type(payload) ~= "table" then return false end
 
 			local ok = pcall(function()
 				remoteEvent:FireServer(payload)
 			end)
 
+			timeTrialDebugLog("dataRemoteEvent:FireServer ok=" .. tostring(ok))
 			return ok
 		end
 
@@ -1010,9 +1019,13 @@ return {
 		end
 
 		local function startTimeTrial(difficulty)
-			if not isValidTimeTrialDifficulty(difficulty) then return false end
+			timeTrialDebugLog("Start requested difficulty=" .. tostring(difficulty))
+			if not isValidTimeTrialDifficulty(difficulty) then
+				timeTrialDebugLog("Rejected invalid difficulty. Valid=" .. table.concat(TIME_TRIAL_DIFFICULTIES, ", "))
+				return false
+			end
 
-			return fireBridgeDataRemote({
+			local payload = {
 				{
 					Dungeon = TIME_TRIAL_DUNGEON_ID,
 					Action = "Start",
@@ -1020,7 +1033,12 @@ return {
 					Event = "TimeTrialAction",
 				},
 				TIME_TRIAL_BRIDGE_TOKEN,
-			})
+			}
+
+			timeTrialDebugLog("Payload Dungeon=" .. tostring(TIME_TRIAL_DUNGEON_ID) .. " Action=Start Diff=" .. tostring(difficulty) .. " Event=TimeTrialAction tokenByte=" .. tostring(string.byte(TIME_TRIAL_BRIDGE_TOKEN)))
+			local ok = fireBridgeDataRemote(payload)
+			timeTrialDebugLog("Start result=" .. tostring(ok))
+			return ok
 		end
 
 		local function buildDungeonActionPayload(dungeonOwner, dungeonInfo)
@@ -1348,11 +1366,12 @@ return {
 		do
 			local Feature = RegisterFeature({
 				Key = "TimeTrialStarter", Tab = "Time Trial", Section = "Start", Order = 10,
-				Defaults = {TimeTrialDifficulty = "Easy"},
+				Defaults = {TimeTrialDifficulty = "Easy", DebugTimeTrialStart = false},
 				State = {PanelRef = nil},
 				Options = {
 					{ Id = "TimeTrialDifficulty", Type = "select", Label = "Difficulty", Description = "Select Time Trial difficulty", Items = getTimeTrialDifficultyItems },
 					{ Id = "StartTimeTrial", Type = "button", Label = "Start Time Trial", Description = "Starts Time Trial with selected difficulty", ButtonText = "Start" },
+					{ Id = "DebugTimeTrialStart", Type = "toggle", Label = "Debug Time Trial", Description = "Logs Time Trial start payload and remote status" },
 				}
 			})
 
@@ -1365,10 +1384,16 @@ return {
 				return {
 					TimeTrialDifficulty = buildPanelRefHandler(self),
 					StartTimeTrial = function(_, _, panelRef) self:Run(panelRef) end,
+					DebugTimeTrialStart = function(value, _, panelRef)
+						setFeaturePanelRef(self, panelRef)
+						DebugFlags.TimeTrial = value == true
+						debugLog("TimeTrial", "Debug " .. (DebugFlags.TimeTrial and "enabled" or "disabled"))
+					end,
 				}
 			end
 
 			function Feature:Cleanup()
+				DebugFlags.TimeTrial = false
 				self.State.PanelRef = nil
 			end
 		end

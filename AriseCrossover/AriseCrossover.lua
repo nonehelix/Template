@@ -25,6 +25,7 @@ return {
 			[GUILD_HALL_LOCATION] = CFrame.new(9557.8457, -204.696213, 106.217346, 1, 0, 0, 0, 1, 0, 0, 0, 1) * CFrame.Angles(0, math.pi, 0),
 		}
 		local indexerModuleCache = {}
+		local lastStartedDungeonInfo = nil
 		local autoFarmZoneItemsCache = {NO_ZONE_OPTION}
 		local autoFarmZoneEnemiesCache = {}
 		local autoFarmZoneDataLoading = false
@@ -94,6 +95,15 @@ return {
 					feature:Start(panelRef)
 				end
 			end
+		end
+
+		local function buildActionHandlers(feature, selectOptionId, buttonOptionId)
+			return {
+				[selectOptionId] = buildPanelRefHandler(feature),
+				[buttonOptionId] = function(_, _, panelRef)
+					feature:Run(panelRef)
+				end,
+			}
 		end
 
 		local function runFeatureTask(feature, stateKey, callback)
@@ -343,10 +353,10 @@ return {
 			return enemy:FindFirstChild("HumanoidRootPart") or enemy:FindFirstChildWhichIsA("BasePart", true)
 		end
 
-		local function getEnemyFolders()
+		local function getServerEnemyFolder()
 			local main = Workspace:FindFirstChild("__Main")
 			local enemies = main and main:FindFirstChild("__Enemies")
-			return enemies and enemies:FindFirstChild("Client") or nil, enemies and enemies:FindFirstChild("Server") or nil
+			return enemies and enemies:FindFirstChild("Server") or nil
 		end
 
 		local function getEnemyHealthBarMain(enemy)
@@ -417,7 +427,7 @@ return {
 		end
 
 		local function getServerEnemy(enemy)
-			local _, serverFolder = getEnemyFolders()
+			local serverFolder = getServerEnemyFolder()
 			if not enemy then return nil end
 
 			if CollectionService:HasTag(enemy, "EnemyServer") or (serverFolder and enemy:IsDescendantOf(serverFolder)) then
@@ -444,7 +454,7 @@ return {
 		end
 
 		local function getServerEnemyCandidates()
-			local _, serverFolder = getEnemyFolders()
+			local serverFolder = getServerEnemyFolder()
 			local candidates = {}
 			local seen = {}
 
@@ -474,21 +484,6 @@ return {
 			return candidates
 		end
 
-		local function getClientEnemyCandidates()
-			local clientFolder = getEnemyFolders()
-			local candidates = {}
-
-			if not clientFolder then return candidates end
-
-			for _, enemy in ipairs(clientFolder:GetChildren()) do
-				if getEnemyRoot(enemy) then
-					candidates[#candidates + 1] = enemy
-				end
-			end
-
-			return candidates
-		end
-
 		local function findClosestCandidate(candidates, matchFn)
 			local characterRoot = getCharacterRoot()
 			local closestEnemy = nil
@@ -510,10 +505,6 @@ return {
 			end
 
 			return closestEnemy, closestDistance
-		end
-
-		local function findClosestClientTarget(matchFn)
-			return findClosestCandidate(getClientEnemyCandidates(), matchFn)
 		end
 
 		local function findClosestServerTarget(matchFn)
@@ -960,16 +951,20 @@ return {
 			return dungeons and dungeons:FindFirstChild(tostring(player.UserId)) or nil
 		end
 
-		local function waitForOwnDungeonInfo(timeout)
+		local function waitForInfo(getter, timeout, pollDelay)
 			local startedAt = os.clock()
 
 			repeat
-				local dungeon = getOwnDungeonInfo()
-				if dungeon then return dungeon end
-				task.wait(0.25)
+				local info = getter()
+				if info then return info end
+				task.wait(pollDelay or 0.25)
 			until os.clock() - startedAt >= (timeout or DUNGEON_INSTANCE_WAIT)
 
 			return nil
+		end
+
+		local function waitForOwnDungeonInfo(timeout)
+			return waitForInfo(getOwnDungeonInfo, timeout)
 		end
 
 		local function sendDungeonAction(action, extraPayload)
@@ -1006,15 +1001,7 @@ return {
 		end
 
 		local function waitForOwnTimeTrialInfo(timeout)
-			local startedAt = os.clock()
-
-			repeat
-				local timeTrial = getOwnTimeTrialInfo()
-				if timeTrial then return timeTrial end
-				task.wait(0.25)
-			until os.clock() - startedAt >= (timeout or DUNGEON_INSTANCE_WAIT)
-
-			return nil
+			return waitForInfo(getOwnTimeTrialInfo, timeout)
 		end
 
 		local function getTimeTrialDungeonId(timeTrialInfo)
@@ -1074,6 +1061,63 @@ return {
 				World = isTable and dungeonInfo.World or nil,
 				DungeonRank = isTable and dungeonInfo.DungeonRank or nil,
 			}
+		end
+
+		local function cloneDungeonInfo(dungeonInfo)
+			if type(dungeonInfo) ~= "table" then
+				return dungeonInfo
+			end
+
+			return {
+				Key = dungeonInfo.Key,
+				Label = dungeonInfo.Label,
+				Dungeon = dungeonInfo.Dungeon,
+				DungeonMap = dungeonInfo.DungeonMap,
+				Map = dungeonInfo.Map,
+				MapName = dungeonInfo.MapName,
+				World = dungeonInfo.World,
+				DungeonRank = dungeonInfo.DungeonRank,
+				ID = dungeonInfo.ID,
+				DoubleID = dungeonInfo.DoubleID,
+			}
+		end
+
+		local function startDungeonInstance(dungeonInfo)
+			if not dungeonInfo then
+				return false
+			end
+
+			local ownDungeon = getOwnDungeonInfo()
+			if not ownDungeon then
+				sendDungeonAction("Create", buildDungeonActionPayload(nil, dungeonInfo))
+				task.wait(DUNGEON_CREATE_DELAY)
+			end
+
+			ownDungeon = getOwnDungeonInfo() or waitForOwnDungeonInfo(DUNGEON_INSTANCE_WAIT)
+			if not ownDungeon then
+				return false
+			end
+
+			lastStartedDungeonInfo = cloneDungeonInfo(dungeonInfo)
+			return sendDungeonAction("Start", buildDungeonActionPayload(player.UserId, dungeonInfo)) == true
+		end
+
+		local function getDungeonHudLabel()
+			local playerGui = player:FindFirstChild("PlayerGui")
+			local hud = playerGui and playerGui:FindFirstChild("Hud")
+			local upContainer = hud and hud:FindFirstChild("UpContanier")
+			local dungeonInfo = upContainer and upContainer:FindFirstChild("DungeonInfo")
+			return dungeonInfo and dungeonInfo:FindFirstChild("TextLabel") or nil
+		end
+
+		local function isDungeonEndingNow()
+			local dungeonInfoLabel = getDungeonHudLabel()
+			local text = dungeonInfoLabel and tostring(dungeonInfoLabel.Text or "") or ""
+			return string.find(text, "Dungeon Ends in", 1, true) ~= nil
+		end
+
+		local function getRestartDungeonInfo(selectedDungeon)
+			return lastStartedDungeonInfo or getSelectedDungeonInfo(selectedDungeon)
 		end
 
 		--==================================================
@@ -1291,30 +1335,76 @@ return {
 				if not dungeonInfo then return end
 
 				runFeatureTask(self, "Starting", function()
-					local ownDungeon = getOwnDungeonInfo()
-					if not ownDungeon then
-						sendDungeonAction("Create", buildDungeonActionPayload(nil, dungeonInfo))
-						task.wait(DUNGEON_CREATE_DELAY)
-					end
-
-					ownDungeon = getOwnDungeonInfo() or waitForOwnDungeonInfo(DUNGEON_INSTANCE_WAIT)
-					if ownDungeon then
-						sendDungeonAction("Start", buildDungeonActionPayload(player.UserId, dungeonInfo))
-					end
+					startDungeonInstance(dungeonInfo)
 				end)
 			end
 
 			function Feature:GetHandlers()
-				return {
-					SelectedDungeon = buildPanelRefHandler(self),
-					StartDungeon = function(_, _, panelRef) self:Run(panelRef) end,
-				}
+				return buildActionHandlers(self, "SelectedDungeon", "StartDungeon")
 			end
 
 			function Feature:Cleanup()
 				self.State.Starting = false
 				self.State.PanelRef = nil
 			end
+		end
+
+		--==================================================
+		-- FEATURE: DUNGEON RESTART
+		--==================================================
+		do
+			local Feature = RegisterFeature({
+				Key = "DungeonRestart", Tab = "Dungeon", Section = "Dungeon", Order = 15,
+				Defaults = {AutoRestartDungeon = false},
+				State = {Running = false, LoopId = 0, PanelRef = nil, SawDungeonEnd = false, Restarting = false},
+				Options = {
+					{ Id = "RestartLastDungeon", Type = "button", Label = "Restart Dungeon", Description = "Restarts the last started dungeon or the selected dungeon", ButtonText = "Restart" },
+					{ Id = "AutoRestartDungeon", Type = "toggle", Label = "Auto Restart", Description = "Restarts the dungeon when the end countdown appears" },
+				}
+			})
+
+			function Feature:Run(panelRef)
+				local values = setFeaturePanelRef(self, panelRef)
+				local dungeonInfo = getRestartDungeonInfo(values and values.SelectedDungeon)
+				if not dungeonInfo then
+					return
+				end
+
+				runFeatureTask(self, "Restarting", function()
+					startDungeonInstance(dungeonInfo)
+				end)
+			end
+
+			function Feature:Tick(values)
+				local showingEndText = isDungeonEndingNow()
+				if not showingEndText then
+					self.State.SawDungeonEnd = false
+					return
+				end
+
+				if self.State.SawDungeonEnd then
+					return
+				end
+
+				self.State.SawDungeonEnd = true
+				self:Run(self.State.PanelRef)
+			end
+
+			bindPollingToggleFeature(Feature, "AutoRestartDungeon", function(self, values)
+				self:Tick(values)
+			end, {
+				RestartOnStart = true,
+				UseLoopId = true,
+				PollDelay = 0.5,
+				BeforeStop = function(self)
+					self.State.SawDungeonEnd = false
+				end,
+				ExtraHandlers = {
+					RestartLastDungeon = function(_, _, panelRef)
+						Feature:Run(panelRef)
+					end,
+				},
+			})
 		end
 
 		--==================================================
@@ -1356,10 +1446,7 @@ return {
 			end
 
 			function Feature:GetHandlers()
-				return {
-					TimeTrialDifficulty = buildPanelRefHandler(self),
-					StartTimeTrial = function(_, _, panelRef) self:Run(panelRef) end,
-				}
+				return buildActionHandlers(self, "TimeTrialDifficulty", "StartTimeTrial")
 			end
 
 			function Feature:Cleanup()
@@ -1451,10 +1538,7 @@ return {
 			end
 
 			function Feature:GetHandlers()
-				return {
-					SelectedTeleportLocation = buildPanelRefHandler(self),
-					TeleportToLocation = function(_, _, panelRef) self:Run(panelRef) end,
-				}
+				return buildActionHandlers(self, "SelectedTeleportLocation", "TeleportToLocation")
 			end
 
 			function Feature:Cleanup()

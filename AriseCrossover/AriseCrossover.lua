@@ -8,7 +8,7 @@ return {
 		--==================================================
 		-- TABS
 		--==================================================
-		RegisterTabs({{Name = "Combat", Order = 20}, {Name = "Auto Farm", Order = 25}, {Name = "Dungeon", Order = 30}, {Name = "Time Trial", Order = 40}, {Name = "Teleport", Order = 50}})
+		RegisterTabs({{Name = "Combat", Order = 20}, {Name = "Auto Farm", Order = 25}, {Name = "Dungeon", Order = 30}, {Name = "Castle", Order = 35}, {Name = "Time Trial", Order = 40}, {Name = "Teleport", Order = 50}})
 
 		--==================================================
 		-- HELPERS
@@ -561,6 +561,21 @@ return {
 
 		local function isNormalDungeonInstance()
 			return isDungeonActive() and not isExcludedDungeonMode()
+		end
+
+		local function isCastleDungeonInstance()
+			return isDungeonActive() and ReplicatedStorage:GetAttribute("IsCastle") == true
+		end
+
+		local function tickAutoServerTargetFeature(feature, isActiveFn)
+			if not isActiveFn() then
+				setFeatureTarget(feature, nil)
+				return
+			end
+
+			if not isTargetAlive(feature.State.CurrentTarget) then
+				setFeatureTarget(feature, findClosestServerTarget(nil))
+			end
 		end
 
 		local function addEnemyItem(items, seen, enemyName)
@@ -1282,18 +1297,38 @@ return {
 			})
 
 			function Feature:Tick()
-				if not isNormalDungeonInstance() then
-					setFeatureTarget(self, nil)
-					return
-				end
-
-				local target = self.State.CurrentTarget
-				if not isTargetAlive(target) then
-					setFeatureTarget(self, findClosestServerTarget(nil))
-				end
+				tickAutoServerTargetFeature(self, isNormalDungeonInstance)
 			end
 
 			bindPollingToggleFeature(Feature, "AutoDungeon", function(self)
+				self:Tick()
+			end, {
+				RestartOnStart = true,
+				UseLoopId = true,
+				BeforeStop = function(self)
+					setFeatureTarget(self, nil)
+				end,
+			})
+		end
+
+		--==================================================
+		-- FEATURE: AUTO CASTLE
+		--==================================================
+		do
+			local Feature = RegisterFeature({
+				Key = "AutoCastle", Tab = "Castle", Order = 10,
+				Defaults = {AutoCastle = false},
+				State = newTargetingState(),
+				Options = {
+					{ Id = "AutoCastle", Type = "toggle", Label = "Auto Castle", Description = "Teleports to the closest alive enemy only inside an active castle instance" },
+				}
+			})
+
+			function Feature:Tick()
+				tickAutoServerTargetFeature(self, isCastleDungeonInstance)
+			end
+
+			bindPollingToggleFeature(Feature, "AutoCastle", function(self)
 				self:Tick()
 			end, {
 				RestartOnStart = true,

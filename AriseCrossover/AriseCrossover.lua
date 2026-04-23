@@ -460,15 +460,20 @@ return {
 			displayName = tostring(displayName or "")
 			if internalName == "" or displayName == "" then return end
 
-			local mappedNames = lookups.ByInternal[internalName]
-			if not mappedNames then
-				mappedNames = {}
-				lookups.ByInternal[internalName] = mappedNames
+			local function addKey(key)
+				local mappedNames = lookups.ByInternal[key]
+				if not mappedNames then
+					mappedNames = {}
+					lookups.ByInternal[key] = mappedNames
+				end
+
+				if not arrayContains(mappedNames, displayName) then
+					mappedNames[#mappedNames + 1] = displayName
+				end
 			end
 
-			if not arrayContains(mappedNames, displayName) then
-				mappedNames[#mappedNames + 1] = displayName
-			end
+			addKey(internalName)
+			addKey(string.lower(internalName))
 		end
 
 		local function getEnemyInfoLookups()
@@ -521,7 +526,9 @@ return {
 
 		local function getEnemyDisplayNamesForInternalName(internalName)
 			if internalName == nil then return EMPTY_TABLE end
-			return getEnemyInfoLookups().ByInternal[tostring(internalName)] or EMPTY_TABLE
+			internalName = tostring(internalName)
+			local lookups = getEnemyInfoLookups().ByInternal
+			return lookups[internalName] or lookups[string.lower(internalName)] or EMPTY_TABLE
 		end
 
 		local function getAllKnownEnemyNames()
@@ -570,8 +577,16 @@ return {
 			local enemyInfo = getEnemyInfoById(enemy and (enemy:GetAttribute("Id") or enemy:GetAttribute("ID")))
 			if enemyInfo and enemyInfo.Name then return tostring(enemyInfo.Name) end
 
-			local modelNames = getEnemyDisplayNamesForInternalName(enemy and enemy:GetAttribute("Model"))
-			if modelNames[1] then return modelNames[1] end
+			for _, internalName in ipairs({
+				enemy and enemy:GetAttribute("Id"),
+				enemy and enemy:GetAttribute("ID"),
+				enemy and enemy:GetAttribute("Model"),
+				enemy and enemy:GetAttribute("Name"),
+				enemy and enemy.Name,
+			}) do
+				local mappedNames = getEnemyDisplayNamesForInternalName(internalName)
+				if mappedNames[1] then return mappedNames[1] end
+			end
 
 			local attributeName = enemy and enemy:GetAttribute("Name")
 			if attributeName and tostring(attributeName) ~= "" then return tostring(attributeName) end
@@ -838,49 +853,6 @@ return {
 			return isDungeonActive() and not isExcludedDungeonMode()
 		end
 
-		local function getCurrentWorldOrder()
-			return tonumber(ReplicatedStorage:GetAttribute("World") or player:GetAttribute("World"))
-		end
-
-		local function getCurrentMapName()
-			local mapName = ReplicatedStorage:GetAttribute("MapName")
-				or ReplicatedStorage:GetAttribute("Map")
-				or ReplicatedStorage:GetAttribute("WorldName")
-				or player:GetAttribute("MapName")
-				or player:GetAttribute("Map")
-				or player:GetAttribute("WorldName")
-
-			mapName = mapName and tostring(mapName) or nil
-			return mapName ~= "" and mapName or nil
-		end
-
-		local function isMapInfoEntry(value)
-			return type(value) == "table" and (value.Name ~= nil or value.Order ~= nil or value.Dungeons ~= nil)
-		end
-
-		local function getCurrentMapInfo()
-			local mapInfo = getMapInfoConfig()
-			if type(mapInfo) ~= "table" then return nil end
-			if isMapInfoEntry(mapInfo) then return mapInfo end
-
-			local currentOrder = getCurrentWorldOrder()
-			local currentMapName = getCurrentMapName()
-
-			for key, info in pairs(mapInfo) do
-				if isMapInfoEntry(info) then
-					if currentOrder ~= nil and (tonumber(key) == currentOrder or tonumber(info.Order) == currentOrder or tonumber(info.World) == currentOrder) then
-						return info
-					end
-
-					if currentMapName ~= nil and (tostring(key) == currentMapName or tostring(info.Name) == currentMapName) then
-						return info
-					end
-				end
-			end
-
-			return nil
-		end
-
 		local function addEnemyItem(items, seen, enemyName)
 			enemyName = tostring(enemyName or "")
 			if enemyName == "" or seen[enemyName] then return end
@@ -897,18 +869,281 @@ return {
 			Order = true,
 		}
 
-		local function collectMapEnemyItems(source, items, seen)
+		local function collectMapEnemyInternalNames(source, items, seen)
 			if type(source) ~= "table" then return end
 
 			for key, value in pairs(source) do
 				if type(value) == "string" then
-					for _, enemyName in ipairs(getEnemyDisplayNamesForInternalName(value)) do
-						addEnemyItem(items, seen, enemyName)
+					if not seen[value] then
+						seen[value] = true
+						items[#items + 1] = value
 					end
 				elseif type(value) == "table" and not ignoredMapEnemyKeys[key] then
-					collectMapEnemyItems(value, items, seen)
+					collectMapEnemyInternalNames(value, items, seen)
 				end
 			end
+		end
+
+		local function getMapEnemyInternalNames(mapInfo)
+			local items = {}
+			collectMapEnemyInternalNames(mapInfo, items, {})
+			table.sort(items)
+			return items
+		end
+
+		local function collectMapEnemyItems(mapInfo, items, seen)
+			for _, internalName in ipairs(getMapEnemyInternalNames(mapInfo)) do
+				for _, enemyName in ipairs(getEnemyDisplayNamesForInternalName(internalName)) do
+					addEnemyItem(items, seen, enemyName)
+				end
+			end
+		end
+
+		local function getMapEnemyDisplayNames(mapInfo)
+			local items = {}
+			collectMapEnemyItems(mapInfo, items, {})
+			table.sort(items)
+			return items
+		end
+
+		local function getCurrentWorldOrder()
+			return tonumber(ReplicatedStorage:GetAttribute("World")
+				or ReplicatedStorage:GetAttribute("CurrentWorld")
+				or ReplicatedStorage:GetAttribute("WorldId")
+				or ReplicatedStorage:GetAttribute("WorldID")
+				or player:GetAttribute("World")
+				or player:GetAttribute("CurrentWorld")
+				or player:GetAttribute("WorldId")
+				or player:GetAttribute("WorldID"))
+		end
+
+		local function getCurrentMapName()
+			local mapName = ReplicatedStorage:GetAttribute("MapName")
+				or ReplicatedStorage:GetAttribute("Map")
+				or ReplicatedStorage:GetAttribute("CurrentMap")
+				or ReplicatedStorage:GetAttribute("CurrentMapName")
+				or ReplicatedStorage:GetAttribute("WorldName")
+				or player:GetAttribute("MapName")
+				or player:GetAttribute("Map")
+				or player:GetAttribute("CurrentMap")
+				or player:GetAttribute("CurrentMapName")
+				or player:GetAttribute("WorldName")
+
+			mapName = mapName and tostring(mapName) or nil
+			return mapName ~= "" and mapName or nil
+		end
+
+		local function isMapInfoEntry(value)
+			return type(value) == "table" and (value.Name ~= nil or value.Order ~= nil or value.Dungeons ~= nil)
+		end
+
+		local function getMapInfoEntries()
+			local mapInfo = getMapInfoConfig()
+			local entries = {}
+
+			if type(mapInfo) ~= "table" then return entries end
+			if isMapInfoEntry(mapInfo) then
+				return {{Key = "MapInfo", Info = mapInfo}}
+			end
+
+			for key, info in pairs(mapInfo) do
+				if isMapInfoEntry(info) then
+					entries[#entries + 1] = {Key = key, Info = info}
+				end
+			end
+
+			table.sort(entries, function(a, b)
+				local orderA = tonumber(a.Info.Order)
+				local orderB = tonumber(b.Info.Order)
+				if orderA ~= nil and orderB ~= nil and orderA ~= orderB then return orderA < orderB end
+				return tostring(a.Info.Name or a.Key) < tostring(b.Info.Name or b.Key)
+			end)
+
+			return entries
+		end
+
+		local function getEnemyCandidateKeys(enemy)
+			local keys = {}
+			for _, value in ipairs({
+				enemy and enemy:GetAttribute("Id"),
+				enemy and enemy:GetAttribute("ID"),
+				enemy and enemy:GetAttribute("Model"),
+				enemy and enemy:GetAttribute("Name"),
+				enemy and enemy.Name,
+				getEnemyDisplayName(enemy),
+			}) do
+				value = tostring(value or "")
+				if value ~= "" then
+					keys[#keys + 1] = value
+				end
+			end
+			return keys
+		end
+
+		local function getMapEnemySets(mapInfo)
+			local internalSet = {}
+			local displaySet = {}
+
+			for _, internalName in ipairs(getMapEnemyInternalNames(mapInfo)) do
+				internalSet[tostring(internalName)] = true
+				for _, displayName in ipairs(getEnemyDisplayNamesForInternalName(internalName)) do
+					displaySet[tostring(displayName)] = true
+				end
+			end
+
+			return internalSet, displaySet
+		end
+
+		local function scoreMapInfoByServerEnemies(mapInfo)
+			local internalSet, displaySet = getMapEnemySets(mapInfo)
+			local score = 0
+			local matched = {}
+
+			for _, enemy in ipairs(getServerEnemyCandidates()) do
+				for _, key in ipairs(getEnemyCandidateKeys(enemy)) do
+					if internalSet[key] or displaySet[key] then
+						score = score + 1
+						matched[key] = true
+						break
+					end
+				end
+			end
+
+			local matchedNames = {}
+			for name in pairs(matched) do
+				matchedNames[#matchedNames + 1] = name
+			end
+			table.sort(matchedNames)
+
+			return score, matchedNames
+		end
+
+		local function getNearestDungeonSpawnDistance(mapInfo)
+			local characterRoot = getCharacterRoot()
+			local spawns = type(mapInfo) == "table" and mapInfo.DungeonSpawns or nil
+			if not characterRoot or type(spawns) ~= "table" then return nil end
+
+			local nearest = nil
+			for _, spawnCFrame in ipairs(spawns) do
+				if typeof(spawnCFrame) == "CFrame" then
+					local distance = (characterRoot.Position - spawnCFrame.Position).Magnitude
+					if nearest == nil or distance < nearest then
+						nearest = distance
+					end
+				end
+			end
+
+			return nearest
+		end
+
+		local function resolveCurrentMapInfo()
+			local entries = getMapInfoEntries()
+			if #entries == 0 then
+				return nil, "MapInfo missing", {}
+			end
+
+			if #entries == 1 then
+				local entry = entries[1]
+				return entry.Info, "single-entry:" .. tostring(entry.Info.Name or entry.Key), entries
+			end
+
+			local currentOrder = getCurrentWorldOrder()
+			local currentMapName = getCurrentMapName()
+
+			for _, entry in ipairs(entries) do
+				local info = entry.Info
+				if currentOrder ~= nil and (tonumber(entry.Key) == currentOrder or tonumber(info.Order) == currentOrder or tonumber(info.World) == currentOrder) then
+					return info, "order:" .. tostring(currentOrder), entries
+				end
+
+				if currentMapName ~= nil and (tostring(entry.Key) == currentMapName or tostring(info.Name) == currentMapName) then
+					return info, "name:" .. currentMapName, entries
+				end
+			end
+
+			local bestByEnemies = nil
+			for _, entry in ipairs(entries) do
+				local score, matchedNames = scoreMapInfoByServerEnemies(entry.Info)
+				entry.EnemyScore = score
+				entry.EnemyMatches = matchedNames
+				if score > 0 and (not bestByEnemies or score > bestByEnemies.EnemyScore) then
+					bestByEnemies = entry
+				end
+			end
+			if bestByEnemies then
+				return bestByEnemies.Info, "server-enemies:" .. tostring(bestByEnemies.EnemyScore), entries
+			end
+
+			local bestBySpawn = nil
+			for _, entry in ipairs(entries) do
+				local distance = getNearestDungeonSpawnDistance(entry.Info)
+				entry.SpawnDistance = distance
+				if distance ~= nil and (not bestBySpawn or distance < bestBySpawn.SpawnDistance) then
+					bestBySpawn = entry
+				end
+			end
+			if bestBySpawn then
+				return bestBySpawn.Info, "nearest-spawn:" .. string.format("%.1f", bestBySpawn.SpawnDistance), entries
+			end
+
+			return nil, "unresolved", entries
+		end
+
+		local function getCurrentMapInfo()
+			local mapInfo = resolveCurrentMapInfo()
+			return mapInfo
+		end
+
+		local function buildMapDetectionSnapshot()
+			local selectedMap, reason, entries = resolveCurrentMapInfo()
+			local parts = {
+				"Selected=" .. tostring(selectedMap and selectedMap.Name or "nil"),
+				"Reason=" .. tostring(reason),
+				"Replicated.World=" .. formatDebugValue(ReplicatedStorage:GetAttribute("World")),
+				"Replicated.CurrentWorld=" .. formatDebugValue(ReplicatedStorage:GetAttribute("CurrentWorld")),
+				"Player.World=" .. formatDebugValue(player:GetAttribute("World")),
+				"Player.CurrentWorld=" .. formatDebugValue(player:GetAttribute("CurrentWorld")),
+				"Replicated.MapName=" .. formatDebugValue(ReplicatedStorage:GetAttribute("MapName")),
+				"Replicated.CurrentMap=" .. formatDebugValue(ReplicatedStorage:GetAttribute("CurrentMap")),
+				"Player.MapName=" .. formatDebugValue(player:GetAttribute("MapName")),
+				"Player.CurrentMap=" .. formatDebugValue(player:GetAttribute("CurrentMap")),
+				"Entries=" .. tostring(#entries),
+			}
+
+			for _, entry in ipairs(entries) do
+				if entry.EnemyScore == nil then
+					local score, matchedNames = scoreMapInfoByServerEnemies(entry.Info)
+					entry.EnemyScore = score
+					entry.EnemyMatches = matchedNames
+				end
+				if entry.SpawnDistance == nil then
+					entry.SpawnDistance = getNearestDungeonSpawnDistance(entry.Info)
+				end
+
+				local internalNames = getMapEnemyInternalNames(entry.Info)
+				local names = getMapEnemyDisplayNames(entry.Info)
+				local unresolved = {}
+				for _, internalName in ipairs(internalNames) do
+					if #getEnemyDisplayNamesForInternalName(internalName) == 0 then
+						unresolved[#unresolved + 1] = internalName
+					end
+				end
+
+				parts[#parts + 1] = string.format(
+					"Candidate[%s]=Name:%s Order:%s Internal:%s RealNames:%s Unresolved:%s EnemyScore:%s SpawnDistance:%s Matches:%s",
+					tostring(entry.Key),
+					tostring(entry.Info.Name),
+					tostring(entry.Info.Order),
+					table.concat(internalNames, ", "),
+					table.concat(names, ", "),
+					table.concat(unresolved, ", "),
+					tostring(entry.EnemyScore or 0),
+					entry.SpawnDistance and string.format("%.1f", entry.SpawnDistance) or "nil",
+					table.concat(entry.EnemyMatches or EMPTY_TABLE, ", ")
+				)
+			end
+
+			return table.concat(parts, " | ")
 		end
 
 		local function getAutoFarmEnemyItems()
@@ -1345,6 +1580,7 @@ return {
 			debugLog("Snapshot", "PlayerAttrs: " .. buildAttributeSnapshot(player))
 			debugLog("Snapshot", "ReplicatedAttrs: " .. buildAttributeSnapshot(ReplicatedStorage))
 			debugLog("Snapshot", "DungeonState: " .. buildDungeonRuntimeSnapshot())
+			debugLog("Snapshot", "MapDetection: " .. buildMapDetectionSnapshot())
 			debugLog("Snapshot", "AvailableDungeons: " .. tostring(#getLiveDungeonEntries()))
 		end
 
@@ -1859,6 +2095,34 @@ return {
 				DebugFlags.Farm = false
 				self.State.PanelRef = nil
 			end
+		end
+
+		--==================================================
+		-- FEATURE: DEBUG MAP DETECTION
+		--==================================================
+		do
+			local Feature = RegisterFeature({
+				Key = "DebugMapDetection", Tab = "Debug", Section = "Farm", Order = 45,
+				Defaults = {DebugMapDetection = false},
+				State = {Running = false, LoopId = 0, PanelRef = nil, PollDelay = DEBUG_POLL_DELAY, LastSnapshot = nil},
+				Options = {
+					{ Id = "DebugMapDetection", Type = "toggle", Label = "Monitor Map Detection", Description = "Logs current MapInfo detection and enemy name mapping" },
+				}
+			})
+
+			bindPollingToggleFeature(Feature, "DebugMapDetection", function(self)
+				local snapshot = buildMapDetectionSnapshot()
+				if self.State.LastSnapshot ~= snapshot then
+					self.State.LastSnapshot = snapshot
+					debugLog("MapDetection", snapshot)
+				end
+			end, {
+				RestartOnStart = true,
+				UseLoopId = true,
+				BeforeStop = function(self)
+					self.State.LastSnapshot = nil
+				end,
+			})
 		end
 
 		--==================================================

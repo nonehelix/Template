@@ -20,6 +20,7 @@ return {
 		local AUTO_FARM_TELEPORT_DELAY = 0.5
 		local DUNGEON_CREATE_DELAY, DUNGEON_INSTANCE_WAIT, DUNGEON_RESTART_RETRY_DELAY = 0.5, 6, 3
 		local CASTLE_PORTAL_SEARCH_DELAY, CASTLE_PORTAL_INTERACT_DELAY = 0.5, 2
+		local CASTLE_POST_CLEAR_DELAY = 1.25
 		local CASTLE_PORTAL_APPROACH_DISTANCE, CASTLE_PORTAL_HEIGHT_OFFSET = 3, 6
 		local CASTLE_ROOM_HORIZONTAL_PADDING, CASTLE_ROOM_VERTICAL_PADDING = 10, 16
 		local TELEPORT_SPAWN_NAMES = {"Arena", "JejuEvent", "JungleEvent", "WinterEvent", "XmasWorld"}
@@ -1757,6 +1758,7 @@ return {
 			local state = newTargetingState()
 			state.LastCastlePortalSearchAt = 0
 			state.LastCastlePortalInteractAt = 0
+			state.LastCastleNoEnemyAt = 0
 			state.DebugEnabled = true
 			state.CastleDebugLast = {}
 
@@ -1773,22 +1775,34 @@ return {
 			function Feature:Tick()
 				if not isCastleDungeonInstance() then
 					setFeatureTarget(self, nil)
-					self.State.LastCastlePortalSearchAt, self.State.LastCastlePortalInteractAt = 0, 0
+					self.State.LastCastlePortalSearchAt, self.State.LastCastlePortalInteractAt, self.State.LastCastleNoEnemyAt = 0, 0, 0
 					return
 				end
 
 				if isTargetAlive(self.State.CurrentTarget) then
+					self.State.LastCastleNoEnemyAt = 0
 					logCastleDebug(self, "TargetState", "Holding current target " .. getEnemyDebugLabel(self.State.CurrentTarget))
 					return
 				end
 
 				local target = findClosestCastleTarget(self)
 				if target then
+					self.State.LastCastleNoEnemyAt = 0
 					setFeatureTarget(self, target)
 					return
 				end
 
 				setFeatureTarget(self, nil)
+				if (self.State.LastCastleNoEnemyAt or 0) <= 0 then
+					self.State.LastCastleNoEnemyAt = os.clock()
+					logCastleDebug(self, "PortalWait", "No enemies found, waiting " .. tostring(CASTLE_POST_CLEAR_DELAY) .. "s before portal teleport", true)
+					return
+				end
+
+				if os.clock() - self.State.LastCastleNoEnemyAt < CASTLE_POST_CLEAR_DELAY then
+					return
+				end
+
 				tryAdvanceCastleFloor(self)
 			end
 
@@ -1809,7 +1823,7 @@ return {
 				end,
 				BeforeStop = function(self)
 					setFeatureTarget(self, nil)
-					self.State.LastCastlePortalSearchAt, self.State.LastCastlePortalInteractAt = 0, 0
+					self.State.LastCastlePortalSearchAt, self.State.LastCastlePortalInteractAt, self.State.LastCastleNoEnemyAt = 0, 0, 0
 					clearCastleDebugLogCache(self)
 				end,
 				ExtraHandlers = {

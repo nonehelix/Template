@@ -1097,7 +1097,7 @@ return {
 			return entries
 		end
 
-		local function findCastleCurrentRoom()
+		local function findCastleCurrentRoom(feature)
 			local characterRoot = getCharacterRoot()
 			if not characterRoot then
 				return nil
@@ -1107,25 +1107,46 @@ return {
 			local currentRoom = nil
 			local nearestRoom = nil
 			local nearestDistance = nil
+			local roomDebugParts = {}
 
 			for _, entry in ipairs(getCastleRoomEntries()) do
 				local boundsCFrame, boundsSize = entry.BoundsCFrame, entry.BoundsSize
 				if boundsCFrame and boundsSize then
-					if isPointInsideBounds(characterPosition, boundsCFrame, boundsSize, CASTLE_ROOM_HORIZONTAL_PADDING, CASTLE_ROOM_VERTICAL_PADDING) then
+					local inside = isPointInsideBounds(characterPosition, boundsCFrame, boundsSize, CASTLE_ROOM_HORIZONTAL_PADDING, CASTLE_ROOM_VERTICAL_PADDING)
+					local distance = inside and 0 or getDistanceToBounds(characterPosition, boundsCFrame, boundsSize)
+
+					roomDebugParts[#roomDebugParts + 1] =
+						"Room_" .. tostring(entry.RoomIndex)
+						.. " inside=" .. tostring(inside)
+						.. " dist=" .. string.format("%.1f", distance)
+						.. " center=" .. formatDebugVector3(boundsCFrame.Position)
+						.. " size=" .. formatDebugVector3(boundsSize)
+
+					if inside then
 						if currentRoom == nil or entry.RoomIndex > currentRoom.RoomIndex then
 							currentRoom = entry
 						end
 					else
-						local distance = getDistanceToBounds(characterPosition, boundsCFrame, boundsSize)
 						if nearestDistance == nil or distance < nearestDistance or (distance == nearestDistance and nearestRoom ~= nil and entry.RoomIndex > nearestRoom.RoomIndex) then
 							nearestRoom = entry
 							nearestDistance = distance
 						end
 					end
+				else
+					roomDebugParts[#roomDebugParts + 1] = "Room_" .. tostring(entry.RoomIndex) .. " bounds=nil"
 				end
 			end
 
-			return currentRoom or nearestRoom
+			local resolvedRoom = currentRoom or nearestRoom
+			logCastleDebug(
+				feature,
+				"RoomScan",
+				"playerPos=" .. formatDebugVector3(characterPosition)
+					.. " rooms=[" .. table.concat(roomDebugParts, " | ") .. "]"
+					.. " chosen=" .. tostring(resolvedRoom and ("Room_" .. tostring(resolvedRoom.RoomIndex)) or "nil")
+			)
+
+			return resolvedRoom
 		end
 
 		local function isEnemyInCastleRoom(enemy, roomEntry)
@@ -1148,7 +1169,7 @@ return {
 		end
 
 		local function findClosestCastleTarget(feature)
-			local currentRoom = findCastleCurrentRoom()
+			local currentRoom = findCastleCurrentRoom(feature)
 			if not currentRoom then
 				local fallbackTarget = findClosestServerTarget(nil)
 				logCastleDebug(feature, "Room", "No current castle room resolved; falling back to global enemy search", true)

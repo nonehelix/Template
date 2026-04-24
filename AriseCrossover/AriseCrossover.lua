@@ -1112,12 +1112,12 @@ return {
 				local boundsCFrame, boundsSize = entry.BoundsCFrame, entry.BoundsSize
 				if boundsCFrame and boundsSize then
 					if isPointInsideBounds(characterPosition, boundsCFrame, boundsSize, CASTLE_ROOM_HORIZONTAL_PADDING, CASTLE_ROOM_VERTICAL_PADDING) then
-						if currentRoom == nil or entry.RoomIndex < currentRoom.RoomIndex then
+						if currentRoom == nil or entry.RoomIndex > currentRoom.RoomIndex then
 							currentRoom = entry
 						end
 					else
 						local distance = getDistanceToBounds(characterPosition, boundsCFrame, boundsSize)
-						if nearestDistance == nil or distance < nearestDistance then
+						if nearestDistance == nil or distance < nearestDistance or (distance == nearestDistance and nearestRoom ~= nil and entry.RoomIndex > nearestRoom.RoomIndex) then
 							nearestRoom = entry
 							nearestDistance = distance
 						end

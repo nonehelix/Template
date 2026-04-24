@@ -1099,54 +1099,45 @@ return {
 
 		local function findCastleCurrentRoom(feature)
 			local characterRoot = getCharacterRoot()
-			if not characterRoot then
-				return nil
-			end
-
-			local characterPosition = characterRoot.Position
-			local currentRoom = nil
-			local nearestRoom = nil
-			local nearestDistance = nil
+			local characterPosition = characterRoot and characterRoot.Position or nil
+			local highestRoom = nil
 			local roomDebugParts = {}
 
 			for _, entry in ipairs(getCastleRoomEntries()) do
 				local boundsCFrame, boundsSize = entry.BoundsCFrame, entry.BoundsSize
+				local roomSummary = "Room_" .. tostring(entry.RoomIndex)
 				if boundsCFrame and boundsSize then
-					local inside = isPointInsideBounds(characterPosition, boundsCFrame, boundsSize, CASTLE_ROOM_HORIZONTAL_PADDING, CASTLE_ROOM_VERTICAL_PADDING)
-					local distance = inside and 0 or getDistanceToBounds(characterPosition, boundsCFrame, boundsSize)
-
-					roomDebugParts[#roomDebugParts + 1] =
-						"Room_" .. tostring(entry.RoomIndex)
+					local inside = characterPosition and isPointInsideBounds(characterPosition, boundsCFrame, boundsSize, CASTLE_ROOM_HORIZONTAL_PADDING, CASTLE_ROOM_VERTICAL_PADDING) or false
+					local distance = characterPosition and getDistanceToBounds(characterPosition, boundsCFrame, boundsSize) or math.huge
+					roomSummary = roomSummary
 						.. " inside=" .. tostring(inside)
-						.. " dist=" .. string.format("%.1f", distance)
+						.. " dist=" .. (distance ~= math.huge and string.format("%.1f", distance) or "inf")
 						.. " center=" .. formatDebugVector3(boundsCFrame.Position)
 						.. " size=" .. formatDebugVector3(boundsSize)
-
-					if inside then
-						if currentRoom == nil or entry.RoomIndex > currentRoom.RoomIndex then
-							currentRoom = entry
-						end
-					else
-						if nearestDistance == nil or distance < nearestDistance or (distance == nearestDistance and nearestRoom ~= nil and entry.RoomIndex > nearestRoom.RoomIndex) then
-							nearestRoom = entry
-							nearestDistance = distance
-						end
-					end
 				else
-					roomDebugParts[#roomDebugParts + 1] = "Room_" .. tostring(entry.RoomIndex) .. " bounds=nil"
+					roomSummary = roomSummary .. " bounds=nil"
+				end
+
+				if entry.FirePortal and entry.Prompt then
+					roomSummary = roomSummary .. " firePortal=true"
+				end
+
+				roomDebugParts[#roomDebugParts + 1] = roomSummary
+
+				if highestRoom == nil or entry.RoomIndex > highestRoom.RoomIndex then
+					highestRoom = entry
 				end
 			end
 
-			local resolvedRoom = currentRoom or nearestRoom
 			logCastleDebug(
 				feature,
 				"RoomScan",
 				"playerPos=" .. formatDebugVector3(characterPosition)
 					.. " rooms=[" .. table.concat(roomDebugParts, " | ") .. "]"
-					.. " chosen=" .. tostring(resolvedRoom and ("Room_" .. tostring(resolvedRoom.RoomIndex)) or "nil")
+					.. " chosen=" .. tostring(highestRoom and ("Room_" .. tostring(highestRoom.RoomIndex)) or "nil")
 			)
 
-			return resolvedRoom
+			return highestRoom
 		end
 
 		local function isEnemyInCastleRoom(enemy, roomEntry)

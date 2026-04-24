@@ -20,6 +20,7 @@ return {
 		local AUTO_FARM_TELEPORT_DELAY = 0.5
 		local DUNGEON_CREATE_DELAY, DUNGEON_INSTANCE_WAIT, DUNGEON_RESTART_RETRY_DELAY = 0.5, 6, 3
 		local CASTLE_PORTAL_SEARCH_DELAY, CASTLE_PORTAL_INTERACT_DELAY = 0.5, 2
+		local CASTLE_PORTAL_APPROACH_DISTANCE, CASTLE_PORTAL_HEIGHT_OFFSET = 3, 6
 		local TELEPORT_SPAWN_NAMES = {"Arena", "JejuEvent", "JungleEvent", "WinterEvent", "XmasWorld"}
 		local GUILD_HALL_LOCATION = "Guild Hall"
 		local TIME_TRIAL_BRIDGE_TOKEN = string.char(17)
@@ -931,6 +932,26 @@ return {
 			return nil
 		end
 
+		local function getPromptAnchorTopY(prompt)
+			local current = prompt and prompt.Parent or nil
+			while current and current ~= Workspace do
+				if current:IsA("BasePart") then
+					return current.Position.Y + (current.Size.Y * 0.5)
+				end
+
+				if current:IsA("Model") then
+					local basePart = current.PrimaryPart or current:FindFirstChildWhichIsA("BasePart", true)
+					if basePart then
+						return basePart.Position.Y + (basePart.Size.Y * 0.5)
+					end
+				end
+
+				current = current.Parent
+			end
+
+			return nil
+		end
+
 		local function sendVirtualPromptKey(prompt)
 			local keyCode = prompt and prompt.KeyboardKeyCode or Enum.KeyCode.Unknown
 			if keyCode == Enum.KeyCode.Unknown then
@@ -974,13 +995,14 @@ return {
 			local characterRoot = getCharacterRoot()
 			local promptCFrame = getPromptTargetCFrame(portalPrompt)
 			if character and characterRoot and promptCFrame then
-				local offsetCFrame = promptCFrame * CFrame.new(0, 0, 3)
+				local offsetCFrame = promptCFrame * CFrame.new(0, 0, CASTLE_PORTAL_APPROACH_DISTANCE)
 				local targetPosition = offsetCFrame.Position
 				local lookPosition = promptCFrame.Position
-				local currentHeight = characterRoot.Position.Y
+				local anchorTopY = getPromptAnchorTopY(portalPrompt) or promptCFrame.Position.Y
+				local targetHeight = math.max(characterRoot.Position.Y, anchorTopY) + CASTLE_PORTAL_HEIGHT_OFFSET
 
-				targetPosition = Vector3.new(targetPosition.X, currentHeight, targetPosition.Z)
-				lookPosition = Vector3.new(lookPosition.X, currentHeight, lookPosition.Z)
+				targetPosition = Vector3.new(targetPosition.X, targetHeight, targetPosition.Z)
+				lookPosition = Vector3.new(lookPosition.X, targetHeight, lookPosition.Z)
 
 				character:PivotTo(CFrame.lookAt(targetPosition, lookPosition))
 				task.wait(0.3)

@@ -18,7 +18,7 @@ return {
 		local EMPTY_TABLE = {}
 		local AUTO_CLICK_POLL_DELAY, AUTO_FARM_POLL_DELAY, SHADOW_EXCHANGE_POLL_DELAY = 0.5, 0.25, 0.5
 		local AUTO_FARM_TELEPORT_DELAY = 0.5
-		local CASTLE_PORTAL_APPROACH_DISTANCE, CASTLE_PORTAL_RETRY_DELAY = 3, 1
+		local CASTLE_PORTAL_APPROACH_DISTANCE, CASTLE_PORTAL_MOVE_THRESHOLD, CASTLE_PORTAL_RETRY_DELAY = 3, 5, 1
 		local DUNGEON_CREATE_DELAY, DUNGEON_INSTANCE_WAIT, DUNGEON_RESTART_RETRY_DELAY = 0.5, 6, 3
 		local TELEPORT_SPAWN_NAMES = {"Arena", "JejuEvent", "JungleEvent", "WinterEvent", "XmasWorld"}
 		local GUILD_HALL_LOCATION = "Guild Hall"
@@ -961,20 +961,36 @@ return {
 				keyCode = Enum.KeyCode.E
 			end
 
+			local characterRoot = getCharacterRoot()
+			local baselinePosition = characterRoot and characterRoot.Position or nil
 			local holdDuration = math.max(tonumber(prompt and prompt.HoldDuration) or 0, 0.1)
-			local pressOk = pcall(function()
-				VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
-			end)
-			if not pressOk then
-				return false
+
+			while prompt and prompt.Parent do
+				local pressOk = pcall(function()
+					VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
+				end)
+				if not pressOk then
+					return false
+				end
+
+				task.wait(holdDuration + 0.05)
+				pcall(function()
+					VirtualInputManager:SendKeyEvent(false, keyCode, false, game)
+				end)
+
+				characterRoot = getCharacterRoot()
+				if not baselinePosition or not characterRoot then
+					return characterRoot ~= nil
+				end
+
+				if (characterRoot.Position - baselinePosition).Magnitude >= CASTLE_PORTAL_MOVE_THRESHOLD then
+					return true
+				end
+
+				task.wait(0.05)
 			end
 
-			task.wait(holdDuration + 0.05)
-			pcall(function()
-				VirtualInputManager:SendKeyEvent(false, keyCode, false, game)
-			end)
-
-			return true
+			return false
 		end
 
 		local function advanceCastleFloor(roomNumber)

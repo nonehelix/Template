@@ -875,78 +875,71 @@ return {
 			return true
 		end
 
-		local function findCastlePortalPrompt()
+		local function getCastleWorldFolder()
 			local main = Workspace:FindFirstChild("__Main")
-			local dungeon = main and main:FindFirstChild("__Dungeon")
-			local castle = dungeon and dungeon:FindFirstChild("Castle")
-
-			if castle then
-				for _, descendant in ipairs(castle:GetDescendants()) do
-					if descendant:IsA("ProximityPrompt") then
-						return descendant
-					end
-
-					if descendant:IsA("BasePart") then
-						local name = string.lower(descendant.Name)
-						if string.find(name, "portal", 1, true)
-							or string.find(name, "next", 1, true)
-							or string.find(name, "teleport", 1, true)
-						then
-							local prompt = descendant:FindFirstChildOfClass("ProximityPrompt")
-							if prompt then
-								return prompt
-							end
-						end
-					end
-				end
-			end
-
-			for _, descendant in ipairs(Workspace:GetDescendants()) do
-				if descendant:IsA("ProximityPrompt") then
-					local parent = descendant.Parent
-					local parentName = parent and string.lower(parent.Name) or ""
-					if string.find(parentName, "portal", 1, true)
-						or string.find(parentName, "next", 1, true)
-						or string.find(parentName, "floor", 1, true)
-						or string.find(parentName, "teleport", 1, true)
-					then
-						return descendant
-					end
-				end
-			end
-
-			return nil
+			return main and main:FindFirstChild("__World") or nil
 		end
 
-		local function getPromptTargetCFrame(prompt)
-			local current = prompt and prompt.Parent or nil
-			while current and current ~= Workspace do
-				local cframe = getInstanceCFrame(current)
-				if cframe then
-					return cframe
-				end
-
-				current = current.Parent
-			end
-
-			return nil
+		local function getCastleRoomIndex(instance)
+			local roomName = instance and tostring(instance.Name or "") or ""
+			return tonumber(string.match(roomName, "^Room_(%d+)$"))
 		end
 
-		local function getPromptAnchorTopY(prompt)
-			local current = prompt and prompt.Parent or nil
-			while current and current ~= Workspace do
-				if current:IsA("BasePart") then
-					return current.Position.Y + (current.Size.Y * 0.5)
-				end
+		local function findCastleFirePortalTarget()
+			local world = getCastleWorldFolder()
+			if not world then
+				return nil
+			end
 
-				if current:IsA("Model") then
-					local basePart = current.PrimaryPart or current:FindFirstChildWhichIsA("BasePart", true)
-					if basePart then
-						return basePart.Position.Y + (basePart.Size.Y * 0.5)
+			local targets = {}
+
+			for _, room in ipairs(world:GetChildren()) do
+				local roomIndex = getCastleRoomIndex(room)
+				if roomIndex ~= nil then
+					local firePortal = room:FindFirstChild("FirePortal")
+					local prompt = firePortal and firePortal:FindFirstChildWhichIsA("ProximityPrompt", true) or nil
+
+					if firePortal and prompt then
+						targets[#targets + 1] = {
+							Room = room,
+							RoomIndex = roomIndex,
+							FirePortal = firePortal,
+							Prompt = prompt,
+						}
 					end
 				end
+			end
 
-				current = current.Parent
+			table.sort(targets, function(a, b)
+				return a.RoomIndex > b.RoomIndex
+			end)
+
+			return targets[1]
+		end
+
+		local function getInstanceTopY(instance)
+			if not instance then
+				return nil
+			end
+
+			if instance:IsA("BasePart") then
+				return instance.Position.Y + (instance.Size.Y * 0.5)
+			end
+
+			if instance:IsA("Attachment") then
+				return instance.WorldPosition.Y
+			end
+
+			if instance:IsA("Model") then
+				local basePart = instance.PrimaryPart or instance:FindFirstChildWhichIsA("BasePart", true)
+				if basePart then
+					return basePart.Position.Y + (basePart.Size.Y * 0.5)
+				end
+			end
+
+			local basePart = instance:FindFirstChildWhichIsA("BasePart", true)
+			if basePart then
+				return basePart.Position.Y + (basePart.Size.Y * 0.5)
 			end
 
 			return nil
@@ -982,8 +975,10 @@ return {
 
 			feature.State.LastCastlePortalSearchAt = now
 
-			local portalPrompt = findCastlePortalPrompt()
-			if not (portalPrompt and portalPrompt.Parent) then
+			local portalTarget = findCastleFirePortalTarget()
+			local firePortal = portalTarget and portalTarget.FirePortal or nil
+			local portalPrompt = portalTarget and portalTarget.Prompt or nil
+			if not (firePortal and firePortal.Parent and portalPrompt and portalPrompt.Parent) then
 				return false
 			end
 
@@ -993,13 +988,13 @@ return {
 
 			local character = player.Character
 			local characterRoot = getCharacterRoot()
-			local promptCFrame = getPromptTargetCFrame(portalPrompt)
-			if character and characterRoot and promptCFrame then
-				local offsetCFrame = promptCFrame * CFrame.new(0, 0, CASTLE_PORTAL_APPROACH_DISTANCE)
+			local firePortalCFrame = getInstanceCFrame(firePortal)
+			if character and characterRoot and firePortalCFrame then
+				local offsetCFrame = firePortalCFrame * CFrame.new(0, 0, CASTLE_PORTAL_APPROACH_DISTANCE)
 				local targetPosition = offsetCFrame.Position
-				local lookPosition = promptCFrame.Position
-				local anchorTopY = getPromptAnchorTopY(portalPrompt) or promptCFrame.Position.Y
-				local targetHeight = math.max(characterRoot.Position.Y, anchorTopY) + CASTLE_PORTAL_HEIGHT_OFFSET
+				local lookPosition = firePortalCFrame.Position
+				local anchorTopY = getInstanceTopY(firePortal) or firePortalCFrame.Position.Y
+				local targetHeight = math.max(characterRoot.Position.Y, anchorTopY + CASTLE_PORTAL_HEIGHT_OFFSET)
 
 				targetPosition = Vector3.new(targetPosition.X, targetHeight, targetPosition.Z)
 				lookPosition = Vector3.new(lookPosition.X, targetHeight, lookPosition.Z)

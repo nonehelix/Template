@@ -2,7 +2,6 @@ return {
 	Load = function(Shared)
 		local Workspace, RegisterFeature, RegisterTabs = Shared.Workspace or game:GetService("Workspace"), Shared.RegisterFeature, Shared.RegisterTabs
 		local Players, ReplicatedStorage, CollectionService = game:GetService("Players"), game:GetService("ReplicatedStorage"), game:GetService("CollectionService")
-		local VirtualInputManager = game:GetService("VirtualInputManager")
 
 		local player = Players.LocalPlayer
 
@@ -18,7 +17,7 @@ return {
 		local EMPTY_TABLE = {}
 		local AUTO_CLICK_POLL_DELAY, AUTO_FARM_POLL_DELAY, SHADOW_EXCHANGE_POLL_DELAY = 0.5, 0.25, 0.5
 		local AUTO_FARM_TELEPORT_DELAY = 0.5
-		local CASTLE_PORTAL_APPROACH_DISTANCE, CASTLE_PORTAL_MOVE_THRESHOLD, CASTLE_PORTAL_RETRY_DELAY = 3, 5, 1
+		local CASTLE_ROOM_TELEPORT_RETRY_DELAY = 0.1
 		local DUNGEON_CREATE_DELAY, DUNGEON_INSTANCE_WAIT, DUNGEON_RESTART_RETRY_DELAY = 0.5, 6, 3
 		local TELEPORT_SPAWN_NAMES = {"Arena", "JejuEvent", "JungleEvent", "WinterEvent", "XmasWorld"}
 		local GUILD_HALL_LOCATION = "Guild Hall"
@@ -878,18 +877,13 @@ return {
 			return tonumber(ReplicatedStorage:GetAttribute("CurrentRoom"))
 		end
 
-		local function findCastlePortalForRoom(roomNumber)
+		local function findCastleRoom(roomNumber)
 			roomNumber = tonumber(roomNumber)
-			if roomNumber == nil then
-				return nil, nil, nil
-			end
+			if roomNumber == nil then return nil end
 
 			local main = Workspace:FindFirstChild("__Main")
 			local world = main and main:FindFirstChild("__World")
-			local room = world and world:FindFirstChild("Room_" .. tostring(roomNumber))
-			local firePortal = room and room:FindFirstChild("FirePortal")
-			local prompt = firePortal and firePortal:FindFirstChildWhichIsA("ProximityPrompt", true) or nil
-			return room, firePortal, prompt
+			return world and world:FindFirstChild("Room_" .. tostring(roomNumber)) or nil
 		end
 
 		local function getCastleRoomIndexFromName(name)
@@ -924,85 +918,43 @@ return {
 			return target or findClosestServerTarget(nil)
 		end
 
-		local function getCastlePortalTeleportCFrame(prompt, firePortal)
-			local anchor = prompt and prompt.Parent or firePortal
-			local anchorCFrame = getInstanceCFrame(anchor) or getInstanceCFrame(firePortal)
-			if not anchorCFrame then
+		local function getCastleRoomTeleportCFrame(room)
+			local character = player.Character
+			local characterRoot = getCharacterRoot()
+			if not (room and character and characterRoot) then
 				return nil
 			end
 
-			local characterRoot = getCharacterRoot()
-			local anchorPosition = anchorCFrame.Position
-			local direction = nil
-			if characterRoot then
-				local offset = characterRoot.Position - anchorPosition
-				local flatOffset = Vector3.new(offset.X, 0, offset.Z)
-				if flatOffset.Magnitude > 0.001 then
-					direction = flatOffset.Unit
+			local roomCFrame = nil
+			if room:IsA("Model") then
+				local ok, boundsCFrame = pcall(function()
+					local bounds, _ = room:GetBoundingBox()
+					return bounds
+				end)
+				if ok then
+					roomCFrame = boundsCFrame
 				end
 			end
 
-			if not direction then
-				local lookVector = anchorCFrame.LookVector
-				local flatLook = Vector3.new(-lookVector.X, 0, -lookVector.Z)
-				direction = flatLook.Magnitude > 0.001 and flatLook.Unit or Vector3.new(0, 0, -1)
+			roomCFrame = roomCFrame or getInstanceCFrame(room)
+			if not roomCFrame then
+				return nil
 			end
 
-			local targetPosition = anchorPosition + direction * CASTLE_PORTAL_APPROACH_DISTANCE
-			local targetY = characterRoot and characterRoot.Position.Y or anchorPosition.Y
-			targetPosition = Vector3.new(targetPosition.X, targetY, targetPosition.Z)
-
+			local targetPosition = Vector3.new(roomCFrame.Position.X, characterRoot.Position.Y, roomCFrame.Position.Z)
 			return CFrame.new(targetPosition)
 		end
 
-		local function sendVirtualPromptKey(prompt)
-			local keyCode = prompt and prompt.KeyboardKeyCode or Enum.KeyCode.Unknown
-			if keyCode == Enum.KeyCode.Unknown then
-				keyCode = Enum.KeyCode.E
-			end
-
-			local characterRoot = getCharacterRoot()
-			local baselinePosition = characterRoot and characterRoot.Position or nil
-			local holdDuration = math.max(tonumber(prompt and prompt.HoldDuration) or 0, 0.1)
-
-			while prompt and prompt.Parent do
-				local pressOk = pcall(function()
-					VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
-				end)
-				if not pressOk then
-					return false
-				end
-
-				task.wait(holdDuration + 0.05)
-				pcall(function()
-					VirtualInputManager:SendKeyEvent(false, keyCode, false, game)
-				end)
-
-				characterRoot = getCharacterRoot()
-				if not baselinePosition or not characterRoot then
-					return characterRoot ~= nil
-				end
-
-				if (characterRoot.Position - baselinePosition).Magnitude >= CASTLE_PORTAL_MOVE_THRESHOLD then
-					return true
-				end
-
-				task.wait(0.05)
-			end
-
-			return false
-		end
-
-		local function advanceCastleFloor(roomNumber)
+		local function teleportToCastleRoom(roomNumber)
 			local character = player.Character
-			local _, firePortal, prompt = findCastlePortalForRoom(roomNumber)
-			local targetCFrame = getCastlePortalTeleportCFrame(prompt, firePortal)
-			if not (character and firePortal and prompt and targetCFrame) then
+			local room = findCastleRoom(roomNumber)
+			local targetCFrame = getCastleRoomTeleportCFrame(room)
+			if not (character and room and targetCFrame) then
 				return false
 			end
 
 			character:PivotTo(targetCFrame)
-			return sendVirtualPromptKey(prompt)
+			return true
 		end
 
 		local dungeonLabelToInfo = {}
@@ -1488,14 +1440,14 @@ return {
 			})
 			Feature.State.PollDelay = 0.05
 			Feature.State.LastObservedRoom = nil
-			Feature.State.PendingPortalRoom = nil
-			Feature.State.LastPortalAdvanceAt = 0
+			Feature.State.PendingRoomTeleport = nil
+			Feature.State.LastRoomTeleportAt = 0
 			Feature.State.CurrentRoomConnection = nil
 
 			function Feature:ResetCastleState()
 				self.State.LastObservedRoom = nil
-				self.State.PendingPortalRoom = nil
-				self.State.LastPortalAdvanceAt = 0
+				self.State.PendingRoomTeleport = nil
+				self.State.LastRoomTeleportAt = 0
 			end
 
 			function Feature:DisconnectCurrentRoomConnection()
@@ -1519,21 +1471,21 @@ return {
 				end
 
 				if currentRoom > lastObservedRoom then
-					self.State.PendingPortalRoom = lastObservedRoom
+					self.State.PendingRoomTeleport = currentRoom
 					self.State.LastObservedRoom = currentRoom
-					self.State.LastPortalAdvanceAt = 0
+					self.State.LastRoomTeleportAt = 0
 					setFeatureTarget(self, nil)
 
-					if advanceImmediately and self.State.PendingPortalRoom ~= nil then
-						self.State.LastPortalAdvanceAt = os.clock()
-						if advanceCastleFloor(self.State.PendingPortalRoom) then
-							self.State.PendingPortalRoom = nil
+					if advanceImmediately and self.State.PendingRoomTeleport ~= nil then
+						self.State.LastRoomTeleportAt = os.clock()
+						if teleportToCastleRoom(self.State.PendingRoomTeleport) then
+							self.State.PendingRoomTeleport = nil
 						end
 					end
 				elseif currentRoom < lastObservedRoom then
 					self.State.LastObservedRoom = currentRoom
-					self.State.PendingPortalRoom = nil
-					self.State.LastPortalAdvanceAt = 0
+					self.State.PendingRoomTeleport = nil
+					self.State.LastRoomTeleportAt = 0
 				end
 			end
 
@@ -1546,11 +1498,11 @@ return {
 
 				self:SyncCastleRoom(false)
 
-				if self.State.PendingPortalRoom ~= nil then
-					if os.clock() - (self.State.LastPortalAdvanceAt or 0) >= CASTLE_PORTAL_RETRY_DELAY then
-						self.State.LastPortalAdvanceAt = os.clock()
-						if advanceCastleFloor(self.State.PendingPortalRoom) then
-							self.State.PendingPortalRoom = nil
+				if self.State.PendingRoomTeleport ~= nil then
+					if os.clock() - (self.State.LastRoomTeleportAt or 0) >= CASTLE_ROOM_TELEPORT_RETRY_DELAY then
+						self.State.LastRoomTeleportAt = os.clock()
+						if teleportToCastleRoom(self.State.PendingRoomTeleport) then
+							self.State.PendingRoomTeleport = nil
 						end
 					end
 					return

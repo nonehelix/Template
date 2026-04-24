@@ -2,7 +2,6 @@ return {
 	Load = function(Shared)
 		local Workspace, RegisterFeature, RegisterTabs = Shared.Workspace or game:GetService("Workspace"), Shared.RegisterFeature, Shared.RegisterTabs
 		local Players, ReplicatedStorage, CollectionService = game:GetService("Players"), game:GetService("ReplicatedStorage"), game:GetService("CollectionService")
-		local VirtualInputManager = game:GetService("VirtualInputManager")
 
 		local player = Players.LocalPlayer
 
@@ -19,10 +18,6 @@ return {
 		local AUTO_CLICK_POLL_DELAY, AUTO_FARM_POLL_DELAY, SHADOW_EXCHANGE_POLL_DELAY = 0.5, 0.25, 0.5
 		local AUTO_FARM_TELEPORT_DELAY = 0.5
 		local DUNGEON_CREATE_DELAY, DUNGEON_INSTANCE_WAIT, DUNGEON_RESTART_RETRY_DELAY = 0.5, 6, 3
-		local CASTLE_PORTAL_SEARCH_DELAY, CASTLE_PORTAL_INTERACT_DELAY = 0.5, 2
-		local CASTLE_POST_CLEAR_DELAY = 1.25
-		local CASTLE_PORTAL_APPROACH_DISTANCE, CASTLE_PORTAL_HEIGHT_OFFSET = 3, 6
-		local CASTLE_ROOM_HORIZONTAL_PADDING, CASTLE_ROOM_VERTICAL_PADDING = 10, 16
 		local TELEPORT_SPAWN_NAMES = {"Arena", "JejuEvent", "JungleEvent", "WinterEvent", "XmasWorld"}
 		local GUILD_HALL_LOCATION = "Guild Hall"
 		local TIME_TRIAL_BRIDGE_TOKEN = string.char(17)
@@ -31,7 +26,6 @@ return {
 			[GUILD_HALL_LOCATION] = CFrame.new(9557.8457, -204.696213, 106.217346, 1, 0, 0, 0, 1, 0, 0, 0, 1) * CFrame.Angles(0, math.pi, 0),
 		}
 		local indexerModuleCache = {}
-		local formatDebugVector3, getEnemyDebugLabel, isCastleDebugEnabled, clearCastleDebugLogCache, logCastleDebug
 		local lastStartedDungeonInfo = nil
 		local autoFarmZoneItemsCache = {NO_ZONE_OPTION}
 		local autoFarmZoneEnemiesCache = {}
@@ -758,22 +752,6 @@ return {
 
 			feature.State.CurrentTarget = target
 			feature.State.TeleportRequestId = (feature.State.TeleportRequestId or 0) + 1
-			if feature.Key == "AutoCastle" then
-				if target then
-					local enemyRoot = getEnemyRoot(target)
-					local teleportCFrame = enemyRoot and getClosestTeleportCFrame(enemyRoot, feature.State.TeleportDistance) or nil
-					logCastleDebug(
-						feature,
-						"EnemyTeleport",
-						"Teleporting to " .. getEnemyDebugLabel(target)
-							.. " enemyPos=" .. formatDebugVector3(enemyRoot and enemyRoot.Position)
-							.. " pivotPos=" .. formatDebugVector3(teleportCFrame and teleportCFrame.Position),
-						true
-					)
-				else
-					logCastleDebug(feature, "EnemyTeleport", "Clearing current target", true)
-				end
-			end
 			if target and teleportToEnemy(target, feature.State.TeleportDistance) then
 				feature.State.LastTeleportAt = os.clock()
 			end
@@ -892,394 +870,6 @@ return {
 			character:SetAttribute("InGuild", inGuild)
 			character:SetAttribute("InTp", false)
 			return true
-		end
-
-		local function getCastleWorldFolder()
-			local main = Workspace:FindFirstChild("__Main")
-			return main and main:FindFirstChild("__World") or nil
-		end
-
-		local function getCastleRoomIndex(instance)
-			local roomName = instance and tostring(instance.Name or "") or ""
-			return tonumber(string.match(roomName, "^Room_(%d+)$"))
-		end
-
-		local function findCastleFirePortalTarget()
-			local world = getCastleWorldFolder()
-			if not world then
-				return nil
-			end
-
-			local targets = {}
-
-			for _, room in ipairs(world:GetChildren()) do
-				local roomIndex = getCastleRoomIndex(room)
-				if roomIndex ~= nil then
-					local firePortal = room:FindFirstChild("FirePortal")
-					local prompt = firePortal and firePortal:FindFirstChildWhichIsA("ProximityPrompt", true) or nil
-
-					if firePortal and prompt then
-						targets[#targets + 1] = {
-							Room = room,
-							RoomIndex = roomIndex,
-							FirePortal = firePortal,
-							Prompt = prompt,
-						}
-					end
-				end
-			end
-
-			table.sort(targets, function(a, b)
-				return a.RoomIndex > b.RoomIndex
-			end)
-
-			return targets[1]
-		end
-
-		local function getInstanceTopY(instance)
-			if not instance then
-				return nil
-			end
-
-			if instance:IsA("BasePart") then
-				return instance.Position.Y + (instance.Size.Y * 0.5)
-			end
-
-			if instance:IsA("Attachment") then
-				return instance.WorldPosition.Y
-			end
-
-			if instance:IsA("Model") then
-				local basePart = instance.PrimaryPart or instance:FindFirstChildWhichIsA("BasePart", true)
-				if basePart then
-					return basePart.Position.Y + (basePart.Size.Y * 0.5)
-				end
-			end
-
-			local basePart = instance:FindFirstChildWhichIsA("BasePart", true)
-			if basePart then
-				return basePart.Position.Y + (basePart.Size.Y * 0.5)
-			end
-
-			return nil
-		end
-
-		local function getInstanceBounds(instance)
-			if not instance then
-				return nil, nil
-			end
-
-			if instance:IsA("BasePart") then
-				return instance.CFrame, instance.Size
-			end
-
-			if instance:IsA("Model") then
-				local ok, boundsCFrame, boundsSize = pcall(function()
-					return instance:GetBoundingBox()
-				end)
-				if ok and boundsCFrame and boundsSize then
-					return boundsCFrame, boundsSize
-				end
-			end
-
-			local basePart = instance:FindFirstChildWhichIsA("BasePart", true)
-			return basePart and basePart.CFrame or nil, basePart and basePart.Size or nil
-		end
-
-		local function isPointInsideBounds(point, boundsCFrame, boundsSize, horizontalPadding, verticalPadding)
-			if not (point and boundsCFrame and boundsSize) then
-				return false
-			end
-
-			local localPoint = boundsCFrame:PointToObjectSpace(point)
-			return math.abs(localPoint.X) <= (boundsSize.X * 0.5 + (horizontalPadding or 0))
-				and math.abs(localPoint.Y) <= (boundsSize.Y * 0.5 + (verticalPadding or 0))
-				and math.abs(localPoint.Z) <= (boundsSize.Z * 0.5 + (horizontalPadding or 0))
-		end
-
-		local function getDistanceToBounds(point, boundsCFrame, boundsSize)
-			if not (point and boundsCFrame and boundsSize) then
-				return math.huge
-			end
-
-			local localPoint = boundsCFrame:PointToObjectSpace(point)
-			local halfSize = boundsSize * 0.5
-			local dx = math.max(math.abs(localPoint.X) - halfSize.X, 0)
-			local dy = math.max(math.abs(localPoint.Y) - halfSize.Y, 0)
-			local dz = math.max(math.abs(localPoint.Z) - halfSize.Z, 0)
-			return math.sqrt(dx * dx + dy * dy + dz * dz)
-		end
-
-		formatDebugVector3 = function(value)
-			if not value then
-				return "nil"
-			end
-
-			return string.format("(%.1f, %.1f, %.1f)", value.X, value.Y, value.Z)
-		end
-
-		getEnemyDebugLabel = function(enemy)
-			if not enemy then
-				return "nil"
-			end
-
-			local label = getResolvedEnemyDisplayName(enemy) or getEnemyDisplayName(enemy) or enemy.Name or "Unknown"
-			local identifier = enemy:GetAttribute("Id") or enemy:GetAttribute("ID") or enemy:GetAttribute("Model") or enemy.Name
-			return tostring(label) .. " [" .. tostring(identifier) .. "]"
-		end
-
-		isCastleDebugEnabled = function(feature)
-			if not (feature and feature.Key == "AutoCastle" and feature.State) then
-				return false
-			end
-
-			local values = getPanelValues(feature.State.PanelRef)
-			if values and values.CastleDebug ~= nil then
-				return values.CastleDebug == true
-			end
-
-			return feature.State.DebugEnabled == true
-		end
-
-		clearCastleDebugLogCache = function(feature)
-			if feature and feature.State then
-				feature.State.CastleDebugLast = {}
-			end
-		end
-
-		logCastleDebug = function(feature, category, message, alwaysLog)
-			if not isCastleDebugEnabled(feature) then
-				return
-			end
-
-			local state = feature.State
-			state.CastleDebugLast = state.CastleDebugLast or {}
-			category = tostring(category or "Info")
-			message = tostring(message or "")
-
-			if not alwaysLog and state.CastleDebugLast[category] == message then
-				return
-			end
-
-			state.CastleDebugLast[category] = message
-			warn("[AriseCrossover][AutoCastle][" .. category .. "] " .. message)
-		end
-
-		local function getCastleRoomEntries()
-			local world = getCastleWorldFolder()
-			if not world then
-				return {}
-			end
-
-			local entries = {}
-
-			for _, room in ipairs(world:GetChildren()) do
-				local roomIndex = getCastleRoomIndex(room)
-				if roomIndex ~= nil then
-					local firePortal = room:FindFirstChild("FirePortal")
-					local prompt = firePortal and firePortal:FindFirstChildWhichIsA("ProximityPrompt", true) or nil
-					local boundsCFrame, boundsSize = getInstanceBounds(room)
-
-					entries[#entries + 1] = {
-						Room = room,
-						RoomIndex = roomIndex,
-						FirePortal = firePortal,
-						Prompt = prompt,
-						BoundsCFrame = boundsCFrame,
-						BoundsSize = boundsSize,
-					}
-				end
-			end
-
-			table.sort(entries, function(a, b)
-				return a.RoomIndex < b.RoomIndex
-			end)
-
-			return entries
-		end
-
-		local function findCastleCurrentRoom(feature)
-			local characterRoot = getCharacterRoot()
-			local characterPosition = characterRoot and characterRoot.Position or nil
-			local highestRoom = nil
-			local roomDebugParts = {}
-
-			for _, entry in ipairs(getCastleRoomEntries()) do
-				local boundsCFrame, boundsSize = entry.BoundsCFrame, entry.BoundsSize
-				local roomSummary = "Room_" .. tostring(entry.RoomIndex)
-				if boundsCFrame and boundsSize then
-					local inside = characterPosition and isPointInsideBounds(characterPosition, boundsCFrame, boundsSize, CASTLE_ROOM_HORIZONTAL_PADDING, CASTLE_ROOM_VERTICAL_PADDING) or false
-					local distance = characterPosition and getDistanceToBounds(characterPosition, boundsCFrame, boundsSize) or math.huge
-					roomSummary = roomSummary
-						.. " inside=" .. tostring(inside)
-						.. " dist=" .. (distance ~= math.huge and string.format("%.1f", distance) or "inf")
-						.. " center=" .. formatDebugVector3(boundsCFrame.Position)
-						.. " size=" .. formatDebugVector3(boundsSize)
-				else
-					roomSummary = roomSummary .. " bounds=nil"
-				end
-
-				if entry.FirePortal and entry.Prompt then
-					roomSummary = roomSummary .. " firePortal=true"
-				end
-
-				roomDebugParts[#roomDebugParts + 1] = roomSummary
-
-				if highestRoom == nil or entry.RoomIndex > highestRoom.RoomIndex then
-					highestRoom = entry
-				end
-			end
-
-			logCastleDebug(
-				feature,
-				"RoomScan",
-				"playerPos=" .. formatDebugVector3(characterPosition)
-					.. " rooms=[" .. table.concat(roomDebugParts, " | ") .. "]"
-					.. " chosen=" .. tostring(highestRoom and ("Room_" .. tostring(highestRoom.RoomIndex)) or "nil")
-			)
-
-			return highestRoom
-		end
-
-		local function isEnemyInCastleRoom(enemy, roomEntry)
-			if not roomEntry then
-				return false
-			end
-
-			local enemyRoot = getEnemyRoot(enemy)
-			if not enemyRoot then
-				return false
-			end
-
-			return isPointInsideBounds(
-				enemyRoot.Position,
-				roomEntry.BoundsCFrame,
-				roomEntry.BoundsSize,
-				CASTLE_ROOM_HORIZONTAL_PADDING,
-				CASTLE_ROOM_VERTICAL_PADDING
-			)
-		end
-
-		local function findClosestCastleTarget(feature)
-			local currentRoom = findCastleCurrentRoom(feature)
-			if not currentRoom then
-				local fallbackTarget = findClosestServerTarget(nil)
-				logCastleDebug(feature, "Room", "No current castle room resolved; falling back to global enemy search", true)
-
-				if fallbackTarget then
-					local fallbackRoot = getEnemyRoot(fallbackTarget)
-					logCastleDebug(
-						feature,
-						"Selection",
-						"Fallback target " .. getEnemyDebugLabel(fallbackTarget) .. " enemyPos=" .. formatDebugVector3(fallbackRoot and fallbackRoot.Position),
-						true
-					)
-				else
-					logCastleDebug(feature, "Selection", "Fallback search found no enemy target", true)
-				end
-
-				return fallbackTarget
-			end
-
-			local characterRoot = getCharacterRoot()
-			logCastleDebug(
-				feature,
-				"Room",
-				"Current room Room_" .. tostring(currentRoom.RoomIndex) .. " playerPos=" .. formatDebugVector3(characterRoot and characterRoot.Position)
-			)
-
-			local target = findClosestServerTarget(function(enemy)
-				return isEnemyInCastleRoom(enemy, currentRoom)
-			end)
-
-			if target then
-				local enemyRoot = getEnemyRoot(target)
-				logCastleDebug(
-					feature,
-					"Selection",
-					"Selected " .. getEnemyDebugLabel(target) .. " in Room_" .. tostring(currentRoom.RoomIndex) .. " enemyPos=" .. formatDebugVector3(enemyRoot and enemyRoot.Position),
-					true
-				)
-			else
-				logCastleDebug(feature, "Selection", "No alive enemies found in Room_" .. tostring(currentRoom.RoomIndex), true)
-			end
-
-			return target
-		end
-
-		local function sendVirtualPromptKey(prompt)
-			local keyCode = prompt and prompt.KeyboardKeyCode or Enum.KeyCode.Unknown
-			if keyCode == Enum.KeyCode.Unknown then
-				keyCode = Enum.KeyCode.E
-			end
-
-			local holdDuration = math.max(tonumber(prompt and prompt.HoldDuration) or 0, 0.1)
-			local pressOk = pcall(function()
-				VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
-			end)
-			if not pressOk then
-				return false
-			end
-
-			task.wait(holdDuration + 0.05)
-			pcall(function()
-				VirtualInputManager:SendKeyEvent(false, keyCode, false, game)
-			end)
-
-			return true
-		end
-
-		local function tryAdvanceCastleFloor(feature)
-			local now = os.clock()
-			if now - (feature.State.LastCastlePortalSearchAt or 0) < CASTLE_PORTAL_SEARCH_DELAY then
-				return false
-			end
-
-			feature.State.LastCastlePortalSearchAt = now
-
-			local portalTarget = findCastleFirePortalTarget()
-			local firePortal = portalTarget and portalTarget.FirePortal or nil
-			local portalPrompt = portalTarget and portalTarget.Prompt or nil
-			if not (firePortal and firePortal.Parent and portalPrompt and portalPrompt.Parent) then
-				logCastleDebug(feature, "Portal", "No Room_* with FirePortal.ProximityPrompt found under __Main.__World", true)
-				return false
-			end
-
-			if now - (feature.State.LastCastlePortalInteractAt or 0) < CASTLE_PORTAL_INTERACT_DELAY then
-				return true
-			end
-
-			local character = player.Character
-			local characterRoot = getCharacterRoot()
-			local firePortalCFrame = getInstanceCFrame(firePortal)
-			if character and characterRoot and firePortalCFrame then
-				local offsetCFrame = firePortalCFrame * CFrame.new(0, 0, CASTLE_PORTAL_APPROACH_DISTANCE)
-				local targetPosition = offsetCFrame.Position
-				local lookPosition = firePortalCFrame.Position
-				local anchorTopY = getInstanceTopY(firePortal) or firePortalCFrame.Position.Y
-				local targetHeight = math.max(characterRoot.Position.Y, anchorTopY + CASTLE_PORTAL_HEIGHT_OFFSET)
-
-				targetPosition = Vector3.new(targetPosition.X, targetHeight, targetPosition.Z)
-				lookPosition = Vector3.new(lookPosition.X, targetHeight, lookPosition.Z)
-
-				logCastleDebug(
-					feature,
-					"Portal",
-					"Using Room_" .. tostring(portalTarget.RoomIndex)
-						.. " firePortalPos=" .. formatDebugVector3(firePortalCFrame.Position)
-						.. " pivotPos=" .. formatDebugVector3(targetPosition)
-						.. " lookPos=" .. formatDebugVector3(lookPosition),
-					true
-				)
-
-				character:PivotTo(CFrame.new(targetPosition))
-				task.wait(0.3)
-			end
-
-			task.wait(0.2)
-			feature.State.LastCastlePortalInteractAt = os.clock()
-			logCastleDebug(feature, "PortalInput", "Sending key " .. tostring(portalPrompt.KeyboardKeyCode ~= Enum.KeyCode.Unknown and portalPrompt.KeyboardKeyCode or Enum.KeyCode.E), true)
-			return sendVirtualPromptKey(portalPrompt)
 		end
 
 		local dungeonLabelToInfo = {}
@@ -1755,55 +1345,21 @@ return {
 		-- FEATURE: AUTO CASTLE
 		--==================================================
 		do
-			local state = newTargetingState()
-			state.LastCastlePortalSearchAt = 0
-			state.LastCastlePortalInteractAt = 0
-			state.LastCastleNoEnemyAt = 0
-			state.DebugEnabled = true
-			state.CastleDebugLast = {}
-
 			local Feature = RegisterFeature({
 				Key = "AutoCastle", Tab = "Castle", Order = 10,
-				Defaults = {AutoCastle = false, CastleDebug = true},
-				State = state,
+				Defaults = {AutoCastle = false},
+				State = newTargetingState(),
 				Options = {
-					{ Id = "AutoCastle", Type = "toggle", Label = "Auto Castle", Description = "Auto clears castle floors" },
-					{ Id = "CastleDebug", Type = "toggle", Label = "Castle Debug", Description = "Logs castle target and portal flow" },
+					{ Id = "AutoCastle", Type = "toggle", Label = "Auto Castle", Description = "Auto farms castle enemies" },
 				}
 			})
 
 			function Feature:Tick()
 				if not isCastleDungeonInstance() then
 					setFeatureTarget(self, nil)
-					self.State.LastCastlePortalSearchAt, self.State.LastCastlePortalInteractAt, self.State.LastCastleNoEnemyAt = 0, 0, 0
-					return
+				elseif not isTargetAlive(self.State.CurrentTarget) then
+					setFeatureTarget(self, findClosestServerTarget(nil))
 				end
-
-				if isTargetAlive(self.State.CurrentTarget) then
-					self.State.LastCastleNoEnemyAt = 0
-					logCastleDebug(self, "TargetState", "Holding current target " .. getEnemyDebugLabel(self.State.CurrentTarget))
-					return
-				end
-
-				local target = findClosestCastleTarget(self)
-				if target then
-					self.State.LastCastleNoEnemyAt = 0
-					setFeatureTarget(self, target)
-					return
-				end
-
-				setFeatureTarget(self, nil)
-				if (self.State.LastCastleNoEnemyAt or 0) <= 0 then
-					self.State.LastCastleNoEnemyAt = os.clock()
-					logCastleDebug(self, "PortalWait", "No enemies found, waiting " .. tostring(CASTLE_POST_CLEAR_DELAY) .. "s before portal teleport", true)
-					return
-				end
-
-				if os.clock() - self.State.LastCastleNoEnemyAt < CASTLE_POST_CLEAR_DELAY then
-					return
-				end
-
-				tryAdvanceCastleFloor(self)
 			end
 
 			bindPollingToggleFeature(Feature, "AutoCastle", function(self)
@@ -1811,29 +1367,9 @@ return {
 			end, {
 				RestartOnStart = true,
 				UseLoopId = true,
-				BeforeStart = function(self, panelRef)
-					local values = setFeaturePanelRef(self, panelRef)
-					local debugEnabled = self.State.DebugEnabled == true
-					if values and values.CastleDebug ~= nil then
-						debugEnabled = values.CastleDebug == true
-					end
-					self.State.DebugEnabled = debugEnabled
-					clearCastleDebugLogCache(self)
-					logCastleDebug(self, "Config", "Castle debug enabled", true)
-				end,
 				BeforeStop = function(self)
 					setFeatureTarget(self, nil)
-					self.State.LastCastlePortalSearchAt, self.State.LastCastlePortalInteractAt, self.State.LastCastleNoEnemyAt = 0, 0, 0
-					clearCastleDebugLogCache(self)
 				end,
-				ExtraHandlers = {
-					CastleDebug = function(value, _, panelRef)
-						setFeaturePanelRef(Feature, panelRef)
-						Feature.State.DebugEnabled = value == true
-						clearCastleDebugLogCache(Feature)
-						logCastleDebug(Feature, "Config", "Castle debug enabled", true)
-					end,
-				},
 			})
 		end
 

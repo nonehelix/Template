@@ -18,7 +18,7 @@ return {
 		local EMPTY_TABLE = {}
 		local AUTO_CLICK_POLL_DELAY, AUTO_FARM_POLL_DELAY, SHADOW_EXCHANGE_POLL_DELAY = 0.5, 0.25, 0.5
 		local AUTO_FARM_TELEPORT_DELAY = 0.5
-		local CASTLE_PORTAL_HEIGHT_OFFSET, CASTLE_PORTAL_RETRY_DELAY = 3, 1
+		local CASTLE_PORTAL_RETRY_DELAY = 1
 		local DUNGEON_CREATE_DELAY, DUNGEON_INSTANCE_WAIT, DUNGEON_RESTART_RETRY_DELAY = 0.5, 6, 3
 		local TELEPORT_SPAWN_NAMES = {"Arena", "JejuEvent", "JungleEvent", "WinterEvent", "XmasWorld"}
 		local GUILD_HALL_LOCATION = "Guild Hall"
@@ -878,33 +878,6 @@ return {
 			return tonumber(ReplicatedStorage:GetAttribute("CurrentRoom"))
 		end
 
-		local function getInstanceTopY(instance)
-			if not instance then
-				return nil
-			end
-
-			if instance:IsA("BasePart") then
-				return instance.Position.Y + (instance.Size.Y * 0.5)
-			end
-
-			if instance:IsA("Attachment") then
-				return instance.WorldPosition.Y
-			end
-
-			local basePart = nil
-			if instance:IsA("Model") then
-				basePart = instance.PrimaryPart or instance:FindFirstChildWhichIsA("BasePart", true)
-			else
-				basePart = instance:FindFirstChildWhichIsA("BasePart", true)
-			end
-
-			if basePart then
-				return basePart.Position.Y + (basePart.Size.Y * 0.5)
-			end
-
-			return nil
-		end
-
 		local function findCastlePortalForRoom(roomNumber)
 			roomNumber = tonumber(roomNumber)
 			if roomNumber == nil then
@@ -949,10 +922,7 @@ return {
 				return false
 			end
 
-			local targetY = math.max(firePortalCFrame.Position.Y, (getInstanceTopY(firePortal) or firePortalCFrame.Position.Y) + CASTLE_PORTAL_HEIGHT_OFFSET)
-			local targetPosition = Vector3.new(firePortalCFrame.Position.X, targetY, firePortalCFrame.Position.Z)
-			character:PivotTo(CFrame.new(targetPosition))
-			task.wait(0.25)
+			character:PivotTo(CFrame.new(firePortalCFrame.Position))
 			return sendVirtualPromptKey(prompt)
 		end
 
@@ -1437,14 +1407,55 @@ return {
 					{ Id = "AutoCastle", Type = "toggle", Label = "Auto Castle", Description = "Auto farms castle enemies" },
 				}
 			})
+			Feature.State.PollDelay = 0.05
 			Feature.State.LastObservedRoom = nil
 			Feature.State.PendingPortalRoom = nil
 			Feature.State.LastPortalAdvanceAt = 0
+			Feature.State.CurrentRoomConnection = nil
 
 			function Feature:ResetCastleState()
 				self.State.LastObservedRoom = nil
 				self.State.PendingPortalRoom = nil
 				self.State.LastPortalAdvanceAt = 0
+			end
+
+			function Feature:DisconnectCurrentRoomConnection()
+				local connection = self.State.CurrentRoomConnection
+				if connection then
+					connection:Disconnect()
+					self.State.CurrentRoomConnection = nil
+				end
+			end
+
+			function Feature:SyncCastleRoom(advanceImmediately)
+				local currentRoom = getCurrentCastleRoom()
+				local lastObservedRoom = tonumber(self.State.LastObservedRoom)
+				if currentRoom == nil then
+					return
+				end
+
+				if lastObservedRoom == nil then
+					self.State.LastObservedRoom = currentRoom
+					return
+				end
+
+				if currentRoom > lastObservedRoom then
+					self.State.PendingPortalRoom = lastObservedRoom
+					self.State.LastObservedRoom = currentRoom
+					self.State.LastPortalAdvanceAt = 0
+					setFeatureTarget(self, nil)
+
+					if advanceImmediately and self.State.PendingPortalRoom ~= nil then
+						self.State.LastPortalAdvanceAt = os.clock()
+						if advanceCastleFloor(self.State.PendingPortalRoom) then
+							self.State.PendingPortalRoom = nil
+						end
+					end
+				elseif currentRoom < lastObservedRoom then
+					self.State.LastObservedRoom = currentRoom
+					self.State.PendingPortalRoom = nil
+					self.State.LastPortalAdvanceAt = 0
+				end
 			end
 
 			function Feature:Tick()
@@ -1454,22 +1465,7 @@ return {
 					return
 				end
 
-				local currentRoom = getCurrentCastleRoom()
-				local lastObservedRoom = tonumber(self.State.LastObservedRoom)
-				if currentRoom ~= nil then
-					if lastObservedRoom == nil then
-						self.State.LastObservedRoom = currentRoom
-					elseif currentRoom > lastObservedRoom then
-						self.State.PendingPortalRoom = lastObservedRoom
-						self.State.LastObservedRoom = currentRoom
-						self.State.LastPortalAdvanceAt = 0
-						setFeatureTarget(self, nil)
-					elseif currentRoom < lastObservedRoom then
-						self.State.LastObservedRoom = currentRoom
-						self.State.PendingPortalRoom = nil
-						self.State.LastPortalAdvanceAt = 0
-					end
-				end
+				self:SyncCastleRoom(false)
 
 				if self.State.PendingPortalRoom ~= nil then
 					if os.clock() - (self.State.LastPortalAdvanceAt or 0) >= CASTLE_PORTAL_RETRY_DELAY then
@@ -1491,8 +1487,19 @@ return {
 			end, {
 				RestartOnStart = true,
 				UseLoopId = true,
+				BeforeStart = function(self)
+					self:DisconnectCurrentRoomConnection()
+					self:ResetCastleState()
+					self.State.LastObservedRoom = getCurrentCastleRoom()
+					self.State.CurrentRoomConnection = ReplicatedStorage:GetAttributeChangedSignal("CurrentRoom"):Connect(function()
+						if self.State.Running then
+							self:SyncCastleRoom(true)
+						end
+					end)
+				end,
 				BeforeStop = function(self)
 					setFeatureTarget(self, nil)
+					self:DisconnectCurrentRoomConnection()
 					self:ResetCastleState()
 				end,
 			})

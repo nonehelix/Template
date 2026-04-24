@@ -737,7 +737,7 @@ return {
 			local targetPosition = enemyPosition + direction * radius
 			targetPosition = Vector3.new(targetPosition.X, enemyPosition.Y, targetPosition.Z)
 
-			return CFrame.lookAt(targetPosition, Vector3.new(enemyPosition.X, targetPosition.Y, enemyPosition.Z))
+			return CFrame.new(targetPosition)
 		end
 
 		local function teleportToEnemy(enemy, distance)
@@ -1259,7 +1259,7 @@ return {
 					true
 				)
 
-				character:PivotTo(CFrame.lookAt(targetPosition, lookPosition))
+				character:PivotTo(CFrame.new(targetPosition))
 				task.wait(0.3)
 			end
 

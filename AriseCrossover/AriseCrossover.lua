@@ -32,7 +32,6 @@ return {
 		local autoFarmZoneItemsCache = {NO_ZONE_OPTION}
 		local autoFarmZoneEnemiesCache = {}
 		local autoFarmZoneDataLoaded = false
-		local autoFarmSelectedZone = NO_ZONE_OPTION
 
 		local function newTargetingState()
 			return {
@@ -702,13 +701,14 @@ return {
 			return autoFarmZoneItemsCache
 		end
 
-		local function getAutoFarmEnemyItems()
-			if autoFarmSelectedZone == nil or autoFarmSelectedZone == "" or autoFarmSelectedZone == NO_ZONE_OPTION then
+		local function getAutoFarmEnemyItemsForZone(zoneName)
+			zoneName = tostring(zoneName or NO_ZONE_OPTION)
+			if zoneName == "" or zoneName == NO_ZONE_OPTION then
 				return {}
 			end
 
 			loadAutoFarmZoneData()
-			return autoFarmZoneEnemiesCache[autoFarmSelectedZone] or {}
+			return autoFarmZoneEnemiesCache[zoneName] or {}
 		end
 
 		local function getClosestTeleportCFrame(enemyRoot, distance)
@@ -992,6 +992,17 @@ return {
 		end
 
 		local dungeonLabelToInfo = {}
+		local selectedDungeonLabel = NO_DUNGEON_OPTION
+
+		local function setSelectedDungeonLabel(selectedDungeon)
+			selectedDungeon = tostring(selectedDungeon or NO_DUNGEON_OPTION)
+			if selectedDungeon == "" then
+				selectedDungeon = NO_DUNGEON_OPTION
+			end
+
+			selectedDungeonLabel = selectedDungeon
+			return selectedDungeonLabel
+		end
 
 		local function makeDungeonLabel(info)
 			local mapName = tostring(info.MapName or info.Dungeon or "Dungeon")
@@ -1241,7 +1252,7 @@ return {
 				Defaults = {AutoClick = false},
 				State = {Running = false, PanelRef = nil, CapturedOriginal = false, OriginalAutoClick = nil, OriginalAutoClicker = nil},
 				Options = {
-					{ Id = "AutoClick", Type = "toggle", Label = "Auto Click", Description = "Auto clicks attacks" },
+					{ Id = "AutoClick", Type = "toggle", Label = "Auto Click", Description = "Auto clicks" },
 				}
 			})
 
@@ -1290,7 +1301,7 @@ return {
 				Key = "AutoAttack", Tab = "Combat", Order = 20,
 				Defaults = {AutoAttack = false},
 				Options = {
-					{ Id = "AutoAttack", Type = "toggle", Label = "Auto Attack", Description = "Auto attacks enemies" },
+					{ Id = "AutoAttack", Type = "toggle", Label = "Auto Attack", Description = "Auto attacks" },
 				}
 			})
 
@@ -1307,24 +1318,47 @@ return {
 		-- FEATURE: AUTO FARM
 		--==================================================
 		do
-			local Feature = RegisterFeature({
+			local Feature
+
+			local function getSelectedAutoFarmZone()
+				local values = getPanelValues(Feature and Feature.State and Feature.State.PanelRef)
+				local zoneName = values and values.AutoFarmZone or Feature and Feature.State and Feature.State.SelectedZone or NO_ZONE_OPTION
+				zoneName = tostring(zoneName or NO_ZONE_OPTION)
+				if zoneName == "" then
+					return NO_ZONE_OPTION
+				end
+
+				return zoneName
+			end
+
+			local function getFeatureAutoFarmEnemyItems()
+				return getAutoFarmEnemyItemsForZone(getSelectedAutoFarmZone())
+			end
+
+			Feature = RegisterFeature({
 				Key = "AutoFarm", Tab = "Auto Farm", Order = 25,
 				Defaults = {AutoFarmZone = NO_ZONE_OPTION, AutoFarmEnemy = {}, AutoFarmTeleportDelay = AUTO_FARM_TELEPORT_DELAY, AutoFarm = false},
 				State = newTargetingState(),
 				Options = {
-					{ Id = "AutoFarmZone", Type = "select", Label = "Zone", Description = "Select zone enemy list", Items = getAutoFarmZoneItems },
-					{ Id = "AutoFarmEnemy", Type = "multiselect", Label = "Enemy", Description = "Select enemies to farm", Items = getAutoFarmEnemyItems, EmptyText = "Nothing selected" },
-					{ Id = "AutoFarmTeleportDelay", Type = "number", Label = "Teleport Delay", Description = "Minimum seconds between retarget teleports", Min = 0, Max = 10 },
-					{ Id = "AutoFarm", Type = "toggle", Label = "Auto Farm", Description = "Teleports to the closest selected enemy and retargets on death" },
+					{ Id = "AutoFarmZone", Type = "select", Label = "Zone", Description = "Select zone", Items = getAutoFarmZoneItems },
+					{ Id = "AutoFarmEnemy", Type = "multiselect", Label = "Enemy", Description = "Select enemies", Items = getFeatureAutoFarmEnemyItems, EmptyText = "Nothing selected" },
+					{ Id = "AutoFarmTeleportDelay", Type = "number", Label = "Teleport Delay", Description = "Set teleport delay", Min = 0, Max = 10 },
+					{ Id = "AutoFarm", Type = "toggle", Label = "Auto Farm", Description = "Auto farms selected enemies" },
 				}
 			})
+			Feature.State.SelectedZone = NO_ZONE_OPTION
+			Feature.State.ZoneInitialized = false
 
 			function Feature:SetZone(zoneName, panelRef)
-				setFeaturePanelRef(self, panelRef)
+				local values = setFeaturePanelRef(self, panelRef)
 
-				zoneName = tostring(zoneName or NO_ZONE_OPTION)
-				local changed = autoFarmSelectedZone ~= zoneName
-				autoFarmSelectedZone = zoneName
+				zoneName = tostring(zoneName or values and values.AutoFarmZone or NO_ZONE_OPTION)
+				if zoneName == "" then
+					zoneName = NO_ZONE_OPTION
+				end
+
+				local changed = self.State.SelectedZone ~= zoneName
+				self.State.SelectedZone = zoneName
 
 				if self.State.ZoneInitialized and changed then
 					setFeatureTarget(self, nil)
@@ -1357,6 +1391,11 @@ return {
 			end
 
 			function Feature:Tick(values)
+				self.State.SelectedZone = tostring(values and values.AutoFarmZone or self.State.SelectedZone or NO_ZONE_OPTION)
+				if self.State.SelectedZone == "" then
+					self.State.SelectedZone = NO_ZONE_OPTION
+				end
+
 				local selectedEnemies = normalizeSelectionArray(values and values.AutoFarmEnemy)
 				if #selectedEnemies == 0 then return end
 
@@ -1398,7 +1437,7 @@ return {
 				Defaults = {AutoDungeon = false},
 				State = newTargetingState(),
 				Options = {
-					{ Id = "AutoDungeon", Type = "toggle", Label = "Auto Dungeon", Description = "Teleports to the closest alive enemy only inside an active dungeon instance" },
+					{ Id = "AutoDungeon", Type = "toggle", Label = "Auto Dungeon", Description = "Auto farms dungeon enemies" },
 				}
 			})
 
@@ -1434,7 +1473,7 @@ return {
 				Defaults = {AutoCastle = false},
 				State = state,
 				Options = {
-					{ Id = "AutoCastle", Type = "toggle", Label = "Auto Castle", Description = "Teleports to the closest alive enemy inside castle instances and advances floors through portal prompts" },
+					{ Id = "AutoCastle", Type = "toggle", Label = "Auto Castle", Description = "Auto clears castle floors" },
 				}
 			})
 
@@ -1480,15 +1519,16 @@ return {
 				Defaults = {SelectedDungeon = NO_DUNGEON_OPTION},
 				State = {Starting = false, PanelRef = nil},
 				Options = {
-					{ Id = "SelectedDungeon", Type = "select", Label = "Dungeon", Description = "Available dungeon maps and ranks", Items = getDungeonItems },
-					{ Id = "StartDungeon", Type = "button", Label = "Start Dungeon", Description = "Creates and starts selected dungeon", ButtonText = "Start" },
+					{ Id = "SelectedDungeon", Type = "select", Label = "Dungeon", Description = "Select dungeon", Items = getDungeonItems },
+					{ Id = "StartDungeon", Type = "button", Label = "Start Dungeon", Description = "Start selected dungeon", ButtonText = "Start" },
 				}
 			})
 
 			function Feature:Run(panelRef)
 				local values = setFeaturePanelRef(self, panelRef)
+				setSelectedDungeonLabel(values and values.SelectedDungeon)
 
-				local dungeonInfo = getSelectedDungeonInfo(values and values.SelectedDungeon)
+				local dungeonInfo = getSelectedDungeonInfo(selectedDungeonLabel)
 				if not dungeonInfo then return end
 
 				runFeatureTask(self, "Starting", function()
@@ -1497,7 +1537,15 @@ return {
 			end
 
 			function Feature:GetHandlers()
-				return buildActionHandlers(self, "SelectedDungeon", "StartDungeon")
+				return {
+					SelectedDungeon = function(value, _, panelRef)
+						setFeaturePanelRef(self, panelRef)
+						setSelectedDungeonLabel(value)
+					end,
+					StartDungeon = function(_, _, panelRef)
+						self:Run(panelRef)
+					end,
+				}
 			end
 
 			Feature.Cleanup = buildTaskCleanup("Starting")
@@ -1512,13 +1560,17 @@ return {
 				Defaults = {AutoRestartDungeon = false},
 				State = {Running = false, LoopId = 0, PanelRef = nil, Restarting = false, LastRestartAttempt = 0},
 				Options = {
-					{ Id = "AutoRestartDungeon", Type = "toggle", Label = "Auto Restart", Description = "Restarts the dungeon when the end countdown appears" },
+					{ Id = "AutoRestartDungeon", Type = "toggle", Label = "Auto Restart", Description = "Auto restarts dungeons" },
 				}
 			})
 
 			function Feature:Run(panelRef)
 				local values = setFeaturePanelRef(self, panelRef)
-				local dungeonInfo = lastStartedDungeonInfo or getSelectedDungeonInfo(values and values.SelectedDungeon)
+				if values and values.SelectedDungeon ~= nil then
+					setSelectedDungeonLabel(values.SelectedDungeon)
+				end
+
+				local dungeonInfo = getSelectedDungeonInfo(selectedDungeonLabel) or lastStartedDungeonInfo
 				if not dungeonInfo then
 					return
 				end
@@ -1571,8 +1623,8 @@ return {
 				Defaults = {TimeTrialDifficulty = "Easy"},
 				State = {Starting = false, PanelRef = nil},
 				Options = {
-					{ Id = "TimeTrialDifficulty", Type = "select", Label = "Difficulty", Description = "Select Time Trial difficulty", Items = TIME_TRIAL_DIFFICULTIES },
-					{ Id = "StartTimeTrial", Type = "button", Label = "Start Time Trial", Description = "Starts Time Trial with selected difficulty", ButtonText = "Start" },
+					{ Id = "TimeTrialDifficulty", Type = "select", Label = "Difficulty", Description = "Select difficulty", Items = TIME_TRIAL_DIFFICULTIES },
+					{ Id = "StartTimeTrial", Type = "button", Label = "Start Time Trial", Description = "Start selected Time Trial", ButtonText = "Start" },
 				}
 			})
 
@@ -1616,7 +1668,7 @@ return {
 				Defaults = {ShadowExchange = false},
 				State = {Running = false, LoopId = 0, PanelRef = nil, CapturedOriginal = false, OriginalPass = nil, OriginalButtonVisible = nil},
 				Options = {
-					{ Id = "ShadowExchange", Type = "toggle", Label = "Shadow Exchange", Description = "Enables Shadow Exchange" },
+					{ Id = "ShadowExchange", Type = "toggle", Label = "Shadow Exchange", Description = "Enable Shadow Exchange" },
 				}
 			})
 
@@ -1674,8 +1726,8 @@ return {
 				Defaults = {SelectedTeleportLocation = NO_TELEPORT_OPTION},
 				State = {PanelRef = nil, Teleporting = false},
 				Options = {
-					{ Id = "SelectedTeleportLocation", Type = "select", Label = "Location", Description = "Select a spawn location", Items = getTeleportSpawnItems },
-					{ Id = "TeleportToLocation", Type = "button", Label = "Teleport", Description = "Teleports to the selected location", ButtonText = "Teleport" },
+					{ Id = "SelectedTeleportLocation", Type = "select", Label = "Location", Description = "Select location", Items = getTeleportSpawnItems },
+					{ Id = "TeleportToLocation", Type = "button", Label = "Teleport", Description = "Teleport to selected location", ButtonText = "Teleport" },
 				}
 			})
 

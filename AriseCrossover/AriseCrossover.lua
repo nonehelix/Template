@@ -21,6 +21,7 @@ return {
 		local DUNGEON_CREATE_DELAY, DUNGEON_INSTANCE_WAIT, DUNGEON_RESTART_RETRY_DELAY = 0.5, 6, 3
 		local CASTLE_PORTAL_SEARCH_DELAY, CASTLE_PORTAL_INTERACT_DELAY = 0.5, 2
 		local CASTLE_PORTAL_APPROACH_DISTANCE, CASTLE_PORTAL_HEIGHT_OFFSET = 3, 6
+		local CASTLE_ROOM_HORIZONTAL_PADDING, CASTLE_ROOM_VERTICAL_PADDING = 10, 16
 		local TELEPORT_SPAWN_NAMES = {"Arena", "JejuEvent", "JungleEvent", "WinterEvent", "XmasWorld"}
 		local GUILD_HALL_LOCATION = "Guild Hall"
 		local TIME_TRIAL_BRIDGE_TOKEN = string.char(17)
@@ -945,6 +946,146 @@ return {
 			return nil
 		end
 
+		local function getInstanceBounds(instance)
+			if not instance then
+				return nil, nil
+			end
+
+			if instance:IsA("BasePart") then
+				return instance.CFrame, instance.Size
+			end
+
+			if instance:IsA("Model") then
+				local ok, boundsCFrame, boundsSize = pcall(function()
+					return instance:GetBoundingBox()
+				end)
+				if ok and boundsCFrame and boundsSize then
+					return boundsCFrame, boundsSize
+				end
+			end
+
+			local basePart = instance:FindFirstChildWhichIsA("BasePart", true)
+			return basePart and basePart.CFrame or nil, basePart and basePart.Size or nil
+		end
+
+		local function isPointInsideBounds(point, boundsCFrame, boundsSize, horizontalPadding, verticalPadding)
+			if not (point and boundsCFrame and boundsSize) then
+				return false
+			end
+
+			local localPoint = boundsCFrame:PointToObjectSpace(point)
+			return math.abs(localPoint.X) <= (boundsSize.X * 0.5 + (horizontalPadding or 0))
+				and math.abs(localPoint.Y) <= (boundsSize.Y * 0.5 + (verticalPadding or 0))
+				and math.abs(localPoint.Z) <= (boundsSize.Z * 0.5 + (horizontalPadding or 0))
+		end
+
+		local function getDistanceToBounds(point, boundsCFrame, boundsSize)
+			if not (point and boundsCFrame and boundsSize) then
+				return math.huge
+			end
+
+			local localPoint = boundsCFrame:PointToObjectSpace(point)
+			local halfSize = boundsSize * 0.5
+			local dx = math.max(math.abs(localPoint.X) - halfSize.X, 0)
+			local dy = math.max(math.abs(localPoint.Y) - halfSize.Y, 0)
+			local dz = math.max(math.abs(localPoint.Z) - halfSize.Z, 0)
+			return math.sqrt(dx * dx + dy * dy + dz * dz)
+		end
+
+		local function getCastleRoomEntries()
+			local world = getCastleWorldFolder()
+			if not world then
+				return {}
+			end
+
+			local entries = {}
+
+			for _, room in ipairs(world:GetChildren()) do
+				local roomIndex = getCastleRoomIndex(room)
+				if roomIndex ~= nil then
+					local firePortal = room:FindFirstChild("FirePortal")
+					local prompt = firePortal and firePortal:FindFirstChildWhichIsA("ProximityPrompt", true) or nil
+					local boundsCFrame, boundsSize = getInstanceBounds(room)
+
+					entries[#entries + 1] = {
+						Room = room,
+						RoomIndex = roomIndex,
+						FirePortal = firePortal,
+						Prompt = prompt,
+						BoundsCFrame = boundsCFrame,
+						BoundsSize = boundsSize,
+					}
+				end
+			end
+
+			table.sort(entries, function(a, b)
+				return a.RoomIndex < b.RoomIndex
+			end)
+
+			return entries
+		end
+
+		local function findCastleCurrentRoom()
+			local characterRoot = getCharacterRoot()
+			if not characterRoot then
+				return nil
+			end
+
+			local characterPosition = characterRoot.Position
+			local currentRoom = nil
+			local nearestRoom = nil
+			local nearestDistance = nil
+
+			for _, entry in ipairs(getCastleRoomEntries()) do
+				local boundsCFrame, boundsSize = entry.BoundsCFrame, entry.BoundsSize
+				if boundsCFrame and boundsSize then
+					if isPointInsideBounds(characterPosition, boundsCFrame, boundsSize, CASTLE_ROOM_HORIZONTAL_PADDING, CASTLE_ROOM_VERTICAL_PADDING) then
+						if currentRoom == nil or entry.RoomIndex < currentRoom.RoomIndex then
+							currentRoom = entry
+						end
+					else
+						local distance = getDistanceToBounds(characterPosition, boundsCFrame, boundsSize)
+						if nearestDistance == nil or distance < nearestDistance then
+							nearestRoom = entry
+							nearestDistance = distance
+						end
+					end
+				end
+			end
+
+			return currentRoom or nearestRoom
+		end
+
+		local function isEnemyInCastleRoom(enemy, roomEntry)
+			if not roomEntry then
+				return false
+			end
+
+			local enemyRoot = getEnemyRoot(enemy)
+			if not enemyRoot then
+				return false
+			end
+
+			return isPointInsideBounds(
+				enemyRoot.Position,
+				roomEntry.BoundsCFrame,
+				roomEntry.BoundsSize,
+				CASTLE_ROOM_HORIZONTAL_PADDING,
+				CASTLE_ROOM_VERTICAL_PADDING
+			)
+		end
+
+		local function findClosestCastleTarget()
+			local currentRoom = findCastleCurrentRoom()
+			if not currentRoom then
+				return findClosestServerTarget(nil)
+			end
+
+			return findClosestServerTarget(function(enemy)
+				return isEnemyInCastleRoom(enemy, currentRoom)
+			end)
+		end
+
 		local function sendVirtualPromptKey(prompt)
 			local keyCode = prompt and prompt.KeyboardKeyCode or Enum.KeyCode.Unknown
 			if keyCode == Enum.KeyCode.Unknown then
@@ -1505,7 +1646,7 @@ return {
 					return
 				end
 
-				local target = findClosestServerTarget(nil)
+				local target = findClosestCastleTarget()
 				if target then
 					setFeatureTarget(self, target)
 					return

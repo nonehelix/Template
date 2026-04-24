@@ -18,7 +18,7 @@ return {
 		local EMPTY_TABLE = {}
 		local AUTO_CLICK_POLL_DELAY, AUTO_FARM_POLL_DELAY, SHADOW_EXCHANGE_POLL_DELAY = 0.5, 0.25, 0.5
 		local AUTO_FARM_TELEPORT_DELAY = 0.5
-		local CASTLE_PORTAL_RETRY_DELAY = 1
+		local CASTLE_PORTAL_APPROACH_DISTANCE, CASTLE_PORTAL_RETRY_DELAY = 3, 1
 		local DUNGEON_CREATE_DELAY, DUNGEON_INSTANCE_WAIT, DUNGEON_RESTART_RETRY_DELAY = 0.5, 6, 3
 		local TELEPORT_SPAWN_NAMES = {"Arena", "JejuEvent", "JungleEvent", "WinterEvent", "XmasWorld"}
 		local GUILD_HALL_LOCATION = "Guild Hall"
@@ -892,6 +892,69 @@ return {
 			return room, firePortal, prompt
 		end
 
+		local function getCastleRoomIndexFromName(name)
+			name = tostring(name or "")
+			return tonumber(string.match(name, "^Room_(%d+)$"))
+		end
+
+		local function getAncestorCastleRoomIndex(instance)
+			while instance do
+				local roomIndex = getCastleRoomIndexFromName(instance.Name)
+				if roomIndex ~= nil then
+					return roomIndex
+				end
+
+				instance = instance.Parent
+			end
+
+			return nil
+		end
+
+		local function findClosestCastleTarget(roomNumber)
+			roomNumber = tonumber(roomNumber)
+			if roomNumber == nil then
+				return findClosestServerTarget(nil)
+			end
+
+			local target = findClosestServerTarget(function(enemy)
+				local enemyRoot = getEnemyRoot(enemy)
+				return getAncestorCastleRoomIndex(enemy) == roomNumber or getAncestorCastleRoomIndex(enemyRoot) == roomNumber
+			end)
+
+			return target or findClosestServerTarget(nil)
+		end
+
+		local function getCastlePortalTeleportCFrame(prompt, firePortal)
+			local anchor = prompt and prompt.Parent or firePortal
+			local anchorCFrame = getInstanceCFrame(anchor) or getInstanceCFrame(firePortal)
+			if not anchorCFrame then
+				return nil
+			end
+
+			local characterRoot = getCharacterRoot()
+			local anchorPosition = anchorCFrame.Position
+			local direction = nil
+			if characterRoot then
+				local offset = characterRoot.Position - anchorPosition
+				local flatOffset = Vector3.new(offset.X, 0, offset.Z)
+				if flatOffset.Magnitude > 0.001 then
+					direction = flatOffset.Unit
+				end
+			end
+
+			if not direction then
+				local lookVector = anchorCFrame.LookVector
+				local flatLook = Vector3.new(-lookVector.X, 0, -lookVector.Z)
+				direction = flatLook.Magnitude > 0.001 and flatLook.Unit or Vector3.new(0, 0, -1)
+			end
+
+			local targetPosition = anchorPosition + direction * CASTLE_PORTAL_APPROACH_DISTANCE
+			local targetY = characterRoot and characterRoot.Position.Y or anchorPosition.Y
+			targetPosition = Vector3.new(targetPosition.X, targetY, targetPosition.Z)
+
+			return CFrame.new(targetPosition)
+		end
+
 		local function sendVirtualPromptKey(prompt)
 			local keyCode = prompt and prompt.KeyboardKeyCode or Enum.KeyCode.Unknown
 			if keyCode == Enum.KeyCode.Unknown then
@@ -917,12 +980,12 @@ return {
 		local function advanceCastleFloor(roomNumber)
 			local character = player.Character
 			local _, firePortal, prompt = findCastlePortalForRoom(roomNumber)
-			local firePortalCFrame = getInstanceCFrame(firePortal)
-			if not (character and firePortal and prompt and firePortalCFrame) then
+			local targetCFrame = getCastlePortalTeleportCFrame(prompt, firePortal)
+			if not (character and firePortal and prompt and targetCFrame) then
 				return false
 			end
 
-			character:PivotTo(CFrame.new(firePortalCFrame.Position))
+			character:PivotTo(targetCFrame)
 			return sendVirtualPromptKey(prompt)
 		end
 
@@ -1478,7 +1541,7 @@ return {
 				end
 
 				if not isTargetAlive(self.State.CurrentTarget) then
-					setFeatureTarget(self, findClosestServerTarget(nil))
+					setFeatureTarget(self, findClosestCastleTarget(self.State.LastObservedRoom or getCurrentCastleRoom()))
 				end
 			end
 

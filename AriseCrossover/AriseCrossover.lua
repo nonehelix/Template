@@ -215,7 +215,9 @@ return {
 		local function setAutoAttack(enabled)
 			local settings = getSettings()
 			if settings then settings:SetAttribute("AutoAttack", enabled == true) end
-			setPass("AutoAttack", enabled)
+			if enabled == true then
+				setPass("AutoAttack", true)
+			end
 		end
 
 		local function setAutoClick(enabled)
@@ -1266,17 +1268,57 @@ return {
 			local Feature = RegisterFeature({
 				Key = "AutoAttack", Tab = "Combat", Order = 20,
 				Defaults = {AutoAttack = false},
+				State = {PanelRef = nil, CapturedOriginal = false, OriginalAutoAttack = nil, OriginalPass = nil},
 				Options = {
 					{ Id = "AutoAttack", Type = "toggle", Label = "Auto Attack", Description = "Auto attacks" },
 				}
 			})
 
+			function Feature:CaptureOriginalValues()
+				if self.State.CapturedOriginal then return end
+
+				local settings = getSettings()
+				local passes = getPasses()
+				self.State.OriginalAutoAttack = settings and settings:GetAttribute("AutoAttack") or nil
+				self.State.OriginalPass = passes and passes:GetAttribute("AutoAttack") or nil
+				self.State.CapturedOriginal = true
+			end
+
+			function Feature:RestoreOriginalValues()
+				if not self.State.CapturedOriginal then return end
+
+				local settings = getSettings()
+				if settings then settings:SetAttribute("AutoAttack", self.State.OriginalAutoAttack) end
+
+				local passes = getPasses()
+				if passes then passes:SetAttribute("AutoAttack", self.State.OriginalPass) end
+
+				self.State.CapturedOriginal = false
+				self.State.OriginalAutoAttack = nil
+				self.State.OriginalPass = nil
+			end
+
+			function Feature:Stop()
+				self:RestoreOriginalValues()
+			end
+
 			function Feature:GetHandlers()
 				return {
-					AutoAttack = function(value)
-						setAutoAttack(value)
+					AutoAttack = function(value, _, panelRef)
+						setFeaturePanelRef(self, panelRef)
+						if value then
+							self:CaptureOriginalValues()
+							setAutoAttack(true)
+						else
+							self:Stop()
+						end
 					end,
 				}
+			end
+
+			function Feature:Cleanup()
+				self:Stop()
+				self.State.PanelRef = nil
 			end
 		end
 

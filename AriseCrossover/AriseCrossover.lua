@@ -13,15 +13,16 @@ return {
 		--==================================================
 		-- HELPERS
 		--==================================================
-		local ALL_OPTION, NO_ZONE_OPTION, NO_DUNGEON_OPTION, NO_TELEPORT_OPTION = "All", "Select zone", "Select dungeon", "Select location"
+		local ALL_OPTION, NO_ZONE_OPTION, NO_DUNGEON_OPTION, NO_TELEPORT_OPTION, NO_DUNGEON_RUNE_OPTION = "All", "Select zone", "Select dungeon", "Select location", "No rune"
 		local EMPTY_TABLE = {}
 		local AUTO_CLICK_POLL_DELAY, AUTO_FARM_POLL_DELAY, SHADOW_EXCHANGE_POLL_DELAY = 0.5, 0.25, 0.5
 		local AUTO_FARM_TELEPORT_DELAY = 0.5
 		local CASTLE_ROOM_TELEPORT_RETRY_DELAY = 0.1
 		local DUNGEON_CREATE_DELAY, DUNGEON_INSTANCE_WAIT, DUNGEON_RESTART_RETRY_DELAY = 0.5, 6, 3
+		local DUNGEON_RUNE_SLOT_COUNT, DUNGEON_RUNE_APPLY_DELAY = 5, 0.2
 		local TELEPORT_SPAWN_NAMES = {"Arena", "JejuEvent", "JungleEvent", "WinterEvent", "XmasWorld"}
 		local GUILD_HALL_LOCATION = "Guild Hall"
-		local TIME_TRIAL_BRIDGE_TOKEN = string.char(17)
+		local BRIDGE_DATA_REMOTE_TOKEN = string.char(17)
 		local TIME_TRIAL_DIFFICULTIES = {"Easy", "Normal", "Hard", "Insane", "Ultra", "Nightmare", "Chaotic"}
 		local TELEPORT_STATIC_LOCATIONS = {
 			[GUILD_HALL_LOCATION] = CFrame.new(9557.8457, -204.696213, 106.217346, 1, 0, 0, 0, 1, 0, 0, 0, 1) * CFrame.Angles(0, math.pi, 0),
@@ -960,6 +961,7 @@ return {
 		end
 
 		local dungeonLabelToInfo = {}
+		local dungeonRuneLabelToItemId = {}
 		local selectedDungeonLabel = NO_DUNGEON_OPTION
 
 		local function setSelectedDungeonLabel(selectedDungeon)
@@ -1078,6 +1080,111 @@ return {
 			return dungeonLabelToInfo[selectedDungeon]
 		end
 
+		local function getDungeonRuneOptionId(slot)
+			return "DungeonRuneSlot" .. tostring(slot)
+		end
+
+		local function getDungeonRuneItems()
+			local items = {NO_DUNGEON_RUNE_OPTION}
+			dungeonRuneLabelToItemId = {}
+
+			local itemsInfo = requireIndexerModule({"ItemsInfo", "ItemInfo"})
+			if type(itemsInfo) ~= "table" then
+				return items
+			end
+
+			local runeEntries = {}
+			for itemId, itemInfo in pairs(itemsInfo) do
+				if type(itemId) == "string" and type(itemInfo) == "table" and itemInfo.Type == "DungeonItem" then
+					runeEntries[#runeEntries + 1] = {
+						ItemId = itemId,
+						Name = tostring(itemInfo.Name or itemId),
+					}
+				end
+			end
+
+			table.sort(runeEntries, function(a, b)
+				if a.Name == b.Name then return a.ItemId < b.ItemId end
+				return a.Name < b.Name
+			end)
+
+			for _, runeEntry in ipairs(runeEntries) do
+				local label = runeEntry.Name
+				if dungeonRuneLabelToItemId[label] ~= nil then
+					label = runeEntry.Name .. " [" .. runeEntry.ItemId .. "]"
+				end
+
+				if dungeonRuneLabelToItemId[label] ~= nil then
+					local baseLabel = label
+					local index = 2
+					while dungeonRuneLabelToItemId[label] ~= nil do
+						label = baseLabel .. " (" .. tostring(index) .. ")"
+						index = index + 1
+					end
+				end
+
+				dungeonRuneLabelToItemId[label] = runeEntry.ItemId
+				items[#items + 1] = label
+			end
+
+			return items
+		end
+
+		local function getSelectedDungeonRuneItemId(selectedRune)
+			if selectedRune == nil or selectedRune == "" or selectedRune == NO_DUNGEON_RUNE_OPTION then return nil end
+
+			local itemId = dungeonRuneLabelToItemId[selectedRune]
+			if itemId then return itemId end
+
+			getDungeonRuneItems()
+			return dungeonRuneLabelToItemId[selectedRune]
+		end
+
+		local function applySelectedDungeonRunes(dungeonOwner, values)
+			values = values or EMPTY_TABLE
+
+			local selectedRunes = {}
+			for slot = 1, DUNGEON_RUNE_SLOT_COUNT do
+				local itemId = getSelectedDungeonRuneItemId(values[getDungeonRuneOptionId(slot)])
+				if itemId then
+					selectedRunes[#selectedRunes + 1] = {
+						Slot = slot,
+						Item = itemId,
+					}
+				end
+			end
+
+			if #selectedRunes == 0 then
+				return true
+			end
+
+			local sentAny = false
+			for _, runeInfo in ipairs(selectedRunes) do
+				local ok = fireBridgeDataRemote({
+					{
+						Dungeon = dungeonOwner,
+						Action = "AddItems",
+						Slot = runeInfo.Slot,
+						Event = "DungeonAction",
+						Item = runeInfo.Item,
+					},
+					BRIDGE_DATA_REMOTE_TOKEN,
+				})
+
+				if ok then
+					sentAny = true
+				else
+					warn("Failed to add dungeon rune '" .. tostring(runeInfo.Item) .. "' to slot " .. tostring(runeInfo.Slot))
+				end
+			end
+
+			if sentAny then
+				task.wait(DUNGEON_RUNE_APPLY_DELAY)
+			end
+
+			return sentAny
+		end
+
 		local function getOwnDungeonInfo()
 			local infos = ReplicatedStorage:FindFirstChild("__Infos")
 			local dungeons = infos and infos:FindFirstChild("__Dungeons")
@@ -1145,7 +1252,7 @@ return {
 				payload[key] = value
 			end
 
-			return fireBridgeDataRemote({payload, TIME_TRIAL_BRIDGE_TOKEN})
+			return fireBridgeDataRemote({payload, BRIDGE_DATA_REMOTE_TOKEN})
 		end
 
 		local function isValidTimeTrialDifficulty(difficulty)
@@ -1177,7 +1284,7 @@ return {
 			}
 		end
 
-		local function startDungeonInstance(dungeonInfo)
+		local function startDungeonInstance(dungeonInfo, values)
 			if not dungeonInfo then
 				return false
 			end
@@ -1190,6 +1297,11 @@ return {
 
 			ownDungeon = getOwnDungeonInfo() or waitForInfo(getOwnDungeonInfo, DUNGEON_INSTANCE_WAIT)
 			if not ownDungeon then
+				return false
+			end
+
+			local dungeonOwner = tonumber(ownDungeon.Name) or ownDungeon.Name or player.UserId
+			if not applySelectedDungeonRunes(dungeonOwner, values) then
 				return false
 			end
 
@@ -1582,14 +1694,39 @@ return {
 		-- FEATURE: DUNGEON STARTER
 		--==================================================
 		do
+			local dungeonStarterDefaults = {
+				SelectedDungeon = NO_DUNGEON_OPTION,
+			}
+			local dungeonStarterOptions = {
+				{ Id = "SelectedDungeon", Type = "select", Label = "Dungeon", Description = "Select dungeon", Items = getDungeonItems },
+				{ Type = "section", Label = "Runes" },
+			}
+
+			for slot = 1, DUNGEON_RUNE_SLOT_COUNT do
+				local optionId = getDungeonRuneOptionId(slot)
+				dungeonStarterDefaults[optionId] = NO_DUNGEON_RUNE_OPTION
+				dungeonStarterOptions[#dungeonStarterOptions + 1] = {
+					Id = optionId,
+					Type = "select",
+					Label = "Rune " .. tostring(slot),
+					Description = "Select dungeon rune for slot " .. tostring(slot),
+					Items = getDungeonRuneItems,
+				}
+			end
+
+			dungeonStarterOptions[#dungeonStarterOptions + 1] = {
+				Id = "StartDungeon",
+				Type = "button",
+				Label = "Start Dungeon",
+				Description = "Start selected dungeon",
+				ButtonText = "Start",
+			}
+
 			local Feature = RegisterFeature({
 				Key = "DungeonStarter", Tab = "Dungeon", Order = 10,
-				Defaults = {SelectedDungeon = NO_DUNGEON_OPTION},
+				Defaults = dungeonStarterDefaults,
 				State = {Starting = false, PanelRef = nil},
-				Options = {
-					{ Id = "SelectedDungeon", Type = "select", Label = "Dungeon", Description = "Select dungeon", Items = getDungeonItems },
-					{ Id = "StartDungeon", Type = "button", Label = "Start Dungeon", Description = "Start selected dungeon", ButtonText = "Start" },
-				}
+				Options = dungeonStarterOptions,
 			})
 
 			function Feature:Run(panelRef)
@@ -1600,7 +1737,7 @@ return {
 				if not dungeonInfo then return end
 
 				runFeatureTask(self, "Starting", function()
-					startDungeonInstance(dungeonInfo)
+					startDungeonInstance(dungeonInfo, values)
 				end)
 			end
 
@@ -1644,7 +1781,7 @@ return {
 				end
 
 				local started = runFeatureTask(self, "Restarting", function()
-					startDungeonInstance(dungeonInfo)
+					startDungeonInstance(dungeonInfo, values)
 				end)
 
 				if started then

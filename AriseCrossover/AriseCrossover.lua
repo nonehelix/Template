@@ -1185,6 +1185,16 @@ return {
 			return sentAny
 		end
 
+		local function clearSelectedDungeonRunes(panelRef)
+			if not panelRef or type(panelRef.SetValue) ~= "function" then
+				return
+			end
+
+			for slot = 1, DUNGEON_RUNE_SLOT_COUNT do
+				panelRef:SetValue(getDungeonRuneOptionId(slot), NO_DUNGEON_RUNE_OPTION, true)
+			end
+		end
+
 		local function getOwnDungeonInfo()
 			local infos = ReplicatedStorage:FindFirstChild("__Infos")
 			local dungeons = infos and infos:FindFirstChild("__Dungeons")
@@ -1553,7 +1563,7 @@ return {
 		--==================================================
 		do
 			local Feature = RegisterFeature({
-				Key = "AutoDungeon", Tab = "Dungeon", Order = 15,
+				Key = "AutoDungeon", Tab = "Dungeon", Order = 10,
 				Defaults = {AutoDungeon = false},
 				State = newTargetingState(),
 				Options = {
@@ -1698,6 +1708,7 @@ return {
 				SelectedDungeon = NO_DUNGEON_OPTION,
 			}
 			local dungeonStarterOptions = {
+				{ Id = "StartDungeon", Type = "button", Label = "Start Dungeon", Description = "Start selected dungeon", ButtonText = "Start" },
 				{ Id = "SelectedDungeon", Type = "select", Label = "Dungeon", Description = "Select dungeon", Items = getDungeonItems },
 				{ Type = "section", Label = "Runes" },
 			}
@@ -1715,15 +1726,15 @@ return {
 			end
 
 			dungeonStarterOptions[#dungeonStarterOptions + 1] = {
-				Id = "StartDungeon",
+				Id = "ClearDungeonRunes",
 				Type = "button",
-				Label = "Start Dungeon",
-				Description = "Start selected dungeon",
-				ButtonText = "Start",
+				Label = "Clear Runes",
+				Description = "Clear all selected dungeon runes",
+				ButtonText = "Clear",
 			}
 
 			local Feature = RegisterFeature({
-				Key = "DungeonStarter", Tab = "Dungeon", Order = 10,
+				Key = "DungeonStarter", Tab = "Dungeon", Order = 12,
 				Defaults = dungeonStarterDefaults,
 				State = {Starting = false, PanelRef = nil},
 				Options = dungeonStarterOptions,
@@ -1750,6 +1761,10 @@ return {
 					StartDungeon = function(_, _, panelRef)
 						self:Run(panelRef)
 					end,
+					ClearDungeonRunes = function(_, _, panelRef)
+						setFeaturePanelRef(self, panelRef)
+						clearSelectedDungeonRunes(panelRef)
+					end,
 				}
 			end
 
@@ -1761,7 +1776,7 @@ return {
 		--==================================================
 		do
 			local Feature = RegisterFeature({
-				Key = "DungeonRestart", Tab = "Dungeon", Order = 20,
+				Key = "DungeonRestart", Tab = "Dungeon", Order = 11,
 				Defaults = {AutoRestartDungeon = false},
 				State = {Running = false, LoopId = 0, PanelRef = nil, Restarting = false, LastRestartAttempt = 0},
 				Options = {
